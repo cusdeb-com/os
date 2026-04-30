@@ -1,0 +1,88 @@
+name: Master build and release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: master-release
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: cusdeb-os.img
+      VDI_NAME: cusdeb-os.vdi
+      RELEASE_TAG_PREFIX: master
+      RELEASE_TITLE_PREFIX: Master build
+      IMG_ARCHIVE_NAME: cusdeb-os.img.7z
+      VDI_ARCHIVE_NAME: cusdeb-os.vdi.7z
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          docker system prune -af || true
+
+      - name: Install release packaging tools
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full qemu-utils
+
+      - name: Prepare output directory
+        run: |
+          rm -rf out
+          mkdir -p out
+
+      - name: Build disk image
+        run: ./run-docker-build.sh
+
+      - name: Verify build output exists
+        run: test -f "out/${IMAGE_NAME}"
+
+      - name: Convert raw image to VDI
+        run: |
+          qemu-img convert -f raw -O vdi "out/${IMAGE_NAME}" "out/${VDI_NAME}"
+          test -f "out/${VDI_NAME}"
+
+      - name: Package release assets
+        run: |
+          7z a -mx=9 "out/${IMG_ARCHIVE_NAME}" "out/${IMAGE_NAME}" &
+          pid_img=$!
+          7z a -mx=9 "out/${VDI_ARCHIVE_NAME}" "out/${VDI_NAME}" &
+          pid_vdi=$!
+          wait "$pid_img"
+          wait "$pid_vdi"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RELEASE_TAG="${RELEASE_TAG_PREFIX}-${SHORT_SHA}"
+          RELEASE_TITLE="${RELEASE_TITLE_PREFIX} ${GITHUB_SHA::7}"
+          NOTES="$(cat <<EOF
+          Automated build from commit ${GITHUB_SHA}.
+
+          Available archives:
+          - ${IMG_ARCHIVE_NAME} for raw/QEMU usage
+          - ${VDI_ARCHIVE_NAME} for VirtualBox usage
+
+          Extract either archive with:
+          7z x ${IMG_ARCHIVE_NAME}
+          7z x ${VDI_ARCHIVE_NAME}
+          EOF
+          )"
+          gh release create "${RELEASE_TAG}" \
+            "out/${IMG_ARCHIVE_NAME}" \
+            "out/${VDI_ARCHIVE_NAME}" \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_TITLE}" \
+            --notes "$NOTES"

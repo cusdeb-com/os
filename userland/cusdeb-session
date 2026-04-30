@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+
+export DESKTOP_SESSION=openbox
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=Openbox
+export XCURSOR_THEME="Chicago95_Standard_Cursors"
+export XCURSOR_SIZE=16
+
+# Bootstrap a user session bus on demand because desktop helpers such as pcmanfm
+# and lxpanel behave more reliably with a per-session D-Bus environment.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  exec /usr/bin/dbus-run-session -- "$0" "$@"
+fi
+
+# Create per-user runtime config directories on demand before launching helpers.
+# The provisioning step seeds the expected files, but mkdir -p keeps the session
+# resilient if the user logs in before those directories exist for any reason.
+mkdir -p "$HOME/.config/openbox" "$HOME/.config/lxpanel/default/panels" "$HOME/.config/pcmanfm/default"
+
+# Keep Openbox in the foreground so LightDM owns the session lifecycle while the
+# desktop helpers stay in the background as session companions.
+xsetroot -solid '#5D81AB' || true
+spice-vdagent &
+pcmanfm --desktop --profile=default &
+lxpanel --profile default &
+exec openbox-session
