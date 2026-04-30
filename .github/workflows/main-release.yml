@@ -54,9 +54,15 @@ jobs:
 
       - name: Package release assets
         run: |
-          7z a -mx=9 "out/${IMG_ARCHIVE_NAME}" "out/${IMAGE_NAME}" &
+          (
+            cd out
+            7z a -mx=9 "${IMG_ARCHIVE_NAME}" "${IMAGE_NAME}"
+          ) &
           pid_img=$!
-          7z a -mx=9 "out/${VDI_ARCHIVE_NAME}" "out/${VDI_NAME}" &
+          (
+            cd out
+            7z a -mx=9 "${VDI_ARCHIVE_NAME}" "${VDI_NAME}"
+          ) &
           pid_vdi=$!
           wait "$pid_img"
           wait "$pid_vdi"
