@@ -1,15 +1,15 @@
-name: Master build and release
+name: Main build and release
 
 on:
   push:
     branches:
-      - master
+      - main
 
 permissions:
   contents: write
 
 concurrency:
-  group: master-release
+  group: main-release
   cancel-in-progress: true
 
 jobs:
@@ -18,8 +18,8 @@ jobs:
     env:
       IMAGE_NAME: cusdeb-os.img
       VDI_NAME: cusdeb-os.vdi
-      RELEASE_TAG_PREFIX: master
-      RELEASE_TITLE_PREFIX: Master build
+      RELEASE_TAG_PREFIX: main
+      RELEASE_TITLE_PREFIX: Main build
       IMG_ARCHIVE_NAME: cusdeb-os.img.7z
       VDI_ARCHIVE_NAME: cusdeb-os.vdi.7z
     steps:
