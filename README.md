@@ -48,11 +48,6 @@ qemu-system-x86_64 \
   -smp 2 \
   -drive file=cusdeb-os.img,format=raw,if=virtio \
   -device virtio-vga \
-  -device qemu-xhci \
-  -device usb-kbd \
-  -device usb-tablet \
-  -serial stdio \
-  -monitor none \
   -display gtk
 ```
 
