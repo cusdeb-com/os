@@ -42,6 +42,8 @@ jobs:
           mkdir -p out
 
       - name: Build disk image
+        env:
+          ROOT_PASSWORD: root
         run: ./run-docker-build.sh
 
       - name: Verify build output exists
