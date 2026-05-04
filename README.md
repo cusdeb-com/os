@@ -20,6 +20,8 @@ C:\Deb is a **Win32/Linux** system built on **Debian 13** and **Wine**, with a b
 
 Prebuilt images are available on [GitHub Releases](https://github.com/cusdeb-com/os/releases).
 
+In GitHub Releases the root user password set to `root` by default.
+
 There are two formats:
 
 * **Raw image (`.img`)** — for QEMU
