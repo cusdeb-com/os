@@ -1,0 +1,418 @@
+
+
+	List of Wine subsection maintainers
+
+When submitting patches to Wine, the guidelines at
+<https://gitlab.winehq.org/wine/wine/-/wikis/Submitting-Patches>
+should be followed. This file contains a list of maintainers for
+subsections of Wine. If you have questions about your work in an area
+of Wine, you may find a list of knowledgeable people here.
+
+Many areas of Wine don't have a specific maintainer, although there may
+be people with knowledge of those areas. If an area is not listed here
+at all, you can use the git log to find developers working in that area
+recently. Or, you can send a mail to wine-devel, but be aware that there
+may simply be no one knowledgeable about that subject on the list.
+
+This file uses a similar format to the Linux kernel MAINTAINERS file.
+Descriptions of section entries used here:
+
+	M: Primary maintainer. FullName <address@domain>
+	P: Other knowledgeable person. FullName <address@domain>
+	F: Files and directories with wildcard patterns.
+	   One pattern per line.  Multiple F: lines acceptable.
+	   A trailing / implies /*.
+	W: Link to additional information.
+
+Maintainers List
+
+		-----------------------------------
+
+ARM, ARM64
+M:	Alexandre Julliard <julliard@winehq.org>
+P:	André Zwing <nerv@dawncrow.de>
+F:	dlls/dbghelp/cpu_arm*
+F:	dlls/msvcrt/except_arm.c
+F:	dlls/ntdll/signal_arm*
+F:	programs/winedbg/be_arm*
+
+Audio I/O
+P:	Huw Davies <huw@codeweavers.com>
+F:	dlls/dsound/
+F:	dlls/mmdevapi/
+F:	dlls/winealsa.drv/
+F:	dlls/winecoreaudio.drv/
+F:	dlls/wineoss.drv/
+F:	dlls/winepulse.drv/
+F:	dlls/winmm/
+F:	dlls/x3daudio*/
+F:	dlls/xapofx*/
+F:	dlls/xaudio*/
+
+Bluetooth support
+M:      Vibhav Pant <vibhavp@gmail.com>
+F:      dlls/winebth.sys/
+F:      dlls/bluetoothapis/sdp.c
+
+Common Controls Library
+P:	Nikolay Sivov <nsivov@codeweavers.com>
+P:	Zhiyi Zhang <zzhang@codeweavers.com>
+F:	dlls/comctl32/
+
+Common Item Dialog
+P:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/comdlg32/itemdlg.c
+F:	dlls/comdlg32/tests/itemdlg.c
+
+Direct2D
+M:	Nikolay Sivov <nsivov@codeweavers.com>
+P:	Henri Verbeet <hverbeet@codeweavers.com>
+F:	dlls/d2d*/
+
+Direct3D
+M:	Elizabeth Figura <zfigura@codeweavers.com>
+M:	Jan Sikorski <jsikorski@codeweavers.com>
+P:	Henri Verbeet <hverbeet@codeweavers.com>
+P:	Stefan Dösinger <stefan@codeweavers.com>
+P:	Matteo Bruni <mbruni@codeweavers.com>
+F:	dlls/d3d10core/
+F:	dlls/d3d11/
+F:	dlls/d3d12/
+F:	dlls/d3d12core/
+F:	dlls/d3d8/
+F:	dlls/d3d9/
+F:	dlls/d3drm/
+F:	dlls/ddraw*/
+F:	dlls/dxgi/
+F:	dlls/wined3d/
+
+Direct3D helper libraries
+M:	Matteo Bruni <mbruni@codeweavers.com>
+P:	Henri Verbeet <hverbeet@codeweavers.com>
+P:	Stefan Dösinger <stefan@codeweavers.com>
+F:	dlls/d3d10/
+F:	dlls/d3d10_1/
+F:	dlls/d3dcompiler*/
+F:	dlls/d3dx10*/
+F:	dlls/d3dx11*/
+F:	dlls/d3dx9*/
+F:	dlls/d3dxof/
+
+DirectMusic
+M:	Michael Stefaniuc <mstefani@winehq.org>
+F:	dlls/dm*/
+F:	dlls/dswave/
+
+DirectPlay
+M:	Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
+F:	dlls/dplayx/
+F:	dlls/dpnet/
+F:	dlls/dpwsockx/
+
+DirectShow
+M:	Elizabeth Figura <zfigura@codeweavers.com>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/amstream/
+F:	dlls/devenum/
+F:	dlls/mciqtz32/
+F:	dlls/qasf/
+F:	dlls/qcap/
+F:	dlls/qdvd/
+F:	dlls/qedit/
+F:	dlls/quartz/
+F:	libs/strmbase/
+
+DirectWrite
+M:	Nikolay Sivov <nsivov@codeweavers.com>
+F:	dlls/dwrite/
+
+DotNet Runtime
+M:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/mscoree/
+
+GDI
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/gdi32/
+F:	dlls/win32u/bitblt.c
+F:	dlls/win32u/bitmap.c
+F:	dlls/win32u/brush.c
+F:	dlls/win32u/clipping.c
+F:	dlls/win32u/dc.c
+F:	dlls/win32u/dib.c
+F:	dlls/win32u/dibdrv/
+F:	dlls/win32u/driver.c
+F:	dlls/win32u/emfdrv.c
+F:	dlls/win32u/font.c
+F:	dlls/win32u/freetype.c
+F:	dlls/win32u/gdiobj.c
+F:	dlls/win32u/mapping.c
+F:	dlls/win32u/opentype.c
+F:	dlls/win32u/painting.c
+F:	dlls/win32u/palette.c
+F:	dlls/win32u/path.c
+F:	dlls/win32u/pen.c
+F:	dlls/win32u/printdrv.c
+F:	dlls/win32u/region.c
+
+GDIPlus
+M:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/gdiplus/
+
+GPhoto Driver
+M:	Marcus Meissner <marcus@jet.franken.de>
+F:	dlls/gphoto2.ds/
+
+GStreamer multimedia backend
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/winegstreamer/
+
+HID support
+M:	Rémi Bernon <rbernon@codeweavers.com>
+P:	Aric Stewart <aric@codeweavers.com>
+F:	dlls/hid/
+F:	dlls/hidclass.sys/
+F:	dlls/hidparse.sys/
+F:	dlls/mouhid.sys/
+F:	dlls/winehid.sys/
+
+HTTP server
+M:	Elizabeth Figura <zfigura@codeweavers.com>
+F:	dlls/httpapi/
+F:	dlls/http.sys/
+
+Input events
+M:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/user32/input.c
+F:	dlls/win32u/input.c
+F:	dlls/win32u/rawinput.c
+F:	server/queue.c
+
+Input methods
+M:	Rémi Bernon <rbernon@codeweavers.com>
+P:	Aric Stewart <aric@codeweavers.com>
+F:	dlls/imm32/
+F:	dlls/win32u/imm.c
+F:	dlls/winemac.drv/ime.c
+F:	dlls/winex11.drv/ime.c
+
+JavaScript
+M:	Jacek Caban <jacek@codeweavers.com>
+F:	dlls/jscript/
+
+Joystick input
+M:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/dinput*/
+F:	dlls/joy.cpl/
+F:	dlls/windows.gaming.input/
+F:	dlls/winebus.sys/
+F:	dlls/winexinput.sys/
+F:	dlls/winmm/joystick.c
+F:	dlls/xinput*/
+
+Microsoft C Runtime
+M:	Piotr Caban <piotr@codeweavers.com>
+F:	dlls/concrt140/
+F:	dlls/msvc*/
+F:	dlls/ucrtbase/
+F:	dlls/vcruntime140/
+F:	dlls/vcruntime140_1/
+
+MSI installers
+M:	Hans Leidekker <hans@codeweavers.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+F:	dlls/msi/
+
+Netstat
+M:	André Zwing <nerv@dawncrow.de>
+F:	programs/netstat/
+
+Network
+P:	Bruno Jesus <00cpxxx@gmail.com>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
+F:	dlls/ws2_32/
+
+Network Store Interface
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/iphlpapi/
+F:	dlls/nsi/
+F:	dlls/nsiproxy.sys/
+F:	include/wine/nsi.h
+
+OLE Embedding
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/ole32/clipboard.c
+F:	dlls/ole32/datacache.c
+F:	dlls/ole32/defaulthandler.c
+F:	dlls/ole32/ole2.c
+F:	dlls/ole32/ole2impl.c
+F:	dlls/ole32/oleobj.c
+
+OLE RPC
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/combase/
+F:	dlls/ole32/compobj.c
+F:	dlls/ole32/marshal.c
+F:	dlls/ole32/usrmarshal.c
+F:	programs/dllhost/
+
+OLE Storage
+M:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/ole32/filelockbytes.c
+F:	dlls/ole32/memlockbytes.c
+F:	dlls/ole32/stg_stream.c
+F:	dlls/ole32/storage32.c
+F:	dlls/ole32/storage32.h
+F:	dlls/ole32/tests/storage32.c
+
+OLE Typelibs
+P:	Huw Davies <huw@codeweavers.com>
+F:	dlls/oleaut32/typelib.c
+
+Plug and Play
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+F:	dlls/newdev/
+F:	dlls/ntoskrnl.exe/pnp.c
+F:	dlls/setupapi/devinst.c
+
+Postscript Driver
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/wineps.drv/
+
+Printing
+M:	Huw Davies <huw@codeweavers.com>
+P:	Detlef Riekenberg <wine.dev@web.de>
+F:	dlls/localspl/
+F:	dlls/spoolss/
+F:	dlls/winspool.drv/
+
+Richedit
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/riched20/
+
+RPC Runtime
+P:	Huw Davies <huw@codeweavers.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+F:	dlls/rpcrt4/
+
+Theming
+M:	Zhiyi Zhang <zzhang@codeweavers.com>
+F:	dlls/light.msstyles/
+F:	dlls/uxtheme/
+
+TWAIN
+P:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/twain_32/
+F:	dlls/sane.ds/
+F:	dlls/gphoto2.ds/
+
+Uniscribe
+M:	Aric Stewart <aric@codeweavers.com>
+F:	dlls/gdi32/uniscribe/
+
+URL Moniker
+M:	Jacek Caban <jacek@codeweavers.com>
+F:	dlls/urlmon/
+
+VBScript
+M:	Jacek Caban <jacek@codeweavers.com>
+F:	dlls/vbscript/
+
+Web Services
+M:	Hans Leidekker <hans@codeweavers.com>
+F:	dlls/webservices/
+
+WebBrowser control
+M:	Jacek Caban <jacek@codeweavers.com>
+F:	dlls/ieframe/
+F:	dlls/mshtml/
+
+WIDL
+P:	Huw Davies <huw@codeweavers.com>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+F:	tools/widl/
+
+Windows Imaging Component
+M:	Esme Povirk <esme@codeweavers.com>
+F:	dlls/windowscodecs/
+F:	dlls/windowscodecsext/
+F:	dlls/wmphoto/
+
+Windows Management Instrumentation
+M:	Hans Leidekker <hans@codeweavers.com>
+F:	dlls/wbemdisp/
+F:	dlls/wbemprox/
+F:	dlls/wmiutils/
+
+Windows Media Format
+M:	Elizabeth Figura <zfigura@codeweavers.com>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/wmp/
+F:	dlls/wmvcore/
+
+Windows Media Foundation
+M:	Nikolay Sivov <nsivov@codeweavers.com>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+F:	dlls/evr/
+F:	dlls/mf/
+F:	dlls/mferror/
+F:	dlls/mfmediaengine/
+F:	dlls/mfplat/
+F:	dlls/mfplay/
+F:	dlls/mfreadwrite/
+F:	dlls/mfuuid/
+F:	dlls/rtworkq/
+
+Wine debugger (GDB backend)
+P:	Rémi Bernon <rbernon@codeweavers.com>
+F:	programs/winedbg/gdbproxy.c
+
+Wine server, IPC
+M:	Alexandre Julliard <julliard@winehq.org>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
+F:	server/
+
+Winemaker
+M:	André Zwing <nerv@dawncrow.de>
+F:	tools/winemaker/
+
+WinHTTP
+M:	Hans Leidekker <hans@codeweavers.com>
+F:	dlls/winhttp/
+
+WinINet
+P:	Jacek Caban <jacek@codeweavers.com>
+F:	dlls/wininet/
+
+X11 Driver
+M:	Alexandre Julliard <julliard@winehq.org>
+P:	Rémi Bernon <rbernon@codeweavers.com>
+P:	Zhiyi Zhang <zzhang@codeweavers.com>
+F:	dlls/winex11.drv/
+
+XML parsing
+M:	Nikolay Sivov <nsivov@codeweavers.com>
+F:	dlls/msxml*/
+F:	dlls/xmllite/
+
+THE REST
+M:	Alexandre Julliard <julliard@winehq.org>
+P:	Alex Henrie <alexhenrie24@gmail.com>
+P:	Huw Davies <huw@codeweavers.com>
+P:	Jacek Caban <jacek@codeweavers.com>
+P:	Esme Povirk <esme@codeweavers.com>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
+F:	*
+F:	*/
+
+Stable Branch
+M:	Michael Stefaniuc <mstefani@winehq.org>
+W:	https://gitlab.winehq.org/wine/wine/-/wikis/Stable-Rules
+
+Staging Branch
+M:	Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
+P:	Paul Gofman <gofmanp@gmail.com>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
+W:	https://wine-staging.com/

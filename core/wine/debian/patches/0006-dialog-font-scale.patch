@@ -1,0 +1,22 @@
+Author: CusDeb OS Team
+Description: Scale dialog template fonts by 5/4.
+ Dialog resources carry a fixed point size (almost always 8 pt).
+ xBaseUnit/yBaseUnit are measured from the created font, so scaling the
+ font in DIALOG_CreateIndirect scales the whole dialog proportionally,
+ controls included. 8 pt -> 14 px (10.5 pt at 96 DPI), matching the
+ CusDeb global UI font size.
+Last-Modified: Fri, 17 Jul 2026 13:39:56 +0300
+
+--- a/wine-src/dlls/user32/dialog.c
++++ b/wine-src/dlls/user32/dialog.c
+@@ -491,6 +491,10 @@
+             /* We convert the size to pixels and then make it -ve.  This works
+              * for both +ve and -ve template.pointSize */
+             int pixels = MulDiv(template.pointSize, GetDeviceCaps(dc , LOGPIXELSY), 72);
++            /* CusDeb: scale every dialog template font by 5/4 (8 pt -> 10 pt).
++             * xBaseUnit/yBaseUnit below are measured from this font, so the
++             * whole dialog scales proportionally with the text. */
++            pixels = MulDiv(pixels, 5, 4);
+             hUserFont = CreateFontW( -pixels, 0, 0, 0, template.weight,
+                                               template.italic, FALSE, FALSE, DEFAULT_CHARSET, 0, 0,
+                                               PROOF_QUALITY, FF_DONTCARE,

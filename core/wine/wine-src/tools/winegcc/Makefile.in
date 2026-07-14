@@ -1,0 +1,19 @@
+PROGRAMS = winegcc
+
+SOURCES = \
+	utils.c \
+	winegcc.c \
+	winegcc.man.in
+
+winegcc_SYMLINKS = winecpp wineg++
+
+winegcc_EXTRADEFS = \
+	-DINCLUDEDIR="\"${includedir}\"" \
+	-DBINDIR="\"${bindir}\"" \
+	-DLIBDIR="\"${libdir}\"" \
+	-DCC="\"$(CC)\"" \
+	-DCPP="\"$(CPPBIN)\"" \
+	-DCXX="\"$(CXX)\"" \
+	-DLD="\"$(LD)\""
+
+INSTALL_DEV = $(PROGRAMS) $(winegcc_SYMLINKS)

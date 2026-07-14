@@ -1,0 +1,11 @@
+MODULE    = winealsa.drv
+UNIXLIB   = winealsa.so
+IMPORTS   = uuid ole32 advapi32
+DELAYIMPORTS = winmm
+UNIX_LIBS    = $(ALSA_LIBS) $(PTHREAD_LIBS)
+
+SOURCES = \
+	alsa.c \
+	alsamidi.c \
+	midi.c \
+	mmdevdrv.c

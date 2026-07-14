@@ -1,0 +1,114 @@
+Author: CusDeb OS Team
+Description: Notify the shell on display mode switch without deadlocking or
+ stalling the caller.
+ Refreshing the winex11 driver state is safe under the win32u display devices
+ lock, but the WM_DISPLAYCHANGE notification itself is deferred until after the
+ lock is released: display_mode_changed() re-enters lock_display_devices() and
+ would deadlock on the non-recursive display_lock mutex. Externally driven
+ (XRandR) and self-initiated (desk.cpl) switches are both broadcast to all
+ top-level windows, including the ReactOS Explorer taskbar, and the broadcast
+ uses send_notify_message so a mode switch never blocks for 2s per top-level
+ window (previously desk.cpl froze and its window stopped repainting).
+Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
+--- a/wine-src/dlls/winex11.drv/xrandr.c
++++ b/wine-src/dlls/winex11.drv/xrandr.c
+@@ -406,6 +406,14 @@
+         return DISP_CHANGE_FAILED;
+ 
+     XFlush( gdi_display );
++    {
++        RECT rect;
++        /* Do not call NtUserCallNoParam_DisplayModeChanged here: it re-enters
++         * the win32u display devices lock. The notification is deferred to
++         * display_mode_changed() after the lock is released. */
++        rect = get_host_primary_monitor_rect();
++        xinerama_init( rect.right - rect.left, rect.bottom - rect.top );
++    }
+     return DISP_CHANGE_SUCCESSFUL;
+ }
+ 
+@@ -1210,16 +1218,48 @@
+     free( monitors );
+ }
+ 
+-static BOOL xrandr14_device_change_handler( HWND hwnd, XEvent *event )
++/* Refresh the driver state after a mode change. Safe to call while the win32u
++ * display devices lock is held (unlike xrandr14_notify_mode_changed()). */
++static void xrandr14_update_after_mode_changed(void)
+ {
+     RECT rect;
+ 
+     xrandr14_invalidate_current_mode_cache();
+-    if (hwnd == NtUserGetDesktopWindow() && NtUserGetWindowThread( hwnd, NULL ) == GetCurrentThreadId())
+-        NtUserCallNoParam( NtUserCallNoParam_DisplayModeChanged );
+     /* Update xinerama monitors for xinerama_get_fullscreen_monitors() */
+     rect = get_host_primary_monitor_rect();
+     xinerama_init( rect.right - rect.left, rect.bottom - rect.top );
++}
++
++/* Full mode-change notification. Must NOT be called while the win32u display
++ * devices lock is held: NtUserCallNoParam_DisplayModeChanged re-enters
++ * lock_display_devices() through display_mode_changed() and would deadlock on
++ * the non-recursive display_lock mutex. Self-initiated mode switches are
++ * notified later by display_mode_changed() after the lock is released. */
++static void xrandr14_notify_mode_changed(void)
++{
++    RECT rect;
++    DWORD width, height;
++
++    NtUserCallNoParam( NtUserCallNoParam_DisplayModeChanged );
++    /* Notify all top-level windows (including the ReactOS taskbar) that the
++     * display resolution changed. NtUserCallNoParam_DisplayModeChanged only
++     * sends WM_DISPLAYCHANGE to the desktop window. Use send_notify_message so
++     * we never block on a window that is busy inside the mode switch. */
++    rect = get_host_primary_monitor_rect();
++    width = rect.right - rect.left;
++    height = rect.bottom - rect.top;
++    send_notify_message( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp,
++                         MAKELPARAM( width, height ) );
++}
++
++static BOOL xrandr14_device_change_handler( HWND hwnd, XEvent *event )
++{
++    /* Refresh the driver state on every RRNotify event, like upstream did, so
++     * the process-global current-mode cache never goes stale. The notification
++     * itself is only relevant for the thread that owns the desktop window. */
++    xrandr14_update_after_mode_changed();
++    if (hwnd == NtUserGetDesktopWindow() && NtUserGetWindowThread( hwnd, NULL ) == GetCurrentThreadId())
++        xrandr14_notify_mode_changed();
+     return FALSE;
+ }
+ 
+@@ -1667,7 +1707,13 @@
+     if (output_info)
+         pXRRFreeOutputInfo( output_info );
+     pXRRFreeScreenResources( screen_resources );
+-    xrandr14_invalidate_current_mode_cache();
++    if (ret == DISP_CHANGE_SUCCESSFUL)
++        /* Only refresh the driver state here: this runs while the win32u
++         * display devices lock is held, so the WM_DISPLAYCHANGE notification
++         * is deferred to display_mode_changed() after the lock is released. */
++        xrandr14_update_after_mode_changed();
++    else
++        xrandr14_invalidate_current_mode_cache();
+     return ret;
+ }
+ 
+--- a/wine-src/dlls/win32u/sysparams.c
++++ b/wine-src/dlls/win32u/sysparams.c
+@@ -3843,9 +3843,12 @@
+         NtUserClipCursor( NULL );
+         send_notify_message( get_desktop_window(), WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
+-        send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+-                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ),
+-                              SMTO_ABORTIFHUNG, 2000, FALSE );
++        /* CusDeb: use send_notify_message instead of a blocking
++         * send_message_timeout broadcast. With many top-level windows the
++         * 2s-per-window timeout stalls the caller for tens of seconds (e.g.
++         * desk.cpl hangs and its window stops repainting on mode change). */
++        send_notify_message( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
++                             MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
+         /* post clip_fullscreen_window request to the foreground window */
+         NtUserPostMessage( NtUserGetForegroundWindow(), WM_WINE_CLIPCURSOR, SET_CURSOR_FSCLIP, 0 );
+     }

@@ -1,0 +1,34 @@
+Author: CusDeb OS Team
+Description: Resolve the push button label font from the DC.
+ Dialog push buttons drew their text with the .msstyles theme font
+ (Mizu: Source Sans Pro 9), slightly smaller than the dialog font used
+ by every other control. GetThemeFont now returns the font selected
+ into the DC, but only for the Button/PUSHBUTTON part; every other
+ class and part (clock, tabs, menus, ...) keeps the theme font, and the
+ whole theme drawing path is left intact. The start button is in scope
+ too (it resolves to the generic Button class), but shows no text since
+ its caption is a single space (cdex 0015-startbtn-no-text).
+Last-Modified: Fri, 17 Jul 2026 19:00:00 +0300
+
+--- a/wine-src/dlls/uxtheme/property.c
++++ b/wine-src/dlls/uxtheme/property.c
+@@ -123,6 +123,19 @@
+     if(!hTheme)
+         return E_HANDLE;
+ 
++    /* CusDeb: dialog push buttons take their label font from the font
++     * selected into the DC (the dialog font), not from the .msstyles
++     * theme, so their text matches the rest of the dialog. Scoped to the
++     * Button/PUSHBUTTON part only; every other class and part keeps the
++     * theme font. */
++    if(iPropId == TMT_FONT && iPartId == BP_PUSHBUTTON && hdc &&
++       !lstrcmpiW(((PTHEME_CLASS)hTheme)->szClassName, L"Button"))
++    {
++        HGDIOBJ hFont = GetCurrentObject(hdc, OBJ_FONT);
++        if(hFont && GetObjectW(hFont, sizeof(*pFont), pFont))
++            return S_OK;
++    }
++
+     if(!(tp = MSSTYLES_FindProperty(hTheme, iPartId, iStateId, TMT_FONT, iPropId)))
+         return E_PROP_ID_UNSUPPORTED;
+     return MSSTYLES_GetPropertyFont(tp, hdc, pFont);

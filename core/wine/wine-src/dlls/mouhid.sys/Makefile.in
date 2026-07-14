@@ -1,0 +1,8 @@
+MODULE        = mouhid.sys
+IMPORTS       = ntoskrnl hidparse win32u
+EXTRADLLFLAGS = -Wl,--subsystem,native
+
+SOURCES = \
+	main.c \
+	mouhid.rc \
+	mouhid.sys.spec
