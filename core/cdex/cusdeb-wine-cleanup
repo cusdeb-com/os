@@ -1,0 +1,31 @@
+#!/bin/bash
+# Stop Wine prefixes before systemd tears down the graphical login session.
+set -euo pipefail
+
+prefix_glob="${CUSDEB_WINE_CLEANUP_PREFIX_GLOB:-/home/*/.wine}"
+wine_arch="${CUSDEB_WINE_CLEANUP_WINEARCH:-win32}"
+current_user="$(id -un)"
+
+mapfile -t prefixes < <(compgen -G "$prefix_glob" || true)
+
+stop_prefix() {
+  local prefix="$1"
+  env \
+    WINEPREFIX="$prefix" \
+    WINEARCH="$wine_arch" \
+    WINEDEBUG=-all \
+    wineserver -k || true
+}
+
+for prefix in "${prefixes[@]}"; do
+  owner="$(stat -c '%U' "$prefix")"
+  if ! id -u "$owner" >/dev/null 2>&1; then
+    continue
+  fi
+
+  if [ "$owner" = "$current_user" ]; then
+    stop_prefix "$prefix"
+  else
+    runuser -u "$owner" -- "${BASH_SOURCE[0]}" || true
+  fi
+done

@@ -1,0 +1,77 @@
+Author: CusDeb OS Team
+Description: Register CLSID_NewMenu for Directory and Folder context menus.
+ Align the registration with the CNewMenu implementation (not only
+ Directory\Background), making the New submenu available inside folder
+ windows as well as on the desktop. Also resolve the context-menu handler
+ CLSID from the subkey's default value before falling back to the subkey
+ name, so friendly names such as "New" are not misinterpreted as ProgIDs
+ by CLSIDFromString under Wine.
+Last-Modified: Fri, 17 Jul 2026 17:20:00 +0300
+
+--- a/reactos-src/dll/win32/shell32/CDefaultContextMenu.cpp
++++ b/reactos-src/dll/win32/shell32/CDefaultContextMenu.cpp
+@@ -636,20 +636,25 @@
+         if (RegEnumKeyExW(hKey, dwIndex++, wszName, &cchName, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+             break;
+ 
+-        /* Key name or key value is CLSID */
++        /* Key name or key value is CLSID. Prefer the default value of the
++         * subkey because friendly names like "New" may otherwise be misinterpreted
++         * as a ProgID by CLSIDFromString (observed under Wine). */
+         CLSID clsid;
+-        hr = CLSIDFromString(wszName, &clsid);
+-        if (hr == S_OK)
+-            pwszClsid = wszName;
+-        else
++        hr = E_FAIL;
++        DWORD cbBuf = sizeof(wszBuf);
++        if (RegGetValueW(hKey, wszName, NULL, RRF_RT_REG_SZ, NULL, wszBuf, &cbBuf) == ERROR_SUCCESS && wszBuf[0])
+         {
+-            DWORD cchBuf = _countof(wszBuf);
+-            if (RegGetValueW(hKey, wszName, NULL, RRF_RT_REG_SZ, NULL, wszBuf, &cchBuf) == ERROR_SUCCESS)
+-                hr = CLSIDFromString(wszBuf, &clsid);
++            hr = CLSIDFromString(wszBuf, &clsid);
+             pwszClsid = wszBuf;
+         }
+ 
+         if (FAILED(hr))
++        {
++            hr = CLSIDFromString(wszName, &clsid);
++            pwszClsid = wszName;
++        }
++
++        if (FAILED(hr))
+         {
+             ERR("CLSIDFromString failed for clsid %S hr 0x%x\n", pwszClsid, hr);
+             continue;
+--- a/reactos-src/dll/win32/shell32/res/rgs/newmenu.rgs
++++ b/reactos-src/dll/win32/shell32/res/rgs/newmenu.rgs
+@@ -26,4 +26,28 @@
+ 			}
+ 		}
+ 	}
++	NoRemove Directory
++	{
++		NoRemove shellex
++		{
++			NoRemove ContextMenuHandlers
++			{
++				ForceRemove New = s '{D969A300-E7FF-11d0-A93B-00A0C90F2719}'
++				{
++				}
++			}
++		}
++	}
++	NoRemove Folder
++	{
++		NoRemove shellex
++		{
++			NoRemove ContextMenuHandlers
++			{
++				ForceRemove New = s '{D969A300-E7FF-11d0-A93B-00A0C90F2719}'
++				{
++				}
++			}
++		}
++	}
+ }

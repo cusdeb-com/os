@@ -1,0 +1,18 @@
+#!/bin/bash
+# CusDeb shutdown helper, invoked by the Linux-side ReactOS bridge.
+set -euo pipefail
+
+action="${1:-}"
+
+case "$action" in
+  poweroff)
+    exec poweroff
+    ;;
+  reboot)
+    exec reboot
+    ;;
+  *)
+    printf 'Unknown action: %s\n' "$action" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,7 @@
+add_subdirectory(biditext)
+add_subdirectory(messagebox)
+add_subdirectory(paintdesktop)
+add_subdirectory(psmtest)
+add_subdirectory(sysicon)
+add_subdirectory(useridletime)
+add_subdirectory(winstation)

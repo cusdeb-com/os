@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
+export WINEARCH=win32
+export WINEDEBUG="${WINEDEBUG:--all}"
+export WINEDLLOVERRIDES="desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
+
+cd "$WINEPREFIX/drive_c/windows/system32"
+exec wine control.exe desk.cpl

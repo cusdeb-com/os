@@ -1,0 +1,19 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: cdex-base
+Source: https://github.com/cusdeb-com/os
+
+Files: *
+Copyright: 2026 CusDeb
+License: Proprietary
+
+Files: fonts/ubuntu-font-family-0.83/*
+Copyright: 2010-2011 Canonical Ltd
+License: Ubuntu-Font-Licence-1.0
+ The Ubuntu Font Family is redistributed under the Ubuntu Font Licence
+ 1.0; the full licence text ships alongside the font in
+ fonts/ubuntu-font-family-0.83/LICENCE.txt and in the binary package at
+ /usr/share/doc/cdex-base/ubuntu-font/LICENCE.txt.
+ At build time the font's GASP table is rewritten (tools/gasp_patch.py)
+ so FreeType renders it antialiased at every size. As required by UFL 1.0
+ clause 2(c) for Modified Versions, the family is renamed to
+ "Ubuntu derivative CusDeb" (tools/rename_font.py).

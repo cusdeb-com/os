@@ -1,0 +1,190 @@
+#!/bin/sh
+set -eu
+
+# Shared helper used by the per-application Debian maintainer scripts to
+# create or remove Windows-style shortcuts for the CusDeb Win32 desktop.
+# It is installed by cdex-base and must therefore be available when any
+# application package (mspaint, cdex-calc, winmine, spider) is configured.
+
+CDEX_SHARE_DIR="/usr/share/cusdeb/cdex"
+
+usage() {
+    cat >&2 <<EOF
+Usage: ${0##*/} create <desktop-rel> <programs-rel> <target> <workdir> <desc> [icon]
+       ${0##*/} remove  <desktop-rel> <programs-rel>
+
+  desktop-rel   Name shown on the desktop (e.g. "Spider Solitaire").
+                  Use "-" to create only a Start Menu\Programs shortcut.
+  programs-rel  Path under Start Menu\Programs (e.g. "Games\\Spider Solitaire").
+  target        Windows target path (e.g. "C:\\reactos\\spider.exe").
+  workdir       Windows working directory (e.g. "C:\\reactos").
+  desc          Shortcut description.
+  icon          Optional IconLocation (e.g. "C:\\windows\\system32\\shell32.dll,15").
+
+The helper loops over /root and /home/*, skipping users without a ~/.wine
+prefix.  Shortcut creation runs as the target user so Wine registry access
+and file ownership are correct.  Failures during the Wine call are not
+fatal: shortcuts will be recreated on the next login by cusdeb-win32-session.
+EOF
+    exit 2
+}
+
+# Resolve the Linux path of a Wine user profile directory.  Wine creates
+# drive_c/users/<linux-username>, so the username itself is the profile name.
+wine_user_profile_dir() {
+    printf '%s' "$1/.wine/drive_c/users/$2"
+}
+
+# Set up the minimal environment Wine needs to read the registry and draw
+# a hidden cscript window.  If apt was invoked from a running X session,
+# forward DISPLAY and XAUTHORITY; otherwise fall back to the local display
+# and the target user's own .Xauthority file.
+runuser_wine_env() {
+    local user="$1" uid="$2"
+    shift 2
+    runuser -w DISPLAY -w XAUTHORITY -u "$user" -- sh -c '
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/'"$uid"'/bus"
+        export XDG_RUNTIME_DIR="/run/user/'"$uid"'"
+        export WINEPREFIX="$HOME/.wine"
+        export WINEARCH=win32
+        export WINEDEBUG=-all
+        # Use the built-in ReactOS shell DLLs so shortcuts match the payload.
+        export WINEDLLOVERRIDES="winemenubuilder.exe=d;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b"
+        export DISPLAY="${DISPLAY:-:0}"
+        export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+        [ -r "$XAUTHORITY" ] || export XAUTHORITY="$HOME/.Xauthority"
+        "$@"
+    ' sh "$@"
+}
+
+# Stage a generic JScript in the user's Wine prefix, run it, and remove it.
+# The script reads the Shell Folders registry key to discover Desktop/Programs
+# locations, so it works regardless of locale or profile layout.
+run_jscript_for_user() {
+    local user="$1" uid="$2" js_code="$3"
+    local user_home js_basename js_path
+
+    user_home=$(getent passwd "$user" | cut -d: -f6)
+    js_basename="create-one-shortcut-$$.js"
+    js_path="$user_home/.wine/drive_c/$js_basename"
+
+    install -d "$user_home/.wine/drive_c"
+    printf '%s\n' "$js_code" > "$js_path"
+    chmod 644 "$js_path"
+    chown "$user:" "$js_path"
+
+    shift 3
+    runuser_wine_env "$user" "$uid" wine cscript.exe //nologo "C:\\$js_basename" "$@"
+    rm -f "$js_path"
+}
+
+# Create one shortcut (Desktop or Programs) inside every existing Wine prefix.
+create_one() {
+    local location="$1" rel="$2" target="$3" workdir="$4" desc="$5" icon="${6:-}"
+    local js_code
+
+    js_code='var shell = WScript.CreateObject("WScript.Shell");
+var fso = WScript.CreateObject("Scripting.FileSystemObject");
+var locationKey = WScript.Arguments(0);
+var relPath = WScript.Arguments(1);
+var target = WScript.Arguments(2);
+var workdir = WScript.Arguments(3);
+var desc = WScript.Arguments(4);
+var icon = WScript.Arguments.length > 5 ? WScript.Arguments(5) : "";
+var shellFolders = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders\\";
+var baseDir = shell.RegRead(shellFolders + locationKey);
+function ensureFolder(path) {
+  if (fso.FolderExists(path)) return;
+  var parent = fso.GetParentFolderName(path);
+  if (parent && !fso.FolderExists(parent)) ensureFolder(parent);
+  fso.CreateFolder(path);
+}
+var path = baseDir + "\\" + relPath + ".lnk";
+ensureFolder(fso.GetParentFolderName(path));
+if (fso.FileExists(path)) fso.DeleteFile(path);
+var link = shell.CreateShortcut(path);
+link.TargetPath = target;
+link.WorkingDirectory = workdir;
+link.Description = desc;
+if (icon) link.IconLocation = icon;
+link.Save();'
+
+    for user_home in /root /home/*; do
+        [ -d "$user_home" ] || continue
+        [ -d "$user_home/.wine" ] || continue
+        local user uid
+        user=$(stat -c '%U' "$user_home" 2>/dev/null || true)
+        [ -n "$user" ] || continue
+        uid=$(id -u "$user")
+
+        # Do not fail the whole package if one user cannot create shortcuts;
+        # cusdeb-win32-session will repair them at the next login.
+        run_jscript_for_user "$user" "$uid" "$js_code" "$location" "$rel" "$target" "$workdir" "$desc" ${icon:+"$icon"} >/dev/null 2>&1 || true
+    done
+}
+
+# Remove the .lnk files for one application from every existing Wine prefix.
+# This uses direct filesystem deletion instead of Wine so it works even when
+# no X session is available.
+remove_one() {
+    local location="$1" rel="$2"
+    local rel_linux
+    rel_linux=$(printf '%s' "$rel" | tr '\\' '/')
+
+    for user_home in /root /home/*; do
+        [ -d "$user_home" ] || continue
+        [ -d "$user_home/.wine" ] || continue
+        local user
+        user=$(stat -c '%U' "$user_home" 2>/dev/null || true)
+        [ -n "$user" ] || continue
+
+        local profile_dir base_dir
+        profile_dir=$(wine_user_profile_dir "$user_home" "$user")
+        case "$location" in
+            Desktop)
+                base_dir="$profile_dir/Desktop" ;;
+            Programs)
+                base_dir="$profile_dir/AppData/Roaming/Microsoft/Windows/Start Menu/Programs" ;;
+            *)
+                continue ;;
+        esac
+
+        rm -f "$base_dir/${rel_linux}.lnk"
+    done
+}
+
+cmd_create() {
+    local desktop_rel="$1" programs_rel="$2" target="$3" workdir="$4" desc="$5" icon="${6:-}"
+    if [ -n "$desktop_rel" ] && [ "$desktop_rel" != "-" ]; then
+        create_one Desktop "$desktop_rel" "$target" "$workdir" "$desc" "$icon"
+    fi
+    create_one Programs "$programs_rel" "$target" "$workdir" "$desc" "$icon"
+}
+
+cmd_remove() {
+    local desktop_rel="$1" programs_rel="$2"
+    if [ -n "$desktop_rel" ] && [ "$desktop_rel" != "-" ]; then
+        remove_one Desktop "$desktop_rel"
+    fi
+    remove_one Programs "$programs_rel"
+}
+
+[ "$#" -ge 1 ] || usage
+cmd="$1"
+shift
+
+case "$cmd" in
+    create)
+        [ "$#" -ge 5 ] || usage
+        cmd_create "$@"
+        ;;
+    remove)
+        [ "$#" -ge 2 ] || usage
+        cmd_remove "$@"
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+exit 0

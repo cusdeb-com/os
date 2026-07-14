@@ -1,0 +1,56 @@
+Author: CusDeb OS Team
+Description: Persist the display resolution on WM_DISPLAYCHANGE.
+ The X server always starts at its own default mode, so a resolution chosen in
+ desk.cpl is lost on the next login. Save the current mode to
+ C:\cusdeb\resolution on every WM_DISPLAYCHANGE so the session can re-apply it
+ via xrandr at startup. A desk.cpl revert re-triggers the message and rewrites
+ the file with the reverted mode, so the file always holds the final mode.
+Last-Modified: Wed, 22 Jul 2026 18:00:00 +0300
+
+--- a/reactos-src/base/shell/explorer/traywnd.cpp
++++ b/reactos-src/base/shell/explorer/traywnd.cpp
+@@ -21,6 +21,34 @@
+ #define AUTOHIDE_DELAY_SHOW 50
+ #define AUTOHIDE_INTERVAL_ANIMATING 10
+ 
++/* Persist the current display resolution so the session can re-apply it on the
++ * next login. The X server always starts at its own default mode, so the user's
++ * choice would otherwise be lost. Written on every WM_DISPLAYCHANGE; the file
++ * always ends up holding the final mode (a desk.cpl revert re-triggers the
++ * message and overwrites it back). */
++static VOID SaveCurrentResolution(VOID)
++{
++    int cx = GetSystemMetrics(SM_CXSCREEN);
++    int cy = GetSystemMetrics(SM_CYSCREEN);
++    HANDLE hFile;
++    char buf[32];
++    int len;
++    DWORD written;
++
++    if (cx <= 0 || cy <= 0)
++        return;
++
++    CreateDirectoryA("C:\\cusdeb", NULL);
++    hFile = CreateFileA("C:\\cusdeb\\resolution", GENERIC_WRITE, 0, NULL,
++                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (hFile == INVALID_HANDLE_VALUE)
++        return;
++
++    len = snprintf(buf, sizeof(buf), "%dx%d", cx, cy);
++    WriteFile(hFile, buf, len, &written, NULL);
++    CloseHandle(hFile);
++}
++
+ #define AUTOHIDE_SPEED_SHOW 10
+ #define AUTOHIDE_SPEED_HIDE 1
+ 
+@@ -2506,6 +2534,9 @@
+         /* Move the tray window to the right position and resize it if necessary */
+         CheckTrayWndPosition();
+ 
++        /* Persist the new resolution for the next login */
++        SaveCurrentResolution();
++
+         return TRUE;
+     }
+ 

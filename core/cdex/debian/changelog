@@ -1,0 +1,118 @@
+cdex (0.0.1-11cd) trixie; urgency=medium
+
+  * Add 0018-start-menu-global-unfocus.patch: close the Start Menu when focus
+    moves outside the menu hierarchy. Use a short timer on WM_ACTIVATEAPP
+    deactivation, verify the real foreground window, and cancel the menu only
+    if it does not belong to the menu itself, a submenu parent, the focus
+    manager, or the taskbar. This makes the Start Menu close on a desktop
+    click while keeping dropdown submenus usable.
+  * Fix a CComPtr::operator& debug assertion in _IsSubMenuParent by using a
+    temporary CComPtr when walking the submenu parent chain.
+
+ -- Artem <artem@example.com>  Thu, 23 Jul 2026 19:40:02 +0300
+
+cdex (0.0.1-10cd) trixie; urgency=medium
+
+  * Move runtime scripts from /usr/local/bin to /usr/bin to follow Debian
+    packaging policy; update Makefile, install manifest, session files,
+    shutdown wrappers and taskbar bridge accordingly.
+  * Drop the now-empty override_dh_usrlocal rule.
+
+ -- Artem <artem@example.com>  Thu, 23 Jul 2026 12:35:05 +0300
+
+cdex (0.0.1-9cd) trixie; urgency=medium
+
+  * Add 0016-desktop-resize-on-displaychange.patch: defer the Program Manager
+    resize out of the WM_DISPLAYCHANGE broadcast and retry on a timer until
+    the work area becomes valid, so the desktop resizes to the new resolution
+    and a resolution decrease no longer collapses it to a zero-size window.
+  * Disable mscoree in create_reactos_shortcuts so Wine Mono Installer does
+    not block the first login on a fresh prefix.
+  * Set the desktop background color only once on prefix creation and ship it
+    in the ChooseColor custom palette, instead of force-resetting it on every
+    login, so the user's own choice persists.
+  * Add 0017-save-resolution-on-displaychange.patch: persist the display
+    resolution chosen in desk.cpl and re-apply it via xrandr early on login,
+    so it survives the X server restarting at its default mode.
+  * Depend on wine (>= 10.0.1-4cd), relaxed from an exact match so wine can
+    be upgraded without leaving cdex-base in a broken state.
+
+ -- Artem <artem@example.com>  Wed, 22 Jul 2026 13:35:00 +0300
+
+cdex (0.0.1-8cd) trixie; urgency=medium
+
+  * Enlarge the UI font to match the global size:
+    - WindowMetrics LOGFONT heights: caption/message/status -17,
+      menu/icon/smcaption -14 (via ensure_reactos_ui_settings);
+    - openbox title/menu fonts 8 -> 10 pt in openbox/rc.xml.
+  * Add 0013-uxtheme-sysfont-fallback.patch and
+    0014-uxtheme-getthemefont-unsupported.patch: the ReactOS uxtheme
+    (native build) ignores .msstyles fonts; GetThemeSysFont falls back
+    to the system (registry) fonts, GetThemeFont reports no per-part
+    fonts so callers keep the DC (dialog/stock) font.
+  * Add 0015-startbtn-no-text.patch: single-space caption for the
+    icon-only start button, doubled width.
+  * Add ensure_reactos_ui_settings and ensure_reactos_desktop_background:
+    Winlogon\Shell, FontSubstitutes, font Replacements and WindowMetrics
+    are separated from the desktop background color and re-applied via
+    reg_add on every login, so wine.inf re-runs (after Wine upgrades) and
+    theme applications can no longer clobber them.
+  * Fix reg_add_logfont byte order: the LOGFONTW lfHeight field is
+    little-endian, so the hex value passed to wine reg add must start
+    with the least-significant byte (e.g. -17 -> EF FF FF FF).
+  * Clean 0012-new-menu.patch format (drop a stray test hunk and the
+    forbidden Index:/work.orig lines).
+  * Depend on wine 10.0.1-3cd (larger DEFAULT_GUI_FONT, scaled dialog
+    fonts, scoped Button/PUSHBUTTON label font).
+
+ -- Artem <artem@example.com>  Fri, 17 Jul 2026 21:00:00 +0300
+
+cdex (0.0.1-7cd) trixie; urgency=medium
+
+  * Vendor Ubuntu Font Family 0.83 (Regular/Bold/Regular-Italic) and patch
+    it at build time: rewrite the GASP table so FreeType antialiases it at
+    every size (tools/gasp_patch.py) and rename the family to
+    "Ubuntu derivative CusDeb" per UFL 1.0 clause 2(c)
+    (tools/rename_font.py, with LF_FACESIZE guard against wine stack
+    smashing on long name strings).
+  * Register the new family as the ReactOS/Wine UI font in
+    reactos-registry.sh (desktop icons, taskbar, menus, dialogs).
+  * Add fontconfig/52-cusdeb-ubuntu.conf so the Linux side (Openbox, GTK,
+    LightDM greeter) also prefers the bundled family for sans-serif.
+
+ -- Artem <artem@example.com>  Thu, 16 Jul 2026 14:53:08 +0300
+
+cdex (0.0.1-6cd) trixie; urgency=medium
+
+  * Replace missing Setup.png wallpaper with solid #5D81AB background in
+    lightdm-gtk-greeter config.
+  * Fix ReactOS desktop background registry color to match openbox
+    (#5D81AB).
+
+ -- Artem <artem@example.com>  Tue, 14 Jul 2026 13:22:13 +0000
+
+cdex (0.0.1-5cd) trixie; urgency=medium
+
+  * Add libnss-resolve and libnss-myhostname to cdex-base Depends to
+    ensure DNS resolution works when APT::Install-Recommends is disabled.
+
+ -- Artem <artem@example.com>  Tue, 14 Jul 2026 11:05:00 +0000
+
+cdex (0.0.1-4cd) trixie; urgency=medium
+
+  * Refactor ReactOS patches: merge 21 patches into 12 task-focused
+    Debian-format patches and add canonical .quiltrc.
+
+ -- Artem <artem@example.com>  Tue, 14 Jul 2026 09:02:14 +0000
+
+cdex (0.0.1-3cd) trixie; urgency=medium
+
+  * Add cdex-full metapackage.
+
+ -- Artem <artem@example.com>  Fri, 10 Jul 2026 14:50:45 +0000
+
+cdex (0.0.1-2cd) trixie; urgency=medium
+
+  * Initial Debian package for CusDeb ReactOS Explorer DE.
+
+ -- Artem <artem@example.com>  Thu, 19 Jun 2026 12:00:00 +0000

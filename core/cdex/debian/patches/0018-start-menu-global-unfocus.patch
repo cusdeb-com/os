@@ -1,0 +1,208 @@
+Author: CusDeb OS Team
+Description: Close Start Menu on global unfocus via WM_ACTIVATEAPP timer.
+ Use a short timer after WM_ACTIVATEAPP(wParam=0) to verify the real
+ foreground window and cancel the menu only if focus moved outside the
+ menu hierarchy. Also fix CComPtr::operator& assertion in
+ _IsSubMenuParent by using a temporary CComPtr.
+Last-Modified: Thu, 23 Jul 2026 15:00:00 +0300
+
+--- a/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
++++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
+@@ -22,6 +22,7 @@
+ #include <shlwapi_undoc.h>
+ 
+ #include "CMenuDeskBar.h"
++#include "CMenuFocusManager.h"
+ 
+ /* As far as I can tell, the submenu hierarchy looks like this:
+ *
+@@ -52,6 +53,7 @@
+     m_Banner(NULL),
+     m_Shown(FALSE),
+     m_ShowFlags(0),
++    m_InUnfocusCheck(FALSE),
+     m_didAddRef(FALSE)
+ {
+ }
+@@ -627,6 +629,7 @@
+     CComPtr<IDeskBar> safeThis = this;
+ 
+     m_Shown = false;
++    m_InUnfocusCheck = FALSE;
+ 
+     if (m_SubMenuParent)
+     {
+@@ -649,7 +652,10 @@
+         return hr;
+ 
+     if (m_hWnd)
++    {
++        KillTimer(IDT_CUSDEB_ACTIVATECHECK);
+         SetWindowPos(NULL, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOACTIVATE | SWP_NOMOVE);
++    }
+ 
+     return UIActivateIO(FALSE, NULL);
+ }
+@@ -669,9 +675,13 @@
+         if (hwnd == parent)
+             return TRUE;
+ 
+-        hr = IUnknown_GetSite(popup, IID_PPV_ARG(IMenuPopup, &popup));
++        // CusDeb: do not pass &popup directly because popup already holds a
++        // pointer; CComPtr::operator& asserts in debug ATL when p != NULL.
++        CComPtr<IMenuPopup> next;
++        hr = IUnknown_GetSite(popup, IID_PPV_ARG(IMenuPopup, &next));
+         if (FAILED(hr))
+             return FALSE;
++        popup = next;
+     }
+ 
+     return FALSE;
+@@ -798,12 +808,88 @@
+ 
+ LRESULT CMenuDeskBar::_OnAppActivate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+ {
+-#if 0
+-    if (wParam == 0 && m_Shown)
++    // CusDeb: close the start menu when the app really loses activation to a
++    // window outside the menu hierarchy. We cannot rely solely on the thread
++    // local WH_GETMESSAGE hook because it does not see clicks in windows that
++    // belong to other threads/processes. WM_ACTIVATEAPP is the cross-thread
++    // signal, but Wine/ReactOS also emits spurious deactivation events while
++    // the menu is still in use. Therefore we arm a short timer and check the
++    // actual foreground window only after the dust settles.
++    if (wParam == 0)
+     {
+-        OnSelect(MPOS_FULLCANCEL);
++        if (m_hWnd && m_Shown)
++            SetTimer(IDT_CUSDEB_ACTIVATECHECK, 50);
++    }
++    else
++    {
++        KillTimer(IDT_CUSDEB_ACTIVATECHECK);
++    }
++
++    return 0;
++}
++
++LRESULT CMenuDeskBar::_OnTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
++{
++    if (wParam != IDT_CUSDEB_ACTIVATECHECK)
++    {
++        bHandled = FALSE;
++        return 0;
+     }
+-#endif
++
++    // Prevent re-entrant close: IsTrackedWindowOrParent and other COM calls
++    // below may pump messages or call back into this DeskBar and close it.
++    if (m_InUnfocusCheck)
++        return 0;
++    m_InUnfocusCheck = TRUE;
++
++    KillTimer(IDT_CUSDEB_ACTIVATECHECK);
++
++    if (!m_Shown || !m_hWnd)
++    {
++        m_InUnfocusCheck = FALSE;
++        return 0;
++    }
++
++    HWND fg = ::GetForegroundWindow();
++    if (fg == NULL || fg == m_hWnd)
++    {
++        m_InUnfocusCheck = FALSE;
++        return 0;
++    }
++
++    if (_IsSubMenuParent(fg))
++    {
++        m_InUnfocusCheck = FALSE;
++        return 0;
++    }
++
++    CMenuFocusManager *mgr = CMenuFocusManager::GetManager();
++    if (mgr && mgr->IsTrackedWindowOrParent(fg) == S_OK)
++    {
++        m_InUnfocusCheck = FALSE;
++        return 0;
++    }
++
++    // Top-level menu: the tray/taskbar window is also considered "ours".
++    if (!m_SubMenuParent && m_Site)
++    {
++        CComPtr<IOleWindow> siteWnd;
++        if (SUCCEEDED(m_Site->QueryInterface(IID_PPV_ARG(IOleWindow, &siteWnd))))
++        {
++            HWND owner;
++            if (SUCCEEDED(siteWnd->GetWindow(&owner)) && fg == owner)
++            {
++                m_InUnfocusCheck = FALSE;
++                return 0;
++            }
++        }
++    }
++
++    // Re-check state in case a nested close happened above.
++    if (m_Shown && m_hWnd)
++        OnSelect(MPOS_FULLCANCEL);
++
++    m_InUnfocusCheck = FALSE;
+     return 0;
+ }
+ 
+--- a/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
++++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
+@@ -51,6 +51,8 @@
+     BOOL  m_Shown;
+     DWORD m_ShowFlags;
+ 
++    BOOL m_InUnfocusCheck;
++
+     BOOL m_didAddRef;
+ 
+     virtual void OnFinalMessage(HWND hWnd);
+@@ -75,6 +77,7 @@
+         MESSAGE_HANDLER(WM_WININICHANGE , _OnWinIniChange)
+         MESSAGE_HANDLER(WM_NCPAINT, _OnNcPaint)
+         MESSAGE_HANDLER(WM_CLOSE, _OnClose)
++        MESSAGE_HANDLER(WM_TIMER, _OnTimer)
+     END_MSG_MAP()
+ 
+     BEGIN_COM_MAP(CMenuDeskBar)
+@@ -144,6 +147,9 @@
+     LRESULT _OnWinIniChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+     LRESULT _OnNcPaint(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+     LRESULT _OnClose(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
++    LRESULT _OnTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
++
++    static const UINT IDT_CUSDEB_ACTIVATECHECK = 0xC0DE0001;
+ 
+     HRESULT _AdjustForTheme(BOOL bFlatStyle);
+     BOOL _IsSubMenuParent(HWND hwnd);
+
+--- a/reactos-src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
++++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
+@@ -28,8 +28,10 @@
+ private:
+     static DWORD TlsIndex;
+ 
++public:
+     static CMenuFocusManager * GetManager();
+ 
++private:
+     enum StackEntryType
+     {
+         NoEntry,
+@@ -109,8 +111,11 @@
+     HRESULT RemoveHooks();
+     HRESULT UpdateFocus();
+     HRESULT IsTrackedWindow(HWND hWnd, StackEntry ** pentry = NULL);
++
++public:
+     HRESULT IsTrackedWindowOrParent(HWND hWnd);
+ 
++private:
+     void DisableMouseTrack(HWND parent, BOOL disableThis);
+     void SetMenuCapture(HWND child);
+ 

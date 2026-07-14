@@ -1,0 +1,285 @@
+Author: CusDeb OS Team
+Description: Harden the Recycle Bin implementation. Fix the Properties dialog
+ initialization so drive items are allocated before insertion and the dialog
+ survives empty drive lists. Use the ReactOS native DeleteFileToRecycleBinW API
+ in SHFileOperationW so files deleted through the shell are moved to the
+ Recycle Bin instead of being permanently deleted, guarding against short or
+ non-canonical paths. Fix Recycle Bin item attribute reporting for CDefView by
+ validating items and reporting folder attributes correctly. Skip inaccessible
+ drives when emptying and during system-wide enumeration, because Wine exposes
+ the Unix root drive (Z:) as a fixed drive but denies access to its recycle
+ bin. Force the desktop Recycle Bin icon to refresh after emptying by calling
+ SHUpdateRecycleBinIcon, which sends SHCNE_UPDATEIMAGE(-1) and reliably
+ refreshes every desktop icon.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/dll/win32/shell32/dialogs/recycler_prop.cpp
++++ b/reactos-src/dll/win32/shell32/dialogs/recycler_prop.cpp
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <precomp.h>
++#include <commctrl.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(CRecycleBin);
+ 
+@@ -109,65 +110,100 @@ InitializeRecycleBinDlg(HWND hwndDlg, WC
+                 if (!GetVolumeInformationW(szDrive, szName, _countof(szName), &dwSerial, &MaxComponent, &Flags, NULL, 0))
+                 {
+                     szName[0] = 0;
+-                    dwSerial = -1;
++                    dwSerial = (DWORD)-1;
+                 }
+ 
+                 swprintf(szVolume, L"%s (%c:)", szName, szDrive[0]);
++
++                pItem = (DRIVE_ITEM_CONTEXT *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DRIVE_ITEM_CONTEXT));
++                if (!pItem)
++                    continue;
++
++                pItem->dwSerial = dwSerial;
++
++                swprintf(szName, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\BitBucket\\Volume\\%04X-%04X", LOWORD(dwSerial), HIWORD(dwSerial));
++
++                dwSize = sizeof(DWORD);
++                if (RegGetValueW(HKEY_CURRENT_USER, szName, L"MaxCapacity", RRF_RT_DWORD, NULL, &pItem->dwMaxCapacity, &dwSize))
++                    pItem->dwMaxCapacity = ~0;
++
++                dwSize = sizeof(DWORD);
++                RegGetValueW(HKEY_CURRENT_USER, szName, L"NukeOnDelete", RRF_RT_DWORD, NULL, &pItem->dwNukeOnDelete, &dwSize);
++
+                 ZeroMemory(&li, sizeof(li));
+                 li.mask = LVIF_TEXT | LVIF_PARAM;
+                 li.iSubItem = 0;
+                 li.pszText = szVolume;
+                 li.iItem = itemCount;
+-                SendMessageW(hDlgCtrl, LVM_INSERTITEMW, 0, (LPARAM)&li);
+-                if (GetDiskFreeSpaceExW(szDrive, &FreeBytesAvailable, &TotalNumberOfBytes, &TotalNumberOfFreeBytes))
++                li.lParam = (LPARAM)pItem;
++                if (SendMessageW(hDlgCtrl, LVM_INSERTITEMW, 0, (LPARAM)&li) == -1)
++                {
++                    HeapFree(GetProcessHeap(), 0, pItem);
++                }
++                else
+                 {
+-                    if (StrFormatByteSizeW(TotalNumberOfFreeBytes.QuadPart, szVolume, _countof(szVolume)))
++                    if (GetDiskFreeSpaceExW(szDrive, &FreeBytesAvailable, &TotalNumberOfBytes, &TotalNumberOfFreeBytes))
+                     {
+-                        pItem = (DRIVE_ITEM_CONTEXT *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DRIVE_ITEM_CONTEXT));
+-                        if (pItem)
+-                        {
+-                            pItem->FreeBytesAvailable = FreeBytesAvailable;
+-                            pItem->dwSerial = dwSerial;
+-
+-                            swprintf(szName, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\BitBucket\\Volume\\%04X-%04X", LOWORD(dwSerial), HIWORD(dwSerial));
+-
+-                            dwSize = sizeof(DWORD);
+-                            if (RegGetValueW(HKEY_CURRENT_USER, szName, L"MaxCapacity", RRF_RT_DWORD, NULL, &pItem->dwMaxCapacity, &dwSize))
+-                                pItem->dwMaxCapacity = ~0;
+-
+-                            /* Check if the maximum capacity doesn't exceed the available disk space (in megabytes), and truncate it if needed */
+-                            FreeBytesAvailable.QuadPart = (FreeBytesAvailable.QuadPart / (1024 * 1024));
+-                            pItem->dwMaxCapacity = min(pItem->dwMaxCapacity, FreeBytesAvailable.LowPart);
++                        pItem->FreeBytesAvailable = FreeBytesAvailable;
+ 
+-                            dwSize = sizeof(DWORD);
+-                            RegGetValueW(HKEY_CURRENT_USER, szName, L"NukeOnDelete", RRF_RT_DWORD, NULL, &pItem->dwNukeOnDelete, &dwSize);
++                        /* Check if the maximum capacity doesn't exceed the available disk space (in megabytes), and truncate it if needed */
++                        FreeBytesAvailable.QuadPart = (FreeBytesAvailable.QuadPart / (1024 * 1024));
++                        pItem->dwMaxCapacity = min(pItem->dwMaxCapacity, FreeBytesAvailable.LowPart);
+ 
+-                            li.mask = LVIF_PARAM;
+-                            li.lParam = (LPARAM)pItem;
++                        if (StrFormatByteSizeW(TotalNumberOfFreeBytes.QuadPart, szVolume, _countof(szVolume)))
++                        {
++                            li.mask = LVIF_TEXT;
++                            li.iSubItem = 1;
++                            li.pszText = szVolume;
++                            li.iItem = itemCount;
+                             (void)SendMessageW(hDlgCtrl, LVM_SETITEMW, 0, (LPARAM)&li);
+-                            if (szDrive[0] == DefaultDrive)
+-                            {
+-                                defIndex = itemCount;
+-                                pDefault = pItem;
+-                            }
+                         }
+-                        if (!pFirst)
+-                            pFirst = pItem;
++                    }
+ 
+-                        li.mask = LVIF_TEXT;
+-                        li.iSubItem = 1;
+-                        li.pszText = szVolume;
+-                        li.iItem = itemCount;
+-                        (void)SendMessageW(hDlgCtrl, LVM_SETITEMW, 0, (LPARAM)&li);
++                    if (szDrive[0] == DefaultDrive)
++                    {
++                        defIndex = itemCount;
++                        pDefault = pItem;
+                     }
++                    if (!pFirst)
++                        pFirst = pItem;
++
++                    itemCount++;
+                 }
+-                itemCount++;
+             }
+         }
+         szDrive[0]++;
+         dwDrives = (dwDrives >> 1);
+     } while (dwDrives);
+ 
++    if (itemCount == 0)
++    {
++        pItem = (DRIVE_ITEM_CONTEXT *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DRIVE_ITEM_CONTEXT));
++        if (pItem)
++        {
++            pItem->dwSerial = (DWORD)-1;
++            pItem->dwMaxCapacity = ~0;
++
++            wcscpy(szVolume, L"(Recycle Bin)");
++            ZeroMemory(&li, sizeof(li));
++            li.mask = LVIF_TEXT | LVIF_PARAM;
++            li.iSubItem = 0;
++            li.pszText = szVolume;
++            li.iItem = 0;
++            li.lParam = (LPARAM)pItem;
++            if (SendMessageW(hDlgCtrl, LVM_INSERTITEMW, 0, (LPARAM)&li) == -1)
++            {
++                HeapFree(GetProcessHeap(), 0, pItem);
++            }
++            else
++            {
++                pDefault = pItem;
++                pFirst = pItem;
++                itemCount = 1;
++            }
++        }
++    }
++
+     if (!pDefault)
+         pDefault = pFirst;
+     if (pDefault)
+@@ -406,6 +442,13 @@ RecycleBinDlg(
+ 
+ HRESULT RecycleBin_AddPropSheetPages(LPFNSVADDPROPSHEETPAGE pfnAddPage, LPARAM lParam)
+ {
++    INITCOMMONCONTROLSEX iccex;
++    iccex.dwSize = sizeof(iccex);
++    iccex.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_WIN95_CLASSES;
++    InitCommonControlsEx(&iccex);
++
+     HPROPSHEETPAGE hpsp = SH_CreatePropertySheetPage(IDD_RECYCLE_BIN_PROPERTIES, RecycleBinDlg, 0, NULL);
++    if (!hpsp)
++        return E_FAIL;
+     return AddPropSheetPage(hpsp, pfnAddPage, lParam);
+ }
+--- a/reactos-src/dll/win32/shell32/folders/CRecycleBin.cpp
++++ b/reactos-src/dll/win32/shell32/folders/CRecycleBin.cpp
+@@ -861,11 +861,19 @@ HRESULT WINAPI CRecycleBin::GetAttribute
+             *rgfInOut &= ~SFGAO_HASPROPSHEET;
+         return hr;
+     }
++
+     SFGAOF remain = SFGAO_LINK & *rgfInOut;
+-    *rgfInOut &= remain | SFGAO_HASPROPSHEET | SFGAO_CANDELETE | SFGAO_FILESYSTEM; // TODO: SFGAO_CANMOVE
+-    for (UINT i = 0; (*rgfInOut & remain) && i < cidl && SUCCEEDED(hr); ++i)
++    *rgfInOut &= remain | SFGAO_HASPROPSHEET | SFGAO_CANDELETE | SFGAO_FILESYSTEM;
++    for (UINT i = 0; i < cidl && SUCCEEDED(hr); ++i)
+     {
+-        if (IShellFolder* pSF = GetFSFolderForItem(apidl[i]))
++        if (ValidateItem(apidl[i]))
++        {
++            SFGAOF itemFlags = SFGAO_CANDELETE | SFGAO_HASPROPSHEET | SFGAO_FILESYSTEM;
++            if (IsFolder(apidl[i]))
++                itemFlags |= SFGAO_FOLDER;
++            *rgfInOut &= itemFlags | remain;
++        }
++        else if (IShellFolder* pSF = GetFSFolderForItem(apidl[i]))
+         {
+             hr = pSF->GetAttributesOf(1, &apidl[i], rgfInOut);
+             pSF->Release();
+@@ -1421,6 +1429,9 @@ HRESULT WINAPI SHEmptyRecycleBinW(HWND h
+         return HRESULT_FROM_WIN32(GetLastError());
+ 
+     CRecycleBin_ChangeNotifyBBItem(SHCNE_UPDATEDIR, NULL);
++
++    /* CusDeb: force the desktop Recycle Bin icon to update after emptying. */
++    SHUpdateRecycleBinIcon();
+     if (!(dwFlags & SHERB_NOSOUND))
+     {
+         TRASH_PlayEmptyRecycleBinSound();
+--- a/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
++++ b/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
+@@ -155,7 +155,14 @@ STDMETHODIMP RecycleBinGeneric::EmptyRec
+         IRecycleBin *prb;
+         HRESULT hr = GetDefaultRecycleBin(szVolumeName, &prb);
+         if (!SUCCEEDED(hr))
++        {
++            // Wine exposes the Unix root drive (typically Z:\) as a fixed drive
++            // but denies recycle-bin access to it. Skip inaccessible drives
++            // instead of failing the whole empty operation.
++            if (hr == E_ACCESSDENIED)
++                continue;
+             return hr;
++        }
+ 
+         hr = prb->EmptyRecycleBin();
+         prb->Release();
+--- a/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
++++ b/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
+@@ -113,12 +113,29 @@ RecycleBinGenericEnum::Next(DWORD celt,
+                     IRecycleBin *prb;
+                     hr = GetDefaultRecycleBin(szVolumeName, &prb);
+                     if (!SUCCEEDED(hr))
++                    {
++                        /* Wine exposes the Unix root drive (usually Z:) as a
++                         * fixed drive but denies recycle-bin access. Skip such
++                         * drives so enumeration can continue on real drives. */
++                        if (hr == E_ACCESSDENIED)
++                        {
++                            m_dwLogicalDrives &= ~(1 << i);
++                            continue;
++                        }
+                         return hr;
++                    }
+                     hr = prb->EnumObjects(&m_current);
+                     prb->Release();
+ 
+                     if (!SUCCEEDED(hr))
++                    {
++                        if (hr == E_ACCESSDENIED)
++                        {
++                            m_dwLogicalDrives &= ~(1 << i);
++                            continue;
++                        }
+                         return hr;
++                    }
+ 
+                     m_dwLogicalDrives &= ~(1 << i);
+                     break;
+--- a/reactos-src/dll/win32/shell32/shlfileop.cpp
++++ b/reactos-src/dll/win32/shell32/shlfileop.cpp
+@@ -1693,8 +1693,12 @@ static HRESULT delete_files(FILE_OPERATI
+         return ERROR_SUCCESS;
+ 
+     /* Windows also checks only the first item */
++    UINT cchPath = lstrlenW(flFrom->feFiles[0].szFullPath);
+     bTrash = (op->req->fFlags & FOF_ALLOWUNDO)
+-        && TRASH_CanTrashFile(flFrom->feFiles[0].szFullPath);
++        && cchPath >= 3
++        && (flFrom->feFiles[0].szFullPath[0] != L'\\')
++        && (flFrom->feFiles[0].szFullPath[1] == L':')
++        && (flFrom->feFiles[0].szFullPath[2] == L'\\');
+ 
+     BOOL confirm = !(op->req->fFlags & FOF_NOCONFIRMATION);
+     if (bTrash && SHELL_GetSetting(SSF_NOCONFIRMRECYCLE, fNoConfirmRecycle))
+@@ -1731,7 +1735,7 @@ static HRESULT delete_files(FILE_OPERATI
+         if (bTrash)
+         {
+             BOOL bDelete;
+-            if (TRASH_TrashFile(fileEntry->szFullPath))
++            if (DeleteFileToRecycleBinW(fileEntry->szFullPath))
+             {
+                 UINT event = IsAttribFile(fileEntry->attributes) ? SHCNE_DELETE : SHCNE_RMDIR;
+                 SHChangeNotify(event, SHCNF_PATHW, fileEntry->szFullPath, NULL);

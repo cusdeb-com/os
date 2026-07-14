@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        /usr/share/cusdeb/cdex/cdex-shortcut-helper create \
+            "-" \
+            "Games\\Minesweeper" \
+            "C:\\reactos\\winmine.exe" \
+            "C:\\reactos" \
+            "Minesweeper"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
