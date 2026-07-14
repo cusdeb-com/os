@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Wine
+Source: https://www.winehq.org/
+
+Files: *
+Copyright: 1993-2024 the Wine project authors
+License: LGPL-2.1+

@@ -1,0 +1,19 @@
+Author: Dmitry Timoshkov <dmitry@baikal.ru>
+Description: Remove an obsolete assert() in dlls/winex11.drv/xvidmode.c that crashes Wine
+ on modern X11 configurations. The assertion checks modes[0].dmDriverExtra ==
+ sizeof(XF86VidModeModeInfo *), but a prior upstream commit (f74900ad...)
+ changed dmDriverExtra to be either 0 or sizeof(void *), making the assertion
+ invalid on 64-bit systems. This regression exists in Wine 10.0 stable and
+ was fixed upstream in commit 7d26649f....
+Last-Modified: Tue, 07 Jul 2026 14:09:12 +0300
+
+--- a/wine-src/dlls/winex11.drv/xvidmode.c
++++ b/wine-src/dlls/winex11.drv/xvidmode.c
+@@ -161,7 +161,6 @@ static void xf86vm_free_modes(DEVMODEW *modes)
+     if (modes)
+     {
+         BYTE *ptr = (BYTE *)modes - sizeof(xf86vm_modes);
+-        assert(modes[0].dmDriverExtra == sizeof(XF86VidModeModeInfo *));
+         memcpy(&xf86vm_modes, ptr, sizeof(xf86vm_modes));
+         XFree(xf86vm_modes);
+         free(ptr);

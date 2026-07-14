@@ -1,0 +1,15 @@
+# Debian packaging build artifacts
+/debian/.wine-build
+/debian/wine
+/debian/debhelper-build-stamp
+/debian/*.debhelper.log
+/debian/*.substvars
+/debian/files
+/out
+*.log
+
+# Quilt / patch backups
+.pc/
+debian/patches/wine/*.patch~
+*.orig
+*.rej

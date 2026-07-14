@@ -1,0 +1,124 @@
+Source: wine
+Section: otherosfs
+Priority: optional
+Maintainer: Artem <artem@example.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ build-essential,
+ ca-certificates,
+ flex,
+ bison,
+ gcc-multilib,
+ g++-multilib,
+ libc6-dev-i386,
+ libfreetype6-dev,
+ libfreetype6-dev:i386,
+ libfontconfig1-dev,
+ libfontconfig1-dev:i386,
+ libx11-dev,
+ libx11-dev:i386,
+ libxext-dev,
+ libxext-dev:i386,
+ libxrandr-dev,
+ libxrandr-dev:i386,
+ libxrender-dev,
+ libxrender-dev:i386,
+ libxi-dev,
+ libxi-dev:i386,
+ libxcomposite-dev,
+ libxcomposite-dev:i386,
+ libxinerama-dev,
+ libxinerama-dev:i386,
+ libxxf86vm-dev,
+ libxxf86vm-dev:i386,
+ libxcursor-dev,
+ libxcursor-dev:i386,
+ libxfixes-dev,
+ libxfixes-dev:i386,
+ libgl1-mesa-dev,
+ libgl1-mesa-dev:i386,
+ libxml2-dev,
+ libxml2-dev:i386,
+ libjpeg-dev,
+ libjpeg-dev:i386,
+ libpng-dev,
+ libpng-dev:i386,
+ libmpg123-dev,
+ libmpg123-dev:i386,
+ libgnutls28-dev,
+ libgnutls28-dev:i386,
+ libdbus-1-dev,
+ libdbus-1-dev:i386,
+ libasound2-dev,
+ libasound2-dev:i386,
+ git,
+ libvulkan-dev,
+ libvulkan-dev:i386,
+ ccache,
+ quilt
+Standards-Version: 4.7.0
+Homepage: https://example.com
+
+Package: wine
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ binfmt-support,
+ libc6:i386,
+ libgcc-s1:i386,
+ libasound2t64:i386,
+ libfontconfig1,
+ libfontconfig1:i386,
+ libfreetype6,
+ libfreetype6:i386,
+ libgl1,
+ libgl1:i386,
+ libgnutls30t64,
+ libgnutls30t64:i386,
+ libjpeg62-turbo,
+ libjpeg62-turbo:i386,
+ libmpg123-0t64,
+ libmpg123-0t64:i386,
+ libncurses6,
+ libncurses6:i386,
+ libpng16-16t64,
+ libpng16-16t64:i386,
+ libx11-6:i386,
+ libxext6:i386,
+ libxml2,
+ libxml2:i386,
+ libxrandr2,
+ libxrandr2:i386,
+ libxrender1,
+ libxrender1:i386
+Recommends:
+ libgl1-mesa-dri,
+ libasound2-plugins,
+ libvulkan1,
+ libvulkan1:i386
+Provides:
+ wine64 (= ${binary:Version}),
+ wine32 (= ${binary:Version}),
+ wine-binfmt (= ${binary:Version}),
+ libwine (= ${binary:Version}),
+ fonts-wine (= ${binary:Version})
+Conflicts:
+ wine64,
+ wine32,
+ wine-binfmt,
+ libwine,
+ fonts-wine,
+ wine-stable
+Replaces:
+ wine64,
+ wine32,
+ wine-binfmt,
+ libwine,
+ fonts-wine,
+ wine-stable
+Description: Windows API implementation - CusDeb custom build
+ Wine is a free MS-Windows API implementation.
+ .
+ This package provides a patched Wine 10.0 build packaged as a drop-in
+ replacement for the Debian wine suite.

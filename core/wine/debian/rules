@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	$(MAKE) configure
+
+override_dh_auto_build:
+	$(MAKE) build
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/wine
+	install -D -m 644 debian/wine.binfmts $(CURDIR)/debian/wine/usr/share/binfmts/wine
+
+override_dh_makeshlibs:
+	dh_makeshlibs --no-scripts

@@ -1,0 +1,50 @@
+wine (10.0.1-4cd) trixie; urgency=medium
+
+  * Add runtime dependencies on libxrandr2 and libxrender1 (both amd64 and
+    i386) so the built-in XRandR display handler can load in 32-bit Wine.
+  * Add 0008-xvidmode-switch-sync-assert.patch: guard XF86VidMode mode
+    switches when the private mode pointer is missing and force an XSync
+    so asynchronous BadValue errors are caught instead of killing the
+    calling process.
+  * Add 0009-xrandr-notify-desktop-on-mode-change.patch: notify the shell
+    and broadcast WM_DISPLAYCHANGE to all top-level windows on mode switch,
+    so the desktop window and the ReactOS Explorer taskbar reposition after
+    a resolution change. Self-initiated switches (desk.cpl) only refresh the
+    driver state under the win32u display devices lock and are notified
+    after it is released, avoiding a self-deadlock on the non-recursive
+    display_lock mutex, and the broadcast is non-blocking so a mode switch
+    no longer stalls for 2s per top-level window.
+
+ -- Artem <artem@example.com>  Wed, 22 Jul 2026 13:20:00 +0300
+
+wine (10.0.1-3cd) trixie; urgency=medium
+
+  * Add 0005-gdifont-default-gui-size.patch: stock DEFAULT_GUI_FONT
+    -11/-12 -> -14 px for all charsets, so shell surfaces that never
+    set an explicit font (start menu band, taskbar buttons, tray clock)
+    match the global UI font size.
+  * Add 0006-dialog-font-scale.patch: scale dialog template fonts by
+    5/4 (8 pt -> 14 px); the whole dialog scales proportionally with
+    the text, since base units are measured from the created font.
+  * Add 0007-uxtheme-button-dc-font.patch: GetThemeFont resolves the
+    label font from the DC only for the Button/PUSHBUTTON part, so
+    dialog push button text follows the dialog font while the theme
+    keeps drawing everything and every other class/part keeps the
+    theme font.
+  * Dockerfile: move apt-get update into the build-dep layer so the
+    package index refreshes whenever the source tree changes.
+
+ -- Artem <artem@example.com>  Fri, 17 Jul 2026 21:00:00 +0300
+
+wine (10.0.1-2cd) trixie; urgency=medium
+
+  * Refactor Wine patches: merge 7 patches into 4 task-focused
+    Debian-format patches and add canonical .quiltrc.
+
+ -- Artem <artem@example.com>  Tue, 14 Jul 2026 09:02:14 +0000
+
+wine (10.0.1-1cd) trixie; urgency=medium
+
+  * Initial packaged build of CusDeb custom Wine.
+
+ -- Artem <artem@example.com>  Thu, 19 Jun 2026 12:00:00 +0000
