@@ -1,0 +1,239 @@
+Author: CusDeb OS Team
+Description: Load and draw the desktop wallpaper directly in CDefView because Wine
+ PaintDesktop() does not work across processes, draw it in OnEraseBackground()
+ with support for tile, center and stretch modes, read the desktop colour
+ directly from the registry to avoid Wine stale per-process colour cache, and
+ broadcast WM_SYSCOLORCHANGE after applying a desktop background color so the
+ running ReactOS Explorer session repaints without logout.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/dll/cpl/desk/background.c
++++ b/reactos-src/dll/cpl/desk/background.c
+@@ -1144,6 +1144,7 @@ SetDesktopBackColor(HWND hwndDlg, PBACKG
+                   (wcslen(clText) + 1) * sizeof(TCHAR));
+ 
+     RegCloseKey(hKey);
++    SendMessage(HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0);
+ }
+ 
+ static VOID
+--- a/reactos-src/dll/win32/shell32/CDefView.cpp
++++ b/reactos-src/dll/win32/shell32/CDefView.cpp
+@@ -286,6 +286,14 @@ private:
+ 
+     HICON                     m_hMyComputerIcon;
+ 
++    /* Cached wallpaper bitmap.
++     * Wine's PaintDesktop() only works inside the process that owns the
++     * desktop window.  In our setup that window lives in wineserver, while
++     * Explorer runs in a separate process, so hbitmapWallPaper is always
++     * NULL and PaintDesktop() draws nothing.  We load the bitmap ourselves
++     * and draw it directly in OnEraseBackground(). */
++    HBITMAP                   m_hWallpaperBitmap;
++
+     HRESULT _MergeToolbar();
+     BOOL _Sort(int Col = -1);
+     HRESULT _DoFolderViewCB(UINT uMsg, WPARAM wParam, LPARAM lParam);
+@@ -634,6 +642,7 @@ CDefView::CDefView() :
+     m_sortInfo.Reset();
+     m_ListToFolderColMap = DPA_Create(0);
+     m_hMyComputerIcon = LoadIconW(shell32_hInstance, MAKEINTRESOURCEW(IDI_SHELL_COMPUTER_DESKTOP));
++    m_hWallpaperBitmap = NULL;
+ }
+ 
+ CDefView::~CDefView()
+@@ -648,6 +657,12 @@ CDefView::~CDefView()
+         m_viewinfo_data.hbmBack = NULL;
+     }
+ 
++    if (m_hWallpaperBitmap)
++    {
++        ::DeleteObject(m_hWallpaperBitmap);
++        m_hWallpaperBitmap = NULL;
++    }
++
+     if (m_hWnd)
+     {
+         DestroyViewWindow();
+@@ -939,12 +954,60 @@ void CDefView::UpdateListColors()
+         BOOL bDropShadow = FALSE;
+         DWORD cbDropShadow = sizeof(bDropShadow);
+ 
+-        /*
+-         * The desktop ListView always take the default desktop colours, by
+-         * remaining transparent and letting user32/win32k paint itself the
+-         * desktop background color, if any.
+-         */
+-        m_ListView.SetBkColor(CLR_NONE);
++        /* Wine caches system colours per-process.  desk.cpl updates the
++         * registry and broadcasts WM_SYSCOLORCHANGE, but Explorer still sees
++         * the old cached COLOR_DESKTOP.  Read the persisted value directly. */
++        COLORREF crDesktop = GetSysColor(COLOR_DESKTOP);
++        WCHAR szColor[32];
++        DWORD dwType, cbData = sizeof(szColor);
++        if (SHGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Colors", L"Background",
++                        &dwType, szColor, &cbData) == ERROR_SUCCESS &&
++            dwType == REG_SZ)
++        {
++            WCHAR *pchEnd;
++            LONG r = wcstol(szColor, &pchEnd, 10);
++            if (pchEnd != szColor)
++            {
++                while (*pchEnd == L' ') ++pchEnd;
++                LONG g = wcstol(pchEnd, &pchEnd, 10);
++                while (*pchEnd == L' ') ++pchEnd;
++                LONG b = wcstol(pchEnd, &pchEnd, 10);
++                if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255)
++                    crDesktop = RGB(r, g, b);
++            }
++        }
++
++        /* Load the wallpaper bitmap ourselves because Wine's PaintDesktop()
++         * does nothing in Explorer (the desktop window lives in wineserver).
++         * When a wallpaper is present we keep the ListView transparent
++         * (CLR_NONE) so the parent CDefView shows through; otherwise we paint
++         * the solid desktop colour directly.  The bitmap is loaded only once
++         * and reloaded only when OnSettingChange() detects SPI_SETDESKWALLPAPER. */
++        WCHAR szWallpaper[MAX_PATH];
++        DWORD cbWallpaper = sizeof(szWallpaper);
++        if (SHGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"Wallpaper",
++                        NULL, szWallpaper, &cbWallpaper) == ERROR_SUCCESS &&
++            szWallpaper[0] != L'\0')
++        {
++            if (!m_hWallpaperBitmap)
++                m_hWallpaperBitmap = (HBITMAP)LoadImageW(NULL, szWallpaper, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
++
++            /* If loading failed (corrupt file, unsupported format) fall back
++             * to the solid desktop colour instead of a broken transparent bg. */
++            if (m_hWallpaperBitmap)
++                m_ListView.SetBkColor(CLR_NONE);
++            else
++                m_ListView.SetBkColor(crDesktop);
++        }
++        else
++        {
++            m_ListView.SetBkColor(crDesktop);
++            if (m_hWallpaperBitmap)
++            {
++                ::DeleteObject(m_hWallpaperBitmap);
++                m_hWallpaperBitmap = NULL;
++            }
++        }
+ 
+         SHGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                      L"ListviewShadow", NULL, &bDropShadow, &cbDropShadow);
+@@ -958,7 +1021,6 @@ void CDefView::UpdateListColors()
+         else
+         {
+             /* Set the icon background as the same colour as the desktop */
+-            COLORREF crDesktop = GetSysColor(COLOR_DESKTOP);
+             m_ListView.SetTextBkColor(crDesktop);
+             if (GetRValue(crDesktop) + GetGValue(crDesktop) + GetBValue(crDesktop) > 128 * 3)
+                 m_ListView.SetTextColor(RGB(0, 0, 0));
+@@ -1681,7 +1743,77 @@ LRESULT CDefView::OnEraseBackground(UINT
+ {
+     /* redirect to parent */
+     if (m_FolderSettings.fFlags & (FWF_DESKTOP | FWF_TRANSPARENT))
++    {
++        HDC hdc = (HDC)wParam;
++
++        /* When the ListView background is CLR_NONE it skips its own erase;
++         * Windows sends WM_ERASEBKGND to the parent (this CDefView) instead.
++         * Draw the cached wallpaper here, otherwise fall back to the original
++         * behaviour and let CDesktopBrowser paint the solid colour. */
++        if (m_hWallpaperBitmap)
++        {
++            RECT rc;
++            GetClientRect(&rc);
++
++            HDC hMemDC = CreateCompatibleDC(hdc);
++            HBITMAP hOld = (HBITMAP)SelectObject(hMemDC, m_hWallpaperBitmap);
++
++            BITMAP bm;
++            ::GetObjectW(m_hWallpaperBitmap, sizeof(bm), &bm);
++
++            /* WallpaperStyle values used by Windows:
++             *   0, 1  = centred (default)
++             *   2     = stretch
++             *   6     = fit
++             *   10    = fill
++             * For simplicity we treat 2, 6 and 10 as "stretch to fill". */
++            WCHAR szStyle[8] = {0}, szTile[8] = {0};
++            DWORD cbStyle = sizeof(szStyle), cbTile = sizeof(szTile);
++            SHGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"WallpaperStyle",
++                        NULL, szStyle, &cbStyle);
++            SHGetValueW(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"TileWallpaper",
++                        NULL, szTile, &cbTile);
++            int style = _wtoi(szStyle);
++            BOOL tile = _wtoi(szTile) != 0;
++
++            if (tile)
++            {
++                HBRUSH hBrush = CreateSolidBrush(GetSysColor(COLOR_DESKTOP));
++                FillRect(hdc, &rc, hBrush);
++                DeleteObject(hBrush);
++
++                for (int y = rc.top; y < rc.bottom; y += bm.bmHeight)
++                    for (int x = rc.left; x < rc.right; x += bm.bmWidth)
++                        BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hMemDC, 0, 0, SRCCOPY);
++            }
++            else if (style == 2 || style == 6 || style == 10)
++            {
++                /* HALFTONE looks much better than COLORONCOLOR when the image
++                 * is down-scaled (e.g. a 4K JPEG on a 1080p screen). */
++                SetStretchBltMode(hdc, HALFTONE);
++                StretchBlt(hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
++                           hMemDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++            }
++            else
++            {
++                HBRUSH hBrush = CreateSolidBrush(GetSysColor(COLOR_DESKTOP));
++                FillRect(hdc, &rc, hBrush);
++                DeleteObject(hBrush);
++
++                int x = rc.left + (rc.right - rc.left - bm.bmWidth) / 2;
++                int y = rc.top + (rc.bottom - rc.top - bm.bmHeight) / 2;
++                if (x < rc.left) x = rc.left;
++                if (y < rc.top) y = rc.top;
++                BitBlt(hdc, x, y, bm.bmWidth, bm.bmHeight, hMemDC, 0, 0, SRCCOPY);
++            }
++
++            SelectObject(hMemDC, hOld);
++            DeleteDC(hMemDC);
++            return TRUE;
++        }
++
+         return SendMessageW(GetParent(), WM_ERASEBKGND, wParam, lParam);
++    }
+ 
+     bHandled = FALSE;
+     return 0;
+@@ -1741,6 +1873,10 @@ LRESULT CDefView::OnSysColorChange(UINT
+     /* Update desktop labels color */
+     UpdateListColors();
+ 
++    /* Without an explicit invalidate the old colour can linger until the
++     * window is obscured and revealed again. */
++    m_ListView.InvalidateRect(NULL, TRUE);
++
+     /* Forward WM_SYSCOLORCHANGE to common controls */
+     return m_ListView.SendMessageW(uMsg, 0, 0);
+ }
+@@ -3040,7 +3176,17 @@ LRESULT CDefView::OnSettingChange(UINT u
+ {
+     /* Wallpaper setting affects drop shadows effect */
+     if (wParam == SPI_SETDESKWALLPAPER || wParam == 0)
++    {
++        /* Wallpaper changed â drop the cached bitmap so UpdateListColors()
++         * loads the new image instead of continuing to draw the old one. */
++        if (m_hWallpaperBitmap)
++        {
++            ::DeleteObject(m_hWallpaperBitmap);
++            m_hWallpaperBitmap = NULL;
++        }
+         UpdateListColors();
++        m_ListView.InvalidateRect(NULL, TRUE);
++    }
+ 
+     UINT ListExMask = LVS_EX_TRACKSELECT | LVS_EX_ONECLICKACTIVATE;
+     UINT ListExBits = GetItemActivateFlags();

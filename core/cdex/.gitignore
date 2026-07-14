@@ -1,0 +1,18 @@
+# Build artifacts
+/debian/.reactos-build
+/debian/.font-build
+/debian/cdex-base
+/debian/debhelper-build-stamp
+/debian/*.debhelper.log
+/debian/*.substvars
+/debian/files
+/out
+*.log
+# Editor / quilt backup patches
+.pc/
+debian/patches/reactos/*.patch~
+*.orig
+*.rej
+*.deb
+# Vendored ReactOS sources must match upstream exactly
+!reactos-src/**

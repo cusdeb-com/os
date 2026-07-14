@@ -1,0 +1,459 @@
+Author: CusDeb OS Team
+Description: Change base/shell/explorer/taskswnd.cpp to integrate the external Python
+ taskbar bridge. The patch adds a timer-driven sync that reads
+ /tmp/reactos-taskbar-windows.json, maintains a parallel set of external
+ TASK_ITEM entries keyed by window ID, and renders them alongside native
+ Windows tasks in the ReactOS Explorer taskbar. It also writes
+ focus/right-click actions to /tmp/reactos-taskbar-control.json so the bridge
+ can raise or activate the corresponding host X11 windows. Native Wine window
+ icons are skipped for external tasks because the host bridge supplies its own
+ imagery.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/base/shell/explorer/taskswnd.cpp
++++ b/reactos-src/base/shell/explorer/taskswnd.cpp
+@@ -37,6 +37,57 @@
+ #define TIMER_ID_VALIDATE_RUDE_APP 5
+ #define VALIDATE_RUDE_INTERVAL 1000
+ #define VALIDATE_RUDE_MAX_COUNT 5
++#define TIMER_ID_EXTERNAL_TASKS 6
++#define EXTERNAL_TASKS_INTERVAL 500
++
++#define MAX_TASKBAR_PATH 260
++
++static WCHAR g_szExternalTasksPath[MAX_TASKBAR_PATH];
++static WCHAR g_szExternalTaskControlPath[MAX_TASKBAR_PATH];
++
++static void ConvertUnixToWinePath(LPCWSTR unixPath, LPWSTR winePath, SIZE_T cchWinePath)
++{
++    SIZE_T i = 0;
++    if (unixPath[0] == L'/')
++    {
++        if (i + 2 < cchWinePath)
++        {
++            winePath[i++] = L'Z';
++            winePath[i++] = L':';
++        }
++    }
++    for (LPCWSTR p = unixPath; *p && i + 1 < cchWinePath; ++p)
++    {
++        winePath[i++] = (*p == L'/') ? L'\\' : *p;
++    }
++    winePath[i] = UNICODE_NULL;
++}
++
++static void InitExternalTaskPaths()
++{
++    WCHAR buf[MAX_TASKBAR_PATH];
++    DWORD len;
++
++    len = GetEnvironmentVariableW(L"REACTOS_TASKBAR_STATE", buf, MAX_TASKBAR_PATH);
++    if (len == 0 || len >= MAX_TASKBAR_PATH)
++    {
++        StringCchCopyW(g_szExternalTasksPath, MAX_TASKBAR_PATH, L"Z:\\tmp\\reactos-taskbar-windows.json");
++    }
++    else
++    {
++        ConvertUnixToWinePath(buf, g_szExternalTasksPath, MAX_TASKBAR_PATH);
++    }
++
++    len = GetEnvironmentVariableW(L"REACTOS_TASKBAR_CONTROL", buf, MAX_TASKBAR_PATH);
++    if (len == 0 || len >= MAX_TASKBAR_PATH)
++    {
++        StringCchCopyW(g_szExternalTaskControlPath, MAX_TASKBAR_PATH, L"Z:\\tmp\\reactos-taskbar-control.json");
++    }
++    else
++    {
++        ConvertUnixToWinePath(buf, g_szExternalTaskControlPath, MAX_TASKBAR_PATH);
++    }
++}
+ 
+ static BOOL
+ SHELL_GetMonitorRect(
+@@ -167,6 +218,8 @@ typedef struct _TASK_ITEM
+     PTASK_GROUP Group;
+     INT Index;
+     INT IconIndex;
++    WCHAR ExternalWindowId[32];
++    WCHAR ExternalTitle[255];
+ 
+     union
+     {
+@@ -180,10 +233,23 @@ typedef struct _TASK_ITEM
+             /* RenderFlashed is only TRUE if the task bar item should be
+                drawn with a flash. */
+             DWORD RenderFlashed : 1;
++
++            /* External tasks represent host X11 windows exposed by the bridge. */
++            DWORD IsExternal : 1;
++
++            /* Used while reconciling external tasks with the bridge snapshot. */
++            DWORD Seen : 1;
+         };
+     };
+ } TASK_ITEM, *PTASK_ITEM;
+ 
++typedef struct _EXTERNAL_TASK_INFO
++{
++    WCHAR WindowId[32];
++    WCHAR Title[255];
++    BOOL Seen;
++} EXTERNAL_TASK_INFO, *PEXTERNAL_TASK_INFO;
++
+ 
+ class CHardErrorThread
+ {
+@@ -434,11 +500,91 @@ public:
+ 
+     INT GetWndTextFromTaskItem(IN PTASK_ITEM TaskItem, LPWSTR szBuf, DWORD cchBuf)
+     {
++        if (TaskItem->IsExternal)
++        {
++            StringCchCopyW(szBuf, cchBuf, TaskItem->ExternalTitle);
++            return lstrlenW(szBuf);
++        }
++
+         /* Get the window text without sending a message so we don't hang if an
+            application isn't responding! */
+         return InternalGetWindowText(TaskItem->hWnd, szBuf, cchBuf);
+     }
+ 
++    static BOOL ReadWholeFile(LPCWSTR path, CHeapPtr<CHAR>& data, DWORD& cbData)
++    {
++        cbData = 0;
++        HANDLE hFile = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++                                  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++        if (hFile == INVALID_HANDLE_VALUE)
++            return FALSE;
++
++        DWORD cbSize = GetFileSize(hFile, NULL);
++        if (cbSize == INVALID_FILE_SIZE || cbSize == 0 || cbSize > 1024 * 1024)
++        {
++            CloseHandle(hFile);
++            return FALSE;
++        }
++
++        if (!data.AllocateBytes(cbSize + 1))
++        {
++            CloseHandle(hFile);
++            return FALSE;
++        }
++
++        DWORD cbRead = 0;
++        BOOL ok = ReadFile(hFile, data, cbSize, &cbRead, NULL);
++        CloseHandle(hFile);
++        if (!ok)
++            return FALSE;
++
++        data[cbRead] = ANSI_NULL;
++        cbData = cbRead;
++        return TRUE;
++    }
++
++    static const CHAR* FindJsonStringValue(const CHAR* objectStart, const CHAR* objectEnd, const CHAR* key,
++                                           CHAR* value, SIZE_T cchValue)
++    {
++        const CHAR* keyPos = strstr(objectStart, key);
++        if (!keyPos || keyPos >= objectEnd)
++            return NULL;
++
++        const CHAR* colon = strchr(keyPos, ':');
++        if (!colon || colon >= objectEnd)
++            return NULL;
++
++        const CHAR* quote = strchr(colon, '"');
++        if (!quote || quote >= objectEnd)
++            return NULL;
++        ++quote;
++
++        SIZE_T i = 0;
++        for (const CHAR* p = quote; *p && p < objectEnd; ++p)
++        {
++            if (*p == '"')
++            {
++                value[i] = ANSI_NULL;
++                return p + 1;
++            }
++            if (*p == '\\' && p + 1 < objectEnd)
++                ++p;
++            if (i + 1 < cchValue)
++                value[i++] = *p;
++        }
++        value[i] = ANSI_NULL;
++        return NULL;
++    }
++
++    static VOID Utf8ToWide(const CHAR* source, WCHAR* dest, INT cchDest)
++    {
++        if (!MultiByteToWideChar(CP_UTF8, 0, source, -1, dest, cchDest))
++        {
++            dest[0] = UNICODE_NULL;
++        }
++        dest[cchDest - 1] = UNICODE_NULL;
++    }
++
+ 
+ #if DUMP_TASKS != 0
+     VOID DumpTasks()
+@@ -638,7 +784,7 @@ public:
+             tbbi.pszText = windowText;
+         }
+ 
+-        icon = GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
+         if (!icon)
+             icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
+         TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, TaskItem->IconIndex, icon);
+@@ -650,7 +796,8 @@ public:
+             return -1;
+         }
+ 
+-        TRACE("Updated button %d for hwnd 0x%p\n", TaskItem->Index, TaskItem->hWnd);
++        TRACE("Updated button %d for %s task 0x%p\n", TaskItem->Index,
++              TaskItem->IsExternal ? "external" : "hwnd", TaskItem->hWnd);
+         return TaskItem->Index;
+     }
+ 
+@@ -783,7 +930,7 @@ public:
+             return UpdateTaskGroupButton(TaskItem->Group);
+         }
+ 
+-        icon = GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
+         if (!icon)
+             icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
+         TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, -1, icon);
+@@ -809,7 +956,8 @@ public:
+         {
+             UpdateIndexesAfter(iIndex, TRUE);
+ 
+-            TRACE("Added button %d for hwnd 0x%p\n", iIndex, TaskItem->hWnd);
++            TRACE("Added button %d for %s task 0x%p\n", iIndex,
++                  TaskItem->IsExternal ? "external" : "hwnd", TaskItem->hWnd);
+ 
+             TaskItem->Index = iIndex;
+             m_ButtonCount++;
+@@ -966,6 +1114,148 @@ public:
+         return NULL;
+     }
+ 
++    PTASK_ITEM FindExternalTaskItem(IN LPCWSTR WindowId)
++    {
++        PTASK_ITEM TaskItem = m_TaskItems;
++        PTASK_ITEM LastItem = TaskItem + m_TaskItemCount;
++        while (TaskItem != LastItem)
++        {
++            if (TaskItem->IsExternal && !lstrcmpiW(TaskItem->ExternalWindowId, WindowId))
++                return TaskItem;
++            ++TaskItem;
++        }
++        return NULL;
++    }
++
++    BOOL AddOrUpdateExternalTask(IN LPCWSTR WindowId, IN LPCWSTR Title)
++    {
++        PTASK_ITEM TaskItem = FindExternalTaskItem(WindowId);
++        if (!TaskItem)
++        {
++            TRACE("Add external window %S\n", WindowId);
++            TaskItem = AllocTaskItem();
++            if (!TaskItem)
++                return FALSE;
++
++            ZeroMemory(TaskItem, sizeof(*TaskItem));
++            TaskItem->hWnd = NULL;
++            TaskItem->Index = -1;
++            TaskItem->IconIndex = -1;
++            TaskItem->IsExternal = TRUE;
++            StringCchCopyW(TaskItem->ExternalWindowId, _countof(TaskItem->ExternalWindowId), WindowId);
++            StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++
++            if (!m_IsDestroying)
++                AddTaskItemButton(TaskItem);
++        }
++        else if (lstrcmpW(TaskItem->ExternalTitle, Title) != 0)
++        {
++            StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++            if (TaskItem->Index >= 0)
++                UpdateTaskItemButton(TaskItem);
++        }
++
++        TaskItem->Seen = TRUE;
++        return TRUE;
++    }
++
++    VOID MarkExternalTasksUnseen()
++    {
++        PTASK_ITEM TaskItem = m_TaskItems;
++        PTASK_ITEM LastItem = TaskItem + m_TaskItemCount;
++        while (TaskItem != LastItem)
++        {
++            if (TaskItem->IsExternal)
++                TaskItem->Seen = FALSE;
++            ++TaskItem;
++        }
++    }
++
++    BOOL RemoveUnseenExternalTasks()
++    {
++        BOOL Removed = FALSE;
++        for (WORD i = 0; i < m_TaskItemCount;)
++        {
++            PTASK_ITEM TaskItem = m_TaskItems + i;
++            if (TaskItem->IsExternal && !TaskItem->Seen)
++            {
++                TRACE("Delete external window %S\n", TaskItem->ExternalWindowId);
++                DeleteTaskItem(TaskItem);
++                Removed = TRUE;
++                continue;
++            }
++            ++i;
++        }
++        return Removed;
++    }
++
++    VOID SyncExternalTasks()
++    {
++        CHeapPtr<CHAR> data;
++        DWORD cbData = 0;
++        if (!ReadWholeFile(g_szExternalTasksPath, data, cbData))
++        {
++            MarkExternalTasksUnseen();
++            RemoveUnseenExternalTasks();
++            return;
++        }
++
++        MarkExternalTasksUnseen();
++
++        const CHAR* cursor = data;
++        while ((cursor = strstr(cursor, "{\n")) != NULL)
++        {
++            const CHAR* objectEnd = strchr(cursor, '}');
++            if (!objectEnd)
++                break;
++
++            CHAR idA[32];
++            CHAR titleA[255];
++            WCHAR idW[32];
++            WCHAR titleW[255];
++            idA[0] = ANSI_NULL;
++            titleA[0] = ANSI_NULL;
++
++            if (FindJsonStringValue(cursor, objectEnd, "\"window_id\"", idA, _countof(idA)) &&
++                FindJsonStringValue(cursor, objectEnd, "\"title\"", titleA, _countof(titleA)))
++            {
++                Utf8ToWide(idA, idW, _countof(idW));
++                Utf8ToWide(titleA, titleW, _countof(titleW));
++                if (idW[0] && titleW[0])
++                    AddOrUpdateExternalTask(idW, titleW);
++            }
++
++            cursor = objectEnd + 1;
++        }
++
++        RemoveUnseenExternalTasks();
++    }
++
++    BOOL WriteExternalTaskCommand(IN LPCWSTR Action, IN LPCWSTR WindowId)
++    {
++        WCHAR json[256];
++        HRESULT hr = StringCchPrintfW(json, _countof(json),
++                                     L"{\"action\":\"%s\",\"window_id\":\"%s\"}\n",
++                                     Action, WindowId);
++        if (FAILED(hr))
++            return FALSE;
++
++        CHAR utf8[512];
++        INT cbUtf8 = WideCharToMultiByte(CP_UTF8, 0, json, -1, utf8, _countof(utf8), NULL, NULL);
++        if (!cbUtf8)
++            return FALSE;
++
++        HANDLE hFile = CreateFileW(g_szExternalTaskControlPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
++                                  FILE_ATTRIBUTE_NORMAL, NULL);
++        if (hFile == INVALID_HANDLE_VALUE)
++            return FALSE;
++
++        DWORD cbWritten = 0;
++        BOOL ok = WriteFile(hFile, utf8, cbUtf8 - 1, &cbWritten, NULL);
++        CloseHandle(hFile);
++        return ok;
++    }
++
+     PTASK_ITEM FindOtherTaskItem(IN HWND hWnd)
+     {
+         PTASK_ITEM LastItem, TaskItem;
+@@ -1478,7 +1768,7 @@ public:
+         if (m_Tray->IsTaskWnd(hWnd))
+         {
+             TRACE("Adding task for %p...\n", hWnd);
+-            AddTask(hWnd);
++            // AddTask(hWnd); // Disabled: use external bridge tasks only
+         }
+         return TRUE;
+     }
+@@ -1535,6 +1825,9 @@ public:
+         RegisterShellHook(m_hWnd, 3); /* 1 if no NT! We're targeting NT so we don't care! */
+ 
+         RefreshWindowList();
++        InitExternalTaskPaths();
++        SyncExternalTasks();
++        SetTimer(TIMER_ID_EXTERNAL_TASKS, EXTERNAL_TASKS_INTERVAL, NULL);
+ 
+         /* Recalculate the button size */
+         UpdateButtonsSize(FALSE);
+@@ -1550,6 +1843,7 @@ public:
+         m_IsDestroying = TRUE;
+ 
+         KillTimer(TIMER_ID_VALIDATE_RUDE_APP);
++        KillTimer(TIMER_ID_EXTERNAL_TASKS);
+ 
+         /* Unregister the shell hook */
+         RegisterShellHook(m_hWnd, FALSE);
+@@ -1642,7 +1936,7 @@ public:
+             break;
+ 
+         case HSHELL_WINDOWCREATED:
+-            AddTask((HWND) lParam);
++            // AddTask((HWND) lParam); // Disabled: use external bridge tasks only
+             break;
+ 
+         case HSHELL_WINDOWDESTROYED:
+@@ -1711,6 +2005,13 @@ public:
+         BOOL bIsMinimized;
+         BOOL bIsActive;
+ 
++        if (TaskItem->IsExternal)
++        {
++            TRACE("External button clicked. WindowId=%S\n", TaskItem->ExternalWindowId);
++            WriteExternalTaskCommand(L"focus", TaskItem->ExternalWindowId);
++            return;
++        }
++
+         if (::IsWindow(TaskItem->hWnd))
+         {
+             bIsMinimized = ::IsIconic(TaskItem->hWnd);
+@@ -1776,6 +2077,12 @@ public:
+ 
+     VOID HandleTaskItemRightClick(IN OUT PTASK_ITEM TaskItem)
+     {
++        if (TaskItem->IsExternal)
++        {
++            WriteExternalTaskCommand(L"focus", TaskItem->ExternalWindowId);
++            return;
++        }
++
+         POINT pt;
+         GetCursorPos(&pt);
+ 
+@@ -2193,6 +2500,11 @@ public:
+                     SetTimer(wParam, VALIDATE_RUDE_INTERVAL, NULL);
+                 break;
+             }
++            case TIMER_ID_EXTERNAL_TASKS:
++            {
++                SyncExternalTasks();
++                break;
++            }
+             default:
+             {
+                 WARN("Unknown timer ID: %p\n", wParam);

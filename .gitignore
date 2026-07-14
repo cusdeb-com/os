@@ -1,2 +1,4 @@
-/out
+**/out
 /assets-cache
+*.deb
+.idea/

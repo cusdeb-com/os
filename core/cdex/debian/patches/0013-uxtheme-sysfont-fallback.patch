@@ -1,0 +1,34 @@
+Author: CusDeb OS Team
+Description: Make GetThemeSysFont ignore metric fonts from .msstyles.
+ Window captions and message-box text take their font from the active
+ theme (Mizu ships Source Sans Pro 9/10 in its metric font table), which
+ bypasses WindowMetrics. Disable the theme lookup so the function always
+ falls back to SystemParametersInfo (registry), giving a single place to
+ control the UI font size regardless of the installed theme.
+Last-Modified: Fri, 17 Jul 2026 13:41:49 +0300
+
+--- a/reactos-src/dll/win32/uxtheme/metric.c
++++ b/reactos-src/dll/win32/uxtheme/metric.c
+@@ -91,19 +91,11 @@
+ HRESULT WINAPI GetThemeSysFont(HTHEME hTheme, int iFontID, LOGFONTW *plf)
+ {
+     HRESULT hr = S_OK;
+-    PTHEME_PROPERTY tp;
+-    PTHEME_CLASS ptc = ValidateHandle(hTheme);
+ 
++    /* CusDeb: ignore metric fonts embedded in the .msstyles theme and always
++     * fall back to the system (WindowMetrics) fonts below, so the UI font size
++     * is controlled from a single place (registry). */
+     TRACE("(%p, %d)\n", hTheme, iFontID);
+-    if(ptc) {
+-        if((tp = MSSTYLES_FindMetric(ptc->tf, TMT_FONT, iFontID))) {
+-            HDC hdc = GetDC(NULL);
+-            hr = MSSTYLES_GetPropertyFont(tp, hdc, plf);
+-            ReleaseDC(NULL, hdc);
+-            if(SUCCEEDED(hr))
+-                return S_OK;
+-       }
+-    }
+     if(iFontID == TMT_ICONTITLEFONT) {
+         if(!SystemParametersInfoW(SPI_GETICONTITLELOGFONT, sizeof(LOGFONTW), plf, 0))
+             return HRESULT_FROM_WIN32(GetLastError());

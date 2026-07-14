@@ -1,0 +1,132 @@
+Author: CusDeb OS Team
+Description: Resize the desktop window on WM_DISPLAYCHANGE.
+ When the display resolution changes, the Progman desktop window must
+ refresh its size and the shell view work area. Without this, the taskbar
+ updates correctly but the desktop leaves an uncovered strip where the
+ underlying window manager shows through.
+Last-Modified: Tue, 21 Jul 2026 15:00:00 +0300
+
+--- a/reactos-src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
++++ b/reactos-src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
+@@ -33,6 +33,17 @@
+ static const WCHAR szProgmanClassName[]  = L"Progman";
+ static const WCHAR szProgmanWindowName[] = L"Program Manager";
+ 
++/* Private message used to defer the desktop resize out of the WM_DISPLAYCHANGE
++ * broadcast so the taskbar gets a chance to update the work area first. */
++#define WM_DESKTOP_DEFERRED_RESIZE (WM_USER + 42)
++
++/* Timer used to retry the deferred resize until the work area becomes valid.
++ * Right after a resolution decrease SPI_GETWORKAREA transiently returns an
++ * empty rect until the taskbar recomputes it. */
++#define DESKTOP_RESIZE_RETRY_TIMER 42
++#define DESKTOP_RESIZE_RETRY_MAX 50
++#define DESKTOP_RESIZE_RETRY_MS 20
++
+ static BOOL IsDesktopBrowserForwardShellViewCmd(WORD Cmd)
+ {
+     // Note: The normal CShellBrowser forwards the entire FCIDM_SHVIEWFIRST..LAST range, we do not.
+@@ -58,6 +69,8 @@
+     CComPtr<IOleWindow>        m_ChangeNotifyServer;
+     HWND                       m_hwndChangeNotifyServer;
+     DWORD m_dwDrives;
++    UINT m_uResizeRetry;
++    RECT m_rcLastWorkArea;
+ 
+     LRESULT _NotifyTray(UINT uMsg, WPARAM wParam, LPARAM lParam);
+     HRESULT _Resize();
+@@ -107,6 +120,9 @@
+     LRESULT OnDeviceChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+     LRESULT OnShowOptionsDlg(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+     LRESULT OnSaveState(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
++    LRESULT OnDisplayChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
++    LRESULT OnDeferredResize(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
++    LRESULT OnResizeRetryTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled);
+ 
+ DECLARE_WND_CLASS_EX(szProgmanClassName, CS_DBLCLKS, COLOR_DESKTOP)
+ 
+@@ -121,6 +137,9 @@
+     MESSAGE_HANDLER(WM_SETFOCUS, OnSetFocus)
+     MESSAGE_HANDLER(WM_DESKTOP_GET_CNOTIFY_SERVER, OnGetChangeNotifyServer)
+     MESSAGE_HANDLER(WM_DEVICECHANGE, OnDeviceChange)
++    MESSAGE_HANDLER(WM_DISPLAYCHANGE, OnDisplayChange)
++    MESSAGE_HANDLER(WM_DESKTOP_DEFERRED_RESIZE, OnDeferredResize)
++    MESSAGE_HANDLER(WM_TIMER, OnResizeRetryTimer)
+     MESSAGE_HANDLER(WM_PROGMAN_OPENSHELLSETTINGS, OnShowOptionsDlg)
+     MESSAGE_HANDLER(WM_PROGMAN_SAVESTATE, OnSaveState)
+ END_MSG_MAP()
+@@ -137,8 +156,10 @@
+     m_hAccel(NULL),
+     m_hWndShellView(NULL),
+     m_hwndChangeNotifyServer(NULL),
+-    m_dwDrives(::GetLogicalDrives())
++    m_dwDrives(::GetLogicalDrives()),
++    m_uResizeRetry(0)
+ {
++    SetRectEmpty(&m_rcLastWorkArea);
+     SetTopBrowser();
+ }
+ 
+@@ -524,6 +545,62 @@
+     return 0;
+ }
+ 
++LRESULT CDesktopBrowser::OnDisplayChange(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
++{
++    /* Do not resize right here: the taskbar has not recomputed the work area
++     * yet, so SPI_GETWORKAREA would return stale values and the synchronous
++     * broadcast would block on us. Defer the actual resize. */
++    m_uResizeRetry = 0;
++    SetRectEmpty(&m_rcLastWorkArea);
++    ::PostMessageW(m_hWnd, WM_DESKTOP_DEFERRED_RESIZE, 0, 0);
++    return 0;
++}
++
++LRESULT CDesktopBrowser::OnDeferredResize(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
++{
++    /* The desktop window must resize itself when the display resolution changes,
++     * otherwise the work area used by the shell view becomes stale and a strip
++     * of the underlying window manager becomes visible.
++     * Right after a resolution change the taskbar recomputes the work area in
++     * several steps: it can be empty, then the full screen, and only then the
++     * final value minus the taskbar area. Resizing to an empty rect would
++     * collapse the desktop to a zero-size window, and resizing to the transient
++     * full-screen rect would cover the taskbar, so wait on a timer until the
++     * work area is both non-empty and stable across two reads. */
++    RECT rcWorkArea;
++    SystemParametersInfoW(SPI_GETWORKAREA, 0, &rcWorkArea, 0);
++
++    BOOL bEmpty = (rcWorkArea.right <= rcWorkArea.left || rcWorkArea.bottom <= rcWorkArea.top);
++    BOOL bStable = ::EqualRect(&rcWorkArea, &m_rcLastWorkArea);
++
++    if (bEmpty || !bStable)
++    {
++        m_rcLastWorkArea = rcWorkArea;
++        if (m_uResizeRetry < DESKTOP_RESIZE_RETRY_MAX)
++        {
++            m_uResizeRetry++;
++            ::SetTimer(m_hWnd, DESKTOP_RESIZE_RETRY_TIMER, DESKTOP_RESIZE_RETRY_MS, NULL);
++        }
++        /* When the budget runs out while the work area is still unsettled,
++         * leave the desktop at its current size rather than collapsing it. */
++        return 0;
++    }
++
++    ::KillTimer(m_hWnd, DESKTOP_RESIZE_RETRY_TIMER);
++    _Resize();
++    return 0;
++}
++
++LRESULT CDesktopBrowser::OnResizeRetryTimer(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
++{
++    if (wParam == DESKTOP_RESIZE_RETRY_TIMER)
++    {
++        ::KillTimer(m_hWnd, DESKTOP_RESIZE_RETRY_TIMER);
++        ::PostMessageW(m_hWnd, WM_DESKTOP_DEFERRED_RESIZE, 0, 0);
++    }
++    return 0;
++}
++
+ extern VOID WINAPI ShowFolderOptionsDialog(UINT Page, BOOL Async);
+ 
+ LRESULT CDesktopBrowser::OnShowOptionsDlg(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)

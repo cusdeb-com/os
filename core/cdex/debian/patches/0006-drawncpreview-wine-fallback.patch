@@ -1,0 +1,45 @@
+Author: CusDeb OS Team
+Description: Change dll/cpl/desk/theme.c to detect Wine via GetProcAddress(ntdll.dll,
+ \"wine_get_version\") and skip the themed preview path when running under
+ Wine. Wine's builtin uxtheme.dll does not implement the ReactOS-specific
+ DrawNCPreview export (ordinal 13); moreover, Wine's GetProcAddress for a
+ missing ordinal returns a stub pointer that raises an \"unimplemented
+ function\" exception on call. The patch avoids this by returning FALSE from
+ DrawThemePreview under Wine, causing desk.cpl to fall back to classic preview
+ rendering on the Appearance tab.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/dll/cpl/desk/theme.c
++++ b/reactos-src/dll/cpl/desk/theme.c
+@@ -1003,6 +1003,9 @@ BOOL
+ DrawThemePreview(IN HDC hdcMem, IN PCOLOR_SCHEME scheme, IN PTHEME_SELECTION pSelectedTheme, IN PRECT prcWindow)
+ {
+     HBRUSH hbrBack;
++    typedef HRESULT (WINAPI *DRAWNC_PREVIEW)(HDC, DWORD, LPRECT, LPCWSTR, LPCWSTR, LPCWSTR, PNONCLIENTMETRICSW, COLORREF*);
++    static DRAWNC_PREVIEW pDrawNCPreview = NULL;
++    static BOOL bWineChecked = FALSE;
+     HRESULT hres;
+ 
+     hbrBack = CreateSolidBrush(scheme->crColor[COLOR_DESKTOP]);
+@@ -1013,7 +1016,20 @@ DrawThemePreview(IN HDC hdcMem, IN PCOLO
+     InflateRect(prcWindow, -8, -8);
+     prcWindow->bottom -= 12;
+ 
+-    hres = DrawNCPreview(hdcMem,
++    if (!bWineChecked)
++    {
++        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
++        if (hNtdll && GetProcAddress(hNtdll, "wine_get_version"))
++            pDrawNCPreview = (DRAWNC_PREVIEW)-1;
++        else
++            pDrawNCPreview = (DRAWNC_PREVIEW)GetProcAddress(GetModuleHandleW(L"uxtheme.dll"), (LPCSTR)13);
++        bWineChecked = TRUE;
++    }
++
++    if (!pDrawNCPreview || pDrawNCPreview == (DRAWNC_PREVIEW)-1)
++        return FALSE;
++
++    hres = pDrawNCPreview(hdcMem,
+                          DNCP_DRAW_ALL,
+                          prcWindow,
+                          pSelectedTheme->Theme->ThemeFileName,

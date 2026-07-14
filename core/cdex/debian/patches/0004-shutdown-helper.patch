@@ -1,0 +1,185 @@
+Author: CusDeb OS Team
+Description: Replace ExitWindowsEx/RestartDialogEx reboot/shutdown paths with
+ WriteCusdebPowerRequest() so ReactOS power UI invokes cusdeb-shutdown-helper;
+ restart uses the existing RestartDialogEx confirmation dialog.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/base/shell/explorer/lang/en-US.rc
++++ b/reactos-src/base/shell/explorer/lang/en-US.rc
+@@ -62,6 +62,7 @@ BEGIN
+         MENUITEM "&Log Off %s...", IDM_LOGOFF, MFT_STRING, MFS_ENABLED
+         MENUITEM "D&isconnect...", IDM_DISCONNECT, MFT_STRING, MFS_ENABLED
+         MENUITEM "Undock Comput&er", IDM_UNDOCKCOMPUTER, MFT_STRING, MFS_ENABLED
++        MENUITEM "&Restart...", IDM_REBOOT, MFT_STRING, MFS_ENABLED
+         MENUITEM "Sh&ut Down...", IDM_SHUTDOWN, MFT_STRING, MFS_ENABLED
+     END
+ END
+--- a/reactos-src/base/shell/explorer/resource.h
++++ b/reactos-src/base/shell/explorer/resource.h
+@@ -82,6 +82,7 @@
+ #define IDM_DISCONNECT              5000
+ #define IDM_UNDOCKCOMPUTER          410
+ #define IDM_SHUTDOWN                506
++#define IDM_REBOOT                  509
+ #define IDM_LASTSTARTMENU_SEPARATOR 450
+ 
+ /*******************************************************************************\
+--- a/reactos-src/base/shell/explorer/startmnusite.cpp
++++ b/reactos-src/base/shell/explorer/startmnusite.cpp
+@@ -121,7 +121,7 @@ public:
+         HMENU hMenu, hSettingsMenu;
+         DWORD dwLogoff;
+         BOOL bWantLogoff;
+-        UINT uLastItemsCount = 5; /* 5 menu items below the last separator */
++        UINT uLastItemsCount = 6; /* 6 menu items below the last separator */
+         WCHAR szUser[128];
+ 
+         TRACE("ITrayPriv::AppendMenu\n");
+--- a/reactos-src/base/shell/explorer/traywnd.cpp
++++ b/reactos-src/base/shell/explorer/traywnd.cpp
+@@ -457,6 +457,13 @@ public:
+             ClearRecentAndMru();
+     }
+ 
++    LRESULT DoReboot()
++    {
++        SaveState();
++        RestartDialogEx(m_hWnd, NULL, 0, 0);
++        return 0;
++    }
++
+     LRESULT DoExitWindows()
+     {
+         SaveState();
+@@ -834,6 +841,9 @@ public:
+             case TRAYCMD_CONTROL_PANEL:
+                 // TODO:
+                 break;
++            case IDM_REBOOT:
++                DoReboot();
++                break;
+             case TRAYCMD_SHUTDOWN_DIALOG:
+                 DoExitWindows();
+                 break;
+--- a/reactos-src/dll/win32/shell32/dialogs/dialogs.cpp
++++ b/reactos-src/dll/win32/shell32/dialogs/dialogs.cpp
+@@ -50,6 +50,57 @@ WINE_DEFAULT_DEBUG_CHANNEL(shell);
+ static INT_PTR CALLBACK RunDlgProc(HWND, UINT, WPARAM, LPARAM);
+ static void FillList(HWND, LPWSTR, UINT, BOOL);
+ 
++static BOOL WriteCusdebPowerRequest(LPCSTR action)
++{
++    CHAR unixPath[MAX_PATH];
++    CHAR winePath[MAX_PATH];
++    DWORD len = GetEnvironmentVariableA("REACTOS_LAUNCH_REQUEST", unixPath, MAX_PATH);
++    if (len == 0 || len >= MAX_PATH)
++    {
++        /* Fallback to the legacy /tmp path if the runtime did not set the env var. */
++        LPCSTR fallback = "Z:\\tmp\\cusdeb-linux-launch-request.txt";
++        SIZE_T j = 0;
++        while (fallback[j] && j + 1 < MAX_PATH)
++        {
++            winePath[j] = fallback[j];
++            ++j;
++        }
++        winePath[j] = '\0';
++    }
++    else
++    {
++        SIZE_T i = 0;
++        if (unixPath[0] == '/')
++        {
++            if (i + 2 < MAX_PATH)
++            {
++                winePath[i++] = 'Z';
++                winePath[i++] = ':';
++            }
++        }
++        for (LPCSTR p = unixPath; *p && i + 1 < MAX_PATH; ++p)
++        {
++            winePath[i++] = (*p == '/') ? '\\' : *p;
++        }
++        winePath[i] = '\0';
++    }
++
++    HANDLE file = CreateFileA(winePath,
++                              GENERIC_WRITE,
++                              0,
++                              NULL,
++                              CREATE_ALWAYS,
++                              FILE_ATTRIBUTE_NORMAL,
++                              NULL);
++    if (file == INVALID_HANDLE_VALUE)
++        return FALSE;
++
++    DWORD written;
++    DWORD length = strlen(action);
++    BOOL ok = WriteFile(file, action, length, &written, NULL);
++    CloseHandle(file);
++    return ok && written == length;
++}
+ 
+ /*************************************************************************
+  * PickIconDlg                    [SHELL32.62]
+@@ -1082,9 +1133,7 @@ int WINAPI RestartDialogEx(HWND hWndOwne
+     /* FIXME: use lpwstrReason */
+     if (ConfirmDialog(parent, IDS_RESTART_PROMPT, IDS_RESTART_TITLE))
+     {
+-        EnablePrivilege(L"SeShutdownPrivilege", TRUE);
+-        ExitWindowsEx(EWX_REBOOT, uReason);
+-        EnablePrivilege(L"SeShutdownPrivilege", FALSE);
++        WriteCusdebPowerRequest("reboot");
+     }
+ 
+     return 0;
+@@ -1584,9 +1633,7 @@ VOID ExitWindowsDialog_backup(HWND hWndO
+ 
+     if (ConfirmDialog(hWndOwner, IDS_SHUTDOWN_PROMPT, IDS_SHUTDOWN_TITLE))
+     {
+-        EnablePrivilege(L"SeShutdownPrivilege", TRUE);
+-        ExitWindowsEx(EWX_SHUTDOWN, 0);
+-        EnablePrivilege(L"SeShutdownPrivilege", FALSE);
++        WriteCusdebPowerRequest("poweroff");
+     }
+ }
+ 
+@@ -1637,9 +1684,7 @@ void WINAPI ExitWindowsDialog(HWND hWndO
+         }
+         case 0x02: /* Shut down */
+         {
+-            EnablePrivilege(L"SeShutdownPrivilege", TRUE);
+-            ExitWindowsEx(EWX_SHUTDOWN, 0);
+-            EnablePrivilege(L"SeShutdownPrivilege", FALSE);
++            WriteCusdebPowerRequest("poweroff");
+             break;
+         }
+         case 0x03: /* Install Updates/Shutdown (?) */
+@@ -1648,9 +1693,7 @@ void WINAPI ExitWindowsDialog(HWND hWndO
+         }
+         case 0x04: /* Reboot */
+         {
+-            EnablePrivilege(L"SeShutdownPrivilege", TRUE);
+-            ExitWindowsEx(EWX_REBOOT, 0);
+-            EnablePrivilege(L"SeShutdownPrivilege", FALSE);
++            WriteCusdebPowerRequest("reboot");
+             break;
+         }
+         case 0x10: /* Sleep */
+--- a/reactos-src/dll/win32/shell32/shellmenu/CStartMenu.cpp
++++ b/reactos-src/dll/win32/shell32/shellmenu/CStartMenu.cpp
+@@ -40,6 +40,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(CStartMenu);
+ #define IDM_CONTROLPANEL            505
+ #define IDM_SHUTDOWN                506
+ #define IDM_FAVORITES               507
++#define IDM_REBOOT                  509
+ #define IDM_SETTINGS                508
+ #define IDM_PRINTERSANDFAXES        510
+ #define IDM_SEARCH                  520
+@@ -116,6 +117,7 @@ private:
+         case IDM_DOCUMENTS: iconIndex = -IDI_SHELL_RECENT_DOCUMENTS1; break;
+         case IDM_RUN: iconIndex = -IDI_SHELL_RUN1; break;
+         case IDM_SHUTDOWN: iconIndex = -IDI_SHELL_SHUTDOWN1; break;
++        case IDM_REBOOT: iconIndex = -IDI_SHELL_SHUTDOWN1; break;
+         case IDM_SETTINGS: iconIndex = -IDI_SHELL_CONTROL_PANEL1; break;
+         case IDM_MYDOCUMENTS: iconIndex = -IDI_SHELL_MY_DOCUMENTS; break;
+         case IDM_MYPICTURES: iconIndex = -IDI_SHELL_MY_PICTURES; break;

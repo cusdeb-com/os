@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Recreate the Windows-style shortcuts for this application in every
+        # existing Wine prefix.  If Wine cannot run right now (no X session),
+        # cusdeb-win32-session will recreate the shortcuts at the next login.
+        /usr/share/cusdeb/cdex/cdex-shortcut-helper create \
+            "-" \
+            "Games\\Spider Solitaire" \
+            "C:\\reactos\\spider.exe" \
+            "C:\\reactos" \
+            "Spider Solitaire"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,11 @@
+#!/bin/bash
+# Launch Calamares with elevated privileges in the live X11 session.
+# pkexec strips the environment, so pass DISPLAY and XAUTHORITY explicitly.
+set -euo pipefail
+
+export DISPLAY="${DISPLAY:-:0}"
+if [ -z "${XAUTHORITY:-}" ]; then
+    XAUTHORITY="$HOME/.Xauthority"
+fi
+
+exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" calamares "$@"

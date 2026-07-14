@@ -1,0 +1,67 @@
+
+@ stdcall InitOnceBeginInitialize(ptr long ptr ptr)
+@ stdcall InitOnceComplete(ptr long ptr)
+@ stdcall InitOnceExecuteOnce(ptr ptr ptr ptr)
+@ stdcall InitOnceInitialize(ptr) NTDLL.RtlRunOnceInitialize
+
+@ stdcall GetFileInformationByHandleEx(long long ptr long)
+@ stdcall -ret64 GetTickCount64()
+
+@ stdcall InitializeSRWLock(ptr)
+@ stdcall AcquireSRWLockExclusive(ptr)
+@ stdcall AcquireSRWLockShared(ptr)
+@ stdcall ReleaseSRWLockExclusive(ptr)
+@ stdcall ReleaseSRWLockShared(ptr)
+
+@ stdcall InitializeConditionVariable(ptr)
+@ stdcall SleepConditionVariableCS(ptr ptr long)
+@ stdcall SleepConditionVariableSRW(ptr ptr long long)
+@ stdcall WakeAllConditionVariable(ptr)
+@ stdcall WakeConditionVariable(ptr)
+
+@ stdcall InitializeCriticalSectionEx(ptr long long)
+
+@ stdcall GetFirmwareEnvironmentVariableExA(str str ptr long long)
+@ stdcall GetFirmwareEnvironmentVariableExW(wstr wstr ptr long long)
+@ stdcall GetFirmwareType(ptr)
+@ stdcall SetFirmwareEnvironmentVariableExA(str str ptr long long)
+@ stdcall SetFirmwareEnvironmentVariableExW(str str ptr long long)
+
+@ stdcall ApplicationRecoveryFinished(long)
+@ stdcall ApplicationRecoveryInProgress(ptr)
+@ stdcall CreateSymbolicLinkA(str str long)
+@ stdcall CreateSymbolicLinkW(wstr wstr long)
+@ stdcall EnumSystemLocalesEx(ptr long long ptr)
+@ stdcall GetApplicationRecoveryCallback(ptr ptr ptr ptr ptr)
+@ stdcall GetApplicationRestart(ptr wstr ptr ptr)
+@ stdcall GetFileBandwidthReservation(ptr ptr ptr ptr ptr ptr)
+@ stdcall GetFileMUIInfo(long wstr ptr ptr)
+@ stdcall GetFileMUIPath(long wstr wstr ptr wstr ptr ptr)
+@ stdcall GetFinalPathNameByHandleA(ptr str long long)
+@ stdcall GetFinalPathNameByHandleW(ptr wstr long long)
+@ stdcall GetLocaleInfoEx(wstr long ptr long)
+@ stdcall GetSystemPreferredUILanguages(long ptr wstr ptr)
+@ stdcall GetThreadPreferredUILanguages(long ptr wstr ptr)
+@ stdcall GetThreadUILanguage()
+@ stdcall GetUILanguageInfo(long wstr wstr ptr ptr)
+@ stdcall GetUserDefaultLocaleName(wstr long)
+@ stdcall GetUserPreferredUILanguages(long ptr wstr ptr)
+@ stdcall IsValidLocaleName(wstr)
+@ stdcall LCIDToLocaleName(long wstr long long)
+@ stdcall LocaleNameToLCID(wstr long)
+@ stdcall OpenFileById(ptr ptr long long ptr long)
+@ stdcall QueryFullProcessImageNameA(ptr long ptr ptr)
+@ stdcall QueryFullProcessImageNameW(ptr long ptr ptr)
+@ stdcall RegisterApplicationRecoveryCallback(ptr ptr long long)
+@ stdcall RegisterApplicationRestart(wstr long)
+@ stdcall SetFileBandwidthReservation(ptr long long long ptr ptr)
+@ stdcall SetThreadPreferredUILanguages(long wstr ptr)
+@ stdcall CompareStringOrdinal(ptr long ptr long long)
+
+@ stdcall GetNamedPipeClientProcessId(ptr ptr)
+@ stdcall GetThreadDescription(ptr ptr) # Win 10
+@ stdcall SetThreadDescription(ptr wstr) # Win 10
+@ stdcall GetSystemTimePreciseAsFileTime(ptr) kernel32.GetSystemTimeAsFileTime
+@ stdcall TrySubmitThreadpoolCallback(ptr ptr ptr)
+@ stdcall FreeLibraryWhenCallbackReturns(ptr ptr) ntdll_vista.TpCallbackUnloadDllOnCompletion
+@ stdcall GetProductInfo(long long long long ptr) ntdll_vista.RtlGetProductInfo

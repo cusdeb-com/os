@@ -1,0 +1,55 @@
+Author: CusDeb OS Team
+Description: Force ILC_COLOR24 (instead of auto-detected ILC_COLOR32) in
+ dll/win32/shell32/iconcache.cpp to work around Wine comctl32 alpha-blending
+ issues that cause black backgrounds behind desktop icons.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/dll/win32/shell32/iconcache.cpp
++++ b/reactos-src/dll/win32/shell32/iconcache.cpp
+@@ -77,13 +77,6 @@ SIC_GetSmallIconSize(VOID)
+     return (nIconSize > 0) ? nIconSize : nDefaultSize;
+ }
+ 
+-static INT
+-SIC_GetIconBPP(VOID) // Bits Per Pixel
+-{
+-    INT nDefaultBPP = SHGetCurColorRes();
+-    INT nIconBPP = SIC_GetMetricsValue(L"Shell Icon BPP", nDefaultBPP);
+-    return (nIconBPP > 0) ? nIconBPP : nDefaultBPP;
+-}
+ 
+ /*****************************************************************************
+  * SIC_CompareEntries
+@@ -515,7 +508,6 @@ INT SIC_GetIconIndex (LPCWSTR sSourceFil
+ BOOL SIC_Initialize(void)
+ {
+     HICON hSm = NULL, hLg = NULL;
+-    INT bpp;
+     DWORD ilMask;
+     BOOL result = FALSE;
+ 
+@@ -536,19 +528,11 @@ BOOL SIC_Initialize(void)
+     ShellSmallIconSize = SIC_GetSmallIconSize();
+     ShellLargeIconSize = SIC_GetLargeIconSize();
+ 
+-    bpp = ShellIconBPP = SIC_GetIconBPP(); // Bits Per Pixel
+-    if (bpp <= 4)
+-        ilMask = ILC_COLOR4;
+-    else if (bpp <= 8)
+-        ilMask = ILC_COLOR8;
+-    else if (bpp <= 16)
+-        ilMask = ILC_COLOR16;
+-    else if (bpp <= 24)
+-        ilMask = ILC_COLOR24;
+-    else if (bpp <= 32)
+-        ilMask = ILC_COLOR32;
+-    else
+-        ilMask = ILC_COLOR;
++    /* Force 24-bit color depth for the icon cache to work around Wine's
++     * ImageList alpha blending issues with 32-bit icons that have invalid
++     * alpha channels but valid masks. With ILC_COLOR24, Wine falls back to
++     * mask-based transparency which works correctly. */
++    ilMask = ILC_COLOR24;
+ 
+     ilMask |= ILC_MASK;
+ 
