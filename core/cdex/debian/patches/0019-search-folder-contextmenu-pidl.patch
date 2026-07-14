@@ -1,0 +1,135 @@
+Author: CusDeb OS Team
+Description: Fix opening folders from the Search results folder.
+ _ILCreateAbsolute dereferenced the uninitialized local pidl instead of the
+ pidlChild parameter and used SHSimpleIDListFromPath, so it always returned
+ NULL; build the absolute PIDL from the parent path with ILCreateFromPathW.
+ GetUIObjectOf(IID_IContextMenu) now builds the context menu from absolute
+ filesystem PIDLs via the desktop folder, fixing Open/Explore for results
+ from different directories and non-contiguous multi-selection.
+ InvokeCommand intercepts the "open" verb for all-directory selections and
+ launches C:\reactos\filebrowser.exe /N,"<path>" so folders open in a new
+ window instead of navigating the Search view and crashing on return.
+Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
+
+--- a/reactos-src/dll/win32/browseui/shellfind/CFindFolder.cpp
++++ b/reactos-src/dll/win32/browseui/shellfind/CFindFolder.cpp
+@@ -204,9 +204,9 @@
+ static PIDLIST_ABSOLUTE _ILCreateAbsolute(LPCITEMIDLIST pidlChild)
+ {
+     PIDLIST_ABSOLUTE pidl = NULL;
+-    if (PIDLIST_ABSOLUTE pidlFolder = SHSimpleIDListFromPath(_ILGetPath(pidl))) // FIXME: SHELL32_CreateSimpleIDListFromPath(, DIRECTORY)
++    if (PIDLIST_ABSOLUTE pidlFolder = ILCreateFromPathW(_ILGetPath(pidlChild)))
+     {
+-        pidl = ILCombine(pidlFolder, _ILGetFSPidl(pidl));
++        pidl = ILCombine(pidlFolder, _ILGetFSPidl(pidlChild));
+         ILFree(pidlFolder);
+     }
+     return pidl;
+@@ -1018,6 +1018,80 @@
+         if (!pszVerb && SUCCEEDED(GetCommandStringA(m_pInner, LOWORD(lpcmi->lpVerb), GCS_VERBA, szVerb, _countof(szVerb))))
+             pszVerb = szVerb;
+ 
++        // Open folders from Search in a new filebrowser window. Using the
++        // standard "open" verb navigates the current Search window, which
++        // crashes when returning back. /N forces a separate window.
++        // The "explore" verb is left to the registry Folder/Directory handler,
++        // which already launches C:\reactos\filebrowser.exe /E,"%1" and opens
++        // a new frame, so it does not need to be intercepted here.
++        if (pszVerb && !lstrcmpiA(pszVerb, "open"))
++        {
++            PCUITEMID_CHILD *apidl;
++            UINT cidl;
++            HRESULT hResult = m_shellFolderView->GetSelectedObjects(&apidl, &cidl);
++            if (SUCCEEDED(hResult))
++            {
++                if (cidl > 0)
++                {
++                    BOOL allFolders = TRUE;
++                    for (UINT i = 0; i < cidl; ++i)
++                    {
++                        PIDLIST_ABSOLUTE pidlAbs = _ILCreateAbsolute(apidl[i]);
++                        WCHAR path[MAX_PATH];
++                        BOOL hasPath = pidlAbs && SHGetPathFromIDListW(pidlAbs, path);
++                        if (pidlAbs)
++                            ILFree(pidlAbs);
++                        if (!hasPath)
++                        {
++                            allFolders = FALSE;
++                            break;
++                        }
++                        DWORD dwAttr = GetFileAttributesW(path);
++                        if (dwAttr == INVALID_FILE_ATTRIBUTES || !(dwAttr & FILE_ATTRIBUTE_DIRECTORY))
++                        {
++                            allFolders = FALSE;
++                            break;
++                        }
++                    }
++
++                    if (allFolders)
++                    {
++                        static const WCHAR szBrowser[] = L"C:\\reactos\\filebrowser.exe";
++                        BOOL bAnyFailed = FALSE;
++
++                        for (UINT i = 0; i < cidl; ++i)
++                        {
++                            PIDLIST_ABSOLUTE pidlAbs = _ILCreateAbsolute(apidl[i]);
++                            WCHAR path[MAX_PATH];
++                            if (pidlAbs && SHGetPathFromIDListW(pidlAbs, path))
++                            {
++                                WCHAR params[MAX_PATH + 16];
++                                if (SUCCEEDED(StringCchPrintfW(params, _countof(params), L"/N,\"%s\"", path)))
++                                {
++                                    HINSTANCE hInst = ShellExecuteW(lpcmi->hwnd, NULL, szBrowser, params, NULL, SW_SHOWNORMAL);
++                                    if ((INT_PTR)hInst <= 32)
++                                        bAnyFailed = TRUE;
++                                }
++                                else
++                                {
++                                    bAnyFailed = TRUE;
++                                }
++                            }
++                            else
++                            {
++                                bAnyFailed = TRUE;
++                            }
++                            if (pidlAbs)
++                                ILFree(pidlAbs);
++                        }
++                        LocalFree(apidl);
++                        return bAnyFailed ? E_FAIL : S_OK;
++                    }
++                }
++                LocalFree(apidl);
++            }
++        }
++
+         if (pszVerb && !lstrcmpiA(pszVerb, "rename"))
+         {
+             // Note: We can't invoke m_pInner (CDefaultContextMenu::DoRename) because the pidl is incorrect and SelectItem will fail.
+@@ -1111,6 +1185,26 @@
+ 
+     if (riid == IID_IContextMenu)
+     {
++        // Build the context menu from absolute filesystem PIDLs via the desktop
++        // folder. This is the same approach already used for IDataObject above.
++        // It fixes Open/Explore for search results that come from different
++        // parent directories and for non-contiguous multi-selections.
++        if (HDPA hDpa = CreateAbsolutePidlArray(cidl, apidl))
++        {
++            CComPtr<IContextMenu> pContextMenu;
++            hr = m_pSfDesktop->GetUIObjectOf(hwndOwner, cidl,
++                                             (PCITEMID_CHILD*)DPA_GetPtrPtr(hDpa),
++                                             riid, prgfInOut, (void**)&pContextMenu);
++            FreePidlArray(hDpa);
++            if (SUCCEEDED(hr))
++            {
++                return CFindFolderContextMenu::Create(m_shellFolderView, cidl,
++                                                      pContextMenu,
++                                                      (IContextMenu**)ppvOut);
++            }
++        }
++        // Fallback to the single-parent-folder context menu if absolute PIDL
++        // creation failed for any reason.
+         // FIXME: Use CDefFolderMenu_Create2(..., AddFSClassKeysToArray())
+         CComHeapPtr<ITEMIDLIST> folderPidl(ILCreateFromPathW(_ILGetPath(apidl[0])));
+         if (!folderPidl)

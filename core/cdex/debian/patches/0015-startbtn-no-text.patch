@@ -1,0 +1,54 @@
+Author: CusDeb OS Team
+Description: Give the start button a single-space caption.
+ The icon-only start button was created with the IDS_START "Start"
+ window text. The button resolves to the generic Button theme class
+ (Mizu has no Start class), whose black text color makes the caption
+ invisible at the stock small theme font but plainly visible as soon as
+ the label font is enlarged. A single space renders nothing, and unlike
+ an empty string it keeps BCM_GETIDEALSIZE on the label path, so the
+ button keeps a sensible size with no extra sizing logic. The width is
+ then doubled to make the button easier to hit.
+Last-Modified: Fri, 17 Jul 2026 19:40:00 +0300
+
+--- a/reactos-src/base/shell/explorer/traywnd.cpp
++++ b/reactos-src/base/shell/explorer/traywnd.cpp
+@@ -215,6 +215,9 @@
+             Size.cx = 2 * GetSystemMetrics(SM_CXEDGE) + GetSystemMetrics(SM_CYCAPTION) * 3;
+         }
+ 
++        /* CusDeb: widen the icon-only start button to make it easier to hit. */
++        Size.cx *= 2;
++
+         Size.cy = max(Size.cy, GetSystemMetrics(SM_CYCAPTION));
+ 
+         /* Save the size of the start button */
+@@ -259,22 +262,19 @@
+ 
+     HWND Create(HWND hwndParent)
+     {
+-        WCHAR szStartCaption[32];
+-        if (!LoadStringW(hExplorerInstance,
+-                         IDS_START,
+-                         szStartCaption,
+-                         _countof(szStartCaption)))
+-        {
+-            wcscpy(szStartCaption, L"Start");
+-        }
+-
+         DWORD dwStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_PUSHBUTTON | BS_LEFT | BS_VCENTER;
+ 
++        /* CusDeb: the start button is icon-only. Use a single space as the
++         * caption: it renders nothing, but keeps BCM_GETIDEALSIZE on the
++         * label path (an empty caption would size the button from the
++         * still-zero client rect and collapse it). The button resolves to
++         * the generic Button theme class, whose black text would otherwise
++         * leak onto the taskbar as soon as the label font is enlarged. */
+         // HACK & FIXME: CORE-18016
+         m_hWnd = CreateWindowEx(
+             0,
+             WC_BUTTON,
+-            szStartCaption,
++            L" ",
+             dwStyle,
+             0, 0, 0, 0,
+             hwndParent,

@@ -1,0 +1,8 @@
+add_subdirectory(driver)
+add_subdirectory(infinst)
+add_subdirectory(nts2w32err)
+add_subdirectory(objdir)
+add_subdirectory(partinfo)
+add_subdirectory(ps)
+add_subdirectory(rosperf)
+add_subdirectory(tickcount)

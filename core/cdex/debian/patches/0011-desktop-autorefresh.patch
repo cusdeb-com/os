@@ -1,0 +1,44 @@
+Author: CusDeb OS Team
+Description: Prefer the ReactOS Explorer desktop browser (Progman) when resolving the shell
+ change-notification server. Under Wine, GetShellWindow() may return Wine's own
+ desktop provider instead of the ReactOS Explorer desktop, which does not
+ handle WM_DESKTOP_GET_CNOTIFY_SERVER. Falling back to GetShellWindow() keeps
+ compatibility with native ReactOS.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/dll/win32/shell32/changenotify.cpp
++++ b/reactos-src/dll/win32/shell32/changenotify.cpp
+@@ -21,6 +21,24 @@ GetNotificationServer(BOOL bCreate)
+     if (s_hwndServer && IsWindow(s_hwndServer))
+         return s_hwndServer;
+ 
++    // CusDeb: prefer the ReactOS Explorer desktop browser (Progman) over
++    // GetShellWindow(), because under Wine the shell window may belong to
++    // Wine's own desktop provider rather than to ReactOS.
++    HWND hwndServer = NULL;
++    if (bCreate)
++    {
++        HWND hwndProgman = FindWindowW(L"Progman", L"Program Manager");
++        if (hwndProgman)
++        {
++            hwndServer = (HWND)SendMessageW(hwndProgman, WM_DESKTOP_GET_CNOTIFY_SERVER, bCreate, 0);
++            if (IsWindow(hwndServer))
++            {
++                s_hwndServer = hwndServer;
++                return hwndServer;
++            }
++        }
++    }
++
+     // get the shell window
+     HWND hwndShell = GetShellWindow();
+     if (hwndShell == NULL)
+@@ -30,7 +48,7 @@ GetNotificationServer(BOOL bCreate)
+     }
+ 
+     // Get the window of the notification server that runs in explorer
+-    HWND hwndServer = (HWND)SendMessageW(hwndShell, WM_DESKTOP_GET_CNOTIFY_SERVER, bCreate, 0);
++    hwndServer = (HWND)SendMessageW(hwndShell, WM_DESKTOP_GET_CNOTIFY_SERVER, bCreate, 0);
+     if (!IsWindow(hwndServer))
+     {
+         ERR("Unable to get server window\n");

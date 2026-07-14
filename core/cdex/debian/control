@@ -1,0 +1,89 @@
+Source: cdex
+Section: misc
+Priority: optional
+Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ dpkg-dev,
+ quilt,
+ cmake,
+ ninja-build,
+ build-essential,
+ bison,
+ flex,
+ gcc-mingw-w64-i686,
+ g++-mingw-w64-i686,
+ binutils-mingw-w64-i686,
+ patch,
+ python3,
+ python3-fonttools
+Standards-Version: 4.6.2
+
+Package: cdex-base
+Architecture: amd64
+Depends:
+ wine (>= 10.0.1-1cd),
+ binfmt-support,
+ lightdm,
+ lightdm-gtk-greeter,
+ openbox,
+ xorg,
+ python3,
+ fontconfig,
+ x11-utils,
+ wmctrl,
+ xdotool,
+ spice-vdagent,
+ dbus-x11,
+ gtk2-engines-pixbuf,
+ x11-xserver-utils,
+ xterm,
+ yad,
+ polkitd,
+ systemd-resolved,
+ libnss-resolve,
+ libnss-myhostname,
+ ${misc:Depends}
+Description: CusDeb ReactOS Explorer desktop environment (base)
+ Custom ReactOS Explorer shell, taskbar bridge, and supporting
+ configuration for the CusDeb Win32 desktop. This package builds a
+ selected subset of ReactOS from source and installs it together with
+ the LightDM/Openbox session needed to run it under Wine.
+
+Package: mspaint
+Architecture: amd64
+Depends: cdex-base, ${misc:Depends}
+Description: ReactOS Paint
+ mspaint.exe from ReactOS for the CusDeb Win32 desktop.
+
+Package: cdex-calc
+Architecture: amd64
+Depends: cdex-base, ${misc:Depends}
+Description: ReactOS Calculator
+ calc.exe from ReactOS for the CusDeb Win32 desktop.
+
+Package: winmine
+Architecture: amd64
+Depends: cdex-base, ${misc:Depends}
+Description: ReactOS Minesweeper
+ winmine.exe from ReactOS for the CusDeb Win32 desktop.
+
+Package: spider
+Architecture: amd64
+Depends: cdex-base, ${misc:Depends}
+Description: ReactOS Spider Solitaire
+ spider.exe from ReactOS for the CusDeb Win32 desktop.
+
+Package: cdex-full
+Section: metapackages
+Architecture: amd64
+Depends:
+ cdex-base,
+ mspaint,
+ cdex-calc,
+ winmine,
+ spider,
+ ${misc:Depends}
+Description: CusDeb ReactOS Explorer desktop environment (full)
+ Meta-package that installs the complete CusDeb Win32 desktop,
+ including the ReactOS Explorer shell and all bundled applications.

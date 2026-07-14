@@ -1,0 +1,16 @@
+Author: CusDeb OS Team
+Description: Change base/shell/explorer/explorer.cpp so Explorer treats command-line
+ launches consistently with the shell-mode prototype.
+Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+
+--- a/reactos-src/base/shell/explorer/explorer.cpp
++++ b/reactos-src/base/shell/explorer/explorer.cpp
+@@ -274,7 +274,7 @@ _tWinMain(IN HINSTANCE hInstance,
+     TRACE("Explorer starting... Command line: %S\n", lpCmdLine);
+ 
+ #if !WIN7_COMPAT_MODE
+-    bExplorerIsShell = (GetShellWindow() == NULL) && IsExplorerSystemShell();
++    bExplorerIsShell = (!lpCmdLine || !*lpCmdLine) && IsExplorerSystemShell();
+ 
+     if (!bExplorerIsShell)
+     {

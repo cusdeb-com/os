@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+# Remove stray session entries so LightDM only offers the Win32 Shell.
+rm -f /usr/share/xsessions/openbox.desktop
+rm -f /usr/share/xsessions/lightdm-xsession.desktop
+
+# Enable services required by the desktop environment.
+if [ -x /usr/bin/systemctl ]; then
+    systemctl enable lightdm.service || true
+    systemctl enable systemd-networkd.service || true
+    systemctl enable systemd-resolved.service || true
+fi
+
+# Refresh icon caches for the bundled themes.
+if [ -x /usr/bin/gtk-update-icon-cache ]; then
+    gtk-update-icon-cache -q -f -t /usr/share/icons/SE98 || true
+    gtk-update-icon-cache -q -f -t /usr/share/icons/Chicago95_Standard_Cursors || true
+fi
+
+# Refresh the fontconfig cache for the bundled fonts.
+if [ -x /usr/bin/fc-cache ]; then
+    fc-cache -f || true
+fi
+
+# Create a distinct launcher name for ReactOS Explorer so Wine does not
+# confuse it with its own explorer.exe when the payload is symlinked into
+# the per-user Wine prefix.
+if [ -f /usr/share/cusdeb/cdex/explorer.exe ]; then
+    ln -sf explorer.exe /usr/share/cusdeb/cdex/reactos-explorer.exe
+fi
+
+#DEBHELPER#
+
+exit 0

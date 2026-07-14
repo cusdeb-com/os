@@ -1,0 +1,34 @@
+Author: CusDeb OS Team
+Description: Make GetThemeFont report no per-part theme fonts.
+ Themed push buttons and other themed text draw via
+ DrawThemeText/GetThemeFont, which resolves fonts from the .msstyles
+ binary (Mizu: Source Sans Pro 9) and ignores both WindowMetrics and
+ the dialog font set on the DC. Returning E_PROP_ID_UNSUPPORTED makes
+ callers keep the DC font, so all themed text follows the registry /
+ dialog font like the rest of the UI.
+Last-Modified: Fri, 17 Jul 2026 14:56:39 +0300
+
+--- a/reactos-src/dll/win32/uxtheme/property.c
++++ b/reactos-src/dll/win32/uxtheme/property.c
+@@ -108,16 +108,17 @@
+ HRESULT WINAPI GetThemeFont(HTHEME hTheme, HDC hdc, int iPartId,
+                             int iStateId, int iPropId, LOGFONTW *pFont)
+ {
+-    PTHEME_PROPERTY tp;
+     PTHEME_CLASS pClass = ValidateHandle(hTheme);
+ 
+     TRACE("(%d, %d, %d)\n", iPartId, iStateId, iPropId);
+     if(!pClass)
+         return E_HANDLE;
+ 
+-    if(!(tp = MSSTYLES_FindProperty(pClass, iPartId, iStateId, TMT_FONT, iPropId)))
+-        return E_PROP_ID_UNSUPPORTED;
+-    return MSSTYLES_GetPropertyFont(tp, hdc, pFont);
++    /* CusDeb: pretend the theme carries no per-part fonts. Callers then
++     * keep the font already selected into the DC (dialog font, stock GUI
++     * font), so text size is controlled from the registry, not from the
++     * .msstyles theme. */
++    return E_PROP_ID_UNSUPPORTED;
+ }
+ 
+ /***********************************************************************

@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+
+
+WINDOW_ID_RE = re.compile(r"0x[0-9a-fA-F]+")
+
+
+_ROOT_WIDTH = None
+_ROOT_HEIGHT = None
+_NORMALIZED_WINDOWS = set()
+
+
+def run_text(command):
+    try:
+        return subprocess.check_output(command, stderr=subprocess.DEVNULL, text=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return ""
+
+
+def parse_string(line):
+    if "=" not in line:
+        return ""
+    value = line.split("=", 1)[1].strip()
+    if value == "not found.":
+        return ""
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value.strip('"')
+
+
+def parse_atoms(line):
+    if "=" not in line:
+        return []
+    value = line.split("=", 1)[1].strip()
+    if value == "not found.":
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def get_window_ids():
+    output = run_text(["xprop", "-root", "_NET_CLIENT_LIST"])
+    return WINDOW_ID_RE.findall(output)
+
+
+def read_window(window_id):
+    output = run_text([
+        "xprop",
+        "-id",
+        window_id,
+        "WM_CLASS",
+        "WM_NAME",
+        "_NET_WM_NAME",
+        "_NET_WM_PID",
+        "_NET_WM_WINDOW_TYPE",
+        "_NET_WM_STATE",
+    ])
+    window = {
+        "window_id": window_id,
+        "title": "",
+        "class": "",
+        "instance": "",
+        "pid": None,
+        "types": [],
+        "state": [],
+    }
+    for line in output.splitlines():
+        if line.startswith("WM_CLASS"):
+            strings = re.findall(r'"([^"]*)"', line)
+            if strings:
+                window["instance"] = strings[0]
+            if len(strings) > 1:
+                window["class"] = strings[1]
+        elif line.startswith("_NET_WM_NAME"):
+            window["title"] = parse_string(line)
+        elif line.startswith("WM_NAME") and not window["title"]:
+            window["title"] = parse_string(line)
+        elif line.startswith("_NET_WM_PID"):
+            match = re.search(r"=\s*(\d+)", line)
+            if match:
+                window["pid"] = int(match.group(1))
+        elif line.startswith("_NET_WM_WINDOW_TYPE"):
+            window["types"] = parse_atoms(line)
+        elif line.startswith("_NET_WM_STATE"):
+            window["state"] = parse_atoms(line)
+    return window
+
+
+def is_task_window(window):
+    if not window["title"].strip():
+        return False
+    state = set(window["state"])
+    types = set(window["types"])
+    if "_NET_WM_STATE_SKIP_TASKBAR" in state:
+        return False
+    if "_NET_WM_WINDOW_TYPE_DESKTOP" in types or "_NET_WM_WINDOW_TYPE_DOCK" in types:
+        return False
+    if window["class"].lower() == "reactos-explorer.exe" and window["title"] == "Program Manager":
+        return False
+    return True
+
+
+def read_windows():
+    return [window for window in (read_window(window_id) for window_id in get_window_ids()) if is_task_window(window)]
+
+
+def get_root_size():
+    global _ROOT_WIDTH, _ROOT_HEIGHT
+    if _ROOT_WIDTH is not None and _ROOT_HEIGHT is not None:
+        return _ROOT_WIDTH, _ROOT_HEIGHT
+    output = run_text(["xwininfo", "-root"])
+    match_w = re.search(r"Width:\s+(\d+)", output)
+    match_h = re.search(r"Height:\s+(\d+)", output)
+    if match_w and match_h:
+        _ROOT_WIDTH = int(match_w.group(1))
+        _ROOT_HEIGHT = int(match_h.group(1))
+        return _ROOT_WIDTH, _ROOT_HEIGHT
+    return 1920, 1080
+
+
+def get_window_geometry(window_id):
+    output = run_text(["xwininfo", "-id", window_id])
+    geo = {}
+    for line in output.splitlines():
+        if "Absolute upper-left X:" in line:
+            geo["x"] = int(line.split(":", 1)[1].strip())
+        elif "Absolute upper-left Y:" in line:
+            geo["y"] = int(line.split(":", 1)[1].strip())
+        elif "Width:" in line and "Relative" not in line:
+            geo["width"] = int(line.split(":", 1)[1].strip())
+        elif "Height:" in line and "Relative" not in line:
+            geo["height"] = int(line.split(":", 1)[1].strip())
+    return geo
+
+
+def set_xprop(window_id, prop, fmt, value_str):
+    try:
+        subprocess.run(
+            ["xprop", "-id", window_id, "-f", prop, fmt, "-set", prop, value_str],
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+def normalize_desktop_window(window):
+    window_id = window["window_id"]
+    types = set(window.get("types", []))
+    state = set(window.get("state", []))
+
+    desired_type = "_NET_WM_WINDOW_TYPE_DESKTOP"
+    desired_state = {"_NET_WM_STATE_BELOW", "_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_STATE_SKIP_PAGER"}
+
+    changed = False
+
+    if desired_type not in types:
+        if set_xprop(window_id, "_NET_WM_WINDOW_TYPE", "32a", desired_type):
+            print(f"taskbar bridge: set {window_id} desktop type", flush=True)
+            changed = True
+
+    if not desired_state.issubset(state):
+        state_str = ",".join(desired_state)
+        if set_xprop(window_id, "_NET_WM_STATE", "32a", state_str):
+            print(f"taskbar bridge: set {window_id} desktop state", flush=True)
+            changed = True
+
+    return changed
+
+
+def normalize_taskbar_window(window, root_width, root_height):
+    window_id = window["window_id"]
+    types = set(window.get("types", []))
+    state = set(window.get("state", []))
+
+    desired_type = "_NET_WM_WINDOW_TYPE_DOCK"
+    desired_state = {"_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_STATE_SKIP_PAGER", "_NET_WM_STATE_STICKY"}
+
+    changed = False
+
+    if desired_type not in types:
+        if set_xprop(window_id, "_NET_WM_WINDOW_TYPE", "32a", desired_type):
+            print(f"taskbar bridge: set {window_id} dock type", flush=True)
+            changed = True
+
+    if not desired_state.issubset(state):
+        state_str = ",".join(desired_state)
+        if set_xprop(window_id, "_NET_WM_STATE", "32a", state_str):
+            print(f"taskbar bridge: set {window_id} dock state", flush=True)
+            changed = True
+
+    # Check if strut already set
+    has_strut = "=" in run_text(["xprop", "-id", window_id, "_NET_WM_STRUT_PARTIAL"])
+    if not has_strut:
+        geo = get_window_geometry(window_id)
+        if geo:
+            bottom = root_height - geo.get("y", 0)
+            # Sanity: taskbar is at bottom, small height
+            if bottom > 0 and bottom < 200:
+                strut_val = f"0,0,0,{bottom},0,0,0,0,0,0,0,{root_width - 1}"
+                if set_xprop(window_id, "_NET_WM_STRUT", "32c", f"0,0,0,{bottom}"):
+                    print(f"taskbar bridge: set {window_id} strut bottom={bottom}", flush=True)
+                    changed = True
+                if set_xprop(window_id, "_NET_WM_STRUT_PARTIAL", "32c", strut_val):
+                    print(f"taskbar bridge: set {window_id} strut partial", flush=True)
+                    changed = True
+
+    return changed
+
+
+def normalize_window(window, root_width, root_height):
+    if window["class"].lower() != "reactos-explorer.exe":
+        return False
+
+    if window["title"] == "Program Manager":
+        return normalize_desktop_window(window)
+
+    if window["title"] == "":
+        # Candidate for taskbar; verify geometry if not already dock
+        types = set(window.get("types", []))
+        if "_NET_WM_WINDOW_TYPE_DOCK" in types:
+            return False
+        geo = get_window_geometry(window["window_id"])
+        if geo:
+            # Taskbar: wide, short, near bottom of screen
+            if geo.get("width", 0) > root_width * 0.7 and geo.get("height", 0) < 100 and geo.get("y", 0) > root_height * 0.8:
+                return normalize_taskbar_window(window, root_width, root_height)
+    return False
+
+
+def scan_and_normalize_windows():
+    global _NORMALIZED_WINDOWS
+    root_width, root_height = get_root_size()
+    current_ids = set(get_window_ids())
+    # Clean up cached ids for windows that no longer exist
+    _NORMALIZED_WINDOWS &= current_ids
+    for window_id in current_ids:
+        if window_id in _NORMALIZED_WINDOWS:
+            continue
+        window = read_window(window_id)
+        if normalize_window(window, root_width, root_height):
+            _NORMALIZED_WINDOWS.add(window_id)
+
+
+def write_atomic(path, payload):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".reactos-taskbar-", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def launch_first_available(commands):
+    for command in commands:
+        if shutil.which(command[0]):
+            print("taskbar bridge:", " ".join(command), flush=True)
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+    print("taskbar bridge: no focus/control tool found for", commands, flush=True)
+    return False
+
+
+
+def log_startup():
+    print(f"taskbar bridge: DISPLAY={os.environ.get('DISPLAY', '')}", flush=True)
+    print(f"taskbar bridge: PATH={os.environ.get('PATH', '')}", flush=True)
+    for tool in ("xprop", "wmctrl", "xdotool"):
+        print(f"taskbar bridge: {tool}={shutil.which(tool) or 'missing'}", flush=True)
+
+
+def handle_control(path):
+    if not os.path.exists(path):
+        return
+    try:
+        stat_result = os.stat(path)
+        if stat_result.st_uid != os.getuid() or not os.path.isfile(path):
+            return
+        with open(path, "r", encoding="utf-8") as handle:
+            message = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    window_id = str(message.get("window_id", ""))
+    action = str(message.get("action", ""))
+    if not WINDOW_ID_RE.fullmatch(window_id):
+        return
+    if action == "focus":
+        print(f"taskbar bridge: focus {window_id}", flush=True)
+        launch_first_available([["wmctrl", "-ia", window_id], ["xdotool", "windowmap", window_id, "windowactivate", window_id]])
+    elif action == "minimize":
+        print(f"taskbar bridge: minimize {window_id}", flush=True)
+        launch_first_available([["xdotool", "windowminimize", window_id]])
+    elif action == "close":
+        print(f"taskbar bridge: close {window_id}", flush=True)
+        launch_first_available([["wmctrl", "-ic", window_id], ["xdotool", "windowclose", window_id]])
+
+
+LINUX_LAUNCHERS = {
+    "terminal": ["xterm"],
+    "calamares": ["/usr/bin/cusdeb-calamares-launcher"],
+    "display-settings": ["/usr/bin/reactos-display-properties"],
+    "poweroff": ["/usr/bin/cusdeb-shutdown-helper", "poweroff"],
+    "reboot": ["/usr/bin/cusdeb-shutdown-helper", "reboot"],
+}
+
+
+def launch_linux_app(name):
+    command = LINUX_LAUNCHERS.get(name)
+    if not command:
+        print(f"taskbar bridge: unknown launcher {name!r}", flush=True)
+        return
+    home = os.path.expanduser("~")
+    env = os.environ.copy()
+    env.update({
+        "HOME": home,
+        "SHELL": os.environ.get("SHELL", "/bin/bash") or "/bin/bash",
+    })
+    print(f"taskbar bridge: launch {name}: {' '.join(command)}", flush=True)
+    subprocess.Popen(command, cwd=home, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def handle_launch_request(path):
+    if not os.path.exists(path):
+        return
+    try:
+        stat_result = os.stat(path)
+        if stat_result.st_uid != os.getuid() or not os.path.isfile(path):
+            return
+        with open(path, "r", encoding="utf-8") as handle:
+            launcher = handle.read().strip().replace("\r", "")
+    except OSError:
+        return
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    if launcher:
+        launch_linux_app(launcher)
+
+
+def build_payload():
+    return {"version": 1, "timestamp": time.time(), "windows": read_windows()}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--state", default="/tmp/reactos-taskbar-windows.json")
+    parser.add_argument("--control", default="/tmp/reactos-taskbar-control.json")
+    parser.add_argument("--launch-request", default=os.environ.get(
+        "REACTOS_LAUNCH_REQUEST",
+        os.path.expanduser("~/.wine/drive_c/cusdeb/launch-request"),
+    ))
+    parser.add_argument("--interval", type=float, default=0.5)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args()
+
+    log_startup()
+
+    while True:
+        scan_and_normalize_windows()
+        write_atomic(args.state, build_payload())
+        handle_control(args.control)
+        handle_launch_request(args.launch_request)
+        if args.once:
+            break
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()
