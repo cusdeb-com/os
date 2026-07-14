@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Enable SSH server in the Live image for remote debug access.
+# Root password is already set in create-live-user.chroot.
+
+# Enable ssh service on boot
+systemctl enable ssh
+
+# Allow root login with password (debug only)
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-debug-root-login.conf <<'EOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+
+echo "SSH enabled for debug access"

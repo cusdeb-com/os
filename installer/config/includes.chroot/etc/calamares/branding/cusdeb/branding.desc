@@ -1,0 +1,39 @@
+---
+componentName:   cusdeb
+welcomeStyleCalamares: true
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 800px,580px
+windowPlacement: center
+
+strings:
+    productName:         CusDeb OS
+    shortProductName:    CusDeb
+    version:             1
+    shortVersion:        1
+    versionedName:       CusDeb OS 1
+    shortVersionedName:  CusDeb OS 1
+    bootloaderEntryName: CusDeb OS
+    productUrl:          https://github.com/CusDeb
+    supportUrl:          https://github.com/CusDeb
+    knownIssuesUrl:      https://github.com/CusDeb
+    releaseNotesUrl:     https://github.com/CusDeb
+    donateUrl:           https://github.com/CusDeb
+
+sidebar: widget
+navigation: widget
+
+images:
+    productLogo:         "cusdeb-logo.png"
+    productIcon:         "cusdeb-logo.png"
+    productWelcome:      "welcome.png"
+
+slideshow:               "show.qml"
+
+style:
+   SidebarBackground:    "#26475b"
+   SidebarText:          "#FFFFFF"
+   SidebarTextCurrent:   "#fbfbfb"
+   SidebarBackgroundCurrent: "#265370"
+
+slideshowAPI: 2

@@ -1,0 +1,3 @@
+Package: *
+Pin: release o=os-packages
+Pin-Priority: 900

@@ -1,0 +1,96 @@
+calamares
+calamares-settings-debian
+
+# Password strength dictionary required by Calamares users module
+# Without it the installer prints: "the password fails the dictionary check - error loading dictionary"
+cracklib-runtime
+
+# squashfs-tools provides unsquashfs, required by Calamares unpackfs module
+# to copy the live filesystem onto the target disk.
+squashfs-tools
+
+# Partition/filesystem tools required by Calamares partition and bootloader modules
+# dosfstools provides mkfs.fat for the EFI System Partition (ESP).
+# parted is used for disk partitioning.
+dosfstools
+parted
+
+# Minimal X11 stack
+# We install xserver-xorg-core plus a small set of drivers instead of the
+# metapackage xserver-xorg, because xserver-xorg -> xserver-xorg-video-all
+# pulls xserver-xorg-video-mga/r128, which hard-depend on firmware-linux and
+# its network-downloading b43 installer. That breaks offline/container builds.
+xserver-xorg-core
+xserver-xorg-input-libinput
+xserver-xorg-video-fbdev
+xserver-xorg-video-vesa
+xserver-xorg-video-amdgpu
+xserver-xorg-video-radeon
+xserver-xorg-video-nouveau
+xserver-xorg-video-intel
+xserver-xorg-video-qxl
+xserver-xorg-video-vmware
+openbox
+lightdm
+lightdm-gtk-greeter
+
+# GPU firmware for real hardware (QEMU does not need these, but laptops/desktops do)
+firmware-amd-graphics
+firmware-misc-nonfree
+
+# Terminal
+xterm
+
+# Networking
+network-manager
+wpasupplicant
+iw
+wireless-tools
+firmware-realtek
+firmware-iwlwifi
+firmware-atheros
+firmware-brcm80211
+firmware-mediatek
+
+# SSH access for debug
+openssh-server
+
+# Kernel and live-boot stack
+linux-image-amd64
+live-boot
+live-boot-doc
+live-config
+live-config-doc
+live-config-systemd
+live-tools
+live-task-localisation
+live-task-recommended
+firmware-linux-free
+
+# Bootloader (needed by calamares-bootloader-config)
+grub-pc
+grub-efi-amd64-bin
+efibootmgr
+os-prober
+
+# Disk tools (needed by calamares partition module)
+smartmontools
+
+# Hardware diagnostics (lspci, lsusb)
+pciutils
+usbutils
+
+# Essentials
+sudo
+ca-certificates
+
+# Optional packages pre-installed in live so they are available in target
+# regardless of Calamares network state. The optional-packages-apply job
+# removes the ones the user deselects.
+htop
+mc
+vim
+fastfetch
+tree
+curl
+wget
