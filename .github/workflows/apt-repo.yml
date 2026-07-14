@@ -1,0 +1,225 @@
+name: Build and publish APT repository
+
+env:
+  APT_DISTRIBUTIONS: "stable"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  detect-packages:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.detect.outputs.packages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed packages
+        id: detect
+        env:
+          COMMITS_JSON: ${{ toJson(github.event.commits) }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            commits_json="$COMMITS_JSON"
+            if [ "$commits_json" != "null" ] && [ "$commits_json" != "[]" ]; then
+              first_commit=$(echo "$commits_json" | jq -r '.[0].id')
+              last_commit=$(echo "$commits_json" | jq -r '.[-1].id')
+              changed_files=$(git log --pretty=format: --name-only "$first_commit^..$last_commit" | sort -u)
+            else
+              changed_files=""
+            fi
+          else
+            changed_files=$(git diff --name-only HEAD~1 HEAD)
+          fi
+
+          echo "Changed files:"
+          echo "$changed_files"
+
+          mapfile -t pkg_dirs < <(git ls-files \
+            | grep -E '/debian/' \
+            | sed 's|/debian/.*||' \
+            | sort -u)
+
+          changed=()
+          for pkg in "${pkg_dirs[@]}"; do
+            if echo "$changed_files" | grep -q "^${pkg}/"; then
+              changed+=("$pkg")
+            fi
+          done
+
+          packages=$(printf '%s\n' "${changed[@]}" | jq -R . | jq -s -c 'map(select(. != ""))')
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          echo "Detected packages: $packages"
+
+  build-packages:
+    runs-on: ubuntu-latest
+    needs: detect-packages
+    if: ${{ needs.detect-packages.outputs.packages != '[]' }}
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.detect-packages.outputs.packages) }}
+    env:
+      DOCKER_BUILDKIT: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute package slug
+        id: slug
+        run: |
+          slug=$(echo "${{ matrix.package }}" | tr '/' '-')
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "Package path: ${{ matrix.package }}, slug: $slug"
+
+      - name: Read package version
+        id: version
+        run: |
+          version=$(dpkg-parsechangelog -l "${{ matrix.package }}/debian/changelog" -S Version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Package: ${{ matrix.package }}, version: $version"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Debian package
+        run: |
+          cd "${{ matrix.package }}"
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --output type=local,dest=. .
+
+      - name: Collect .deb artifact
+        run: |
+          mv "${{ matrix.package }}"/*.deb .
+          echo "${{ matrix.package }}" > package-path.txt
+          ls -lh ./*.deb
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ steps.slug.outputs.slug }}
+          path: |
+            ./*.deb
+            package-path.txt
+
+  publish-repo:
+    runs-on: ubuntu-latest
+    needs: build-packages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: publish-apt-repo
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: deb-*
+
+      - name: Install reprepro and gnupg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y reprepro gnupg
+
+      - name: Configure GPG agent
+        run: |
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          gpg-connect-agent reloadagent /bye
+
+      - name: Import GPG signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "Error: APT_GPG_PRIVATE_KEY secret is not set" >&2
+            exit 1
+          fi
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          KEY_ID=$(gpg --list-secret-keys --with-colons | grep '^sec' | head -1 | cut -d: -f5)
+          echo "KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure reprepro configuration
+        run: |
+          mkdir -p repo/conf
+          cat > repo/conf/distributions <<EOF
+          Origin: os-packages
+          Label: os-packages
+          Suite: stable
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: APT repository for os-packages
+          SignWith: ${{ env.KEY_ID }}
+          EOF
+          gpg --export "${{ env.KEY_ID }}" > repo/KEY.gpg
+
+      - name: Clean vanished distributions
+        run: |
+          reprepro -b repo clearvanished
+
+      - name: Publish packages
+        run: |
+          for pkg_dir in ./artifacts/deb-*; do
+            pkg_path=$(cat "$pkg_dir/package-path.txt")
+            version=$(dpkg-parsechangelog -l "$pkg_path/debian/changelog" -S Version)
+
+            while IFS= read -r deb_file; do
+              pkg_name=$(dpkg-deb -f "$deb_file" Package)
+              pkg_arch=$(dpkg-deb -f "$deb_file" Architecture)
+
+              echo "Publishing $pkg_name ($pkg_arch) ($pkg_path) version $version"
+
+              existing_pool=$(reprepro -b repo dumpreferences | grep -F "${pkg_name}_${version}_${pkg_arch}.deb" | head -1 | awk '{print $2}')
+              if [ -n "$existing_pool" ]; then
+                if cmp -s "$deb_file" "repo/$existing_pool"; then
+                  echo "Identical package already in pool ($existing_pool)."
+                else
+                  echo "::error::Version ${version} of ${pkg_name} already exists in pool ($existing_pool) with different content. Bump the Debian version to publish a new build." >&2
+                  exit 1
+                fi
+              fi
+
+              for dist in $APT_DISTRIBUTIONS; do
+                existing=$(reprepro -b repo list "$dist" "$pkg_name" | grep -F "${pkg_name} ${version}" || true)
+                if [ -n "$existing" ]; then
+                  echo "  -> ${dist}: version ${version} already exists; skipping."
+                  continue
+                fi
+
+                echo "  -> including in ${dist}"
+                reprepro -b repo includedeb "$dist" "$deb_file"
+              done
+            done < <(find "$pkg_dir" -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' | sort)
+          done
+
+      - name: Commit and push gh-pages
+        run: |
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore(apt): update repository" || echo "No changes"
+          git push origin gh-pages
