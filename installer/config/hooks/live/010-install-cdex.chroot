@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+echo "[hook] Adding CusDeb apt repository and installing cdex-full..."
+
+dpkg --add-architecture i386
+update-ca-certificates --fresh
+apt-get update
+apt-get install -y cdex-full
+
+echo "[hook] cdex-full installed."

@@ -1,0 +1,4 @@
+type: job
+name: optional-packages-apply
+interface: python
+script: main.py
