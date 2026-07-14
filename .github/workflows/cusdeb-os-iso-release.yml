@@ -1,0 +1,93 @@
+name: CusDebOS ISO release
+
+on:
+  push:
+    branches:
+      - feature/deb-package
+    paths:
+      - installer/VERSION
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cusdeb-os-iso-release
+  cancel-in-progress: true
+
+jobs:
+  build-and-release-iso:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set ISO name with SHA
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "ISO_NAME=CusDebOS-release-${SHORT_SHA}-x86_64.iso" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=feature-deb-package-${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          docker system prune -af || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:buildx-stable-1
+          buildkitd-flags: --allow-insecure-entitlement security.insecure
+
+      - name: Prepare output directory
+        run: |
+          rm -rf out
+          mkdir -p out
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: Build CusDebOS live ISO
+        env:
+          OUT_DIR: ${{ github.workspace }}/out
+          ISO_NAME: ${{ env.ISO_NAME }}
+          DOCKER_BUILDKIT: 1
+        run: ./installer/run-iso-build.sh
+
+      - name: Verify build output exists
+        run: test -f "out/${ISO_NAME}"
+
+      - name: Package and release ISO
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISO_PATH="out/${ISO_NAME}"
+          ISO_SIZE=$(stat -c%s "$ISO_PATH")
+          MAX_RAW_SIZE=2147483648  # 2 GiB, GitHub individual file limit
+
+          if [ "$ISO_SIZE" -le "$MAX_RAW_SIZE" ]; then
+            UPLOAD_FILE="$ISO_PATH"
+            NOTES_EXTRA=""
+          else
+            UPLOAD_FILE="${ISO_PATH}.7z"
+            echo "ISO size $ISO_SIZE exceeds 2 GiB; compressing with 7zip"
+            7z a -mx9 "$UPLOAD_FILE" "$ISO_PATH"
+            NOTES_EXTRA=" (compressed with 7zip because the raw ISO exceeds GitHub's 2 GiB file limit)"
+          fi
+
+          RELEASE_TITLE="Feature deb-package ISO ${SHORT_SHA}"
+          NOTES="Automated ISO build from commit ${GITHUB_SHA} on branch feature/deb-package.
+
+          Available image:
+          - ${ISO_NAME}${NOTES_EXTRA} for USB/CD/DVD or QEMU usage"
+          gh release create "${RELEASE_TAG}" \
+            "$UPLOAD_FILE" \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_TITLE}" \
+            --notes "$NOTES" \
+            --prerelease

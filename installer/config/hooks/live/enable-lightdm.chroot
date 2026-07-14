@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+
+# Enable LightDM so the Live environment boots into a graphical login/desktop
+# instead of stopping at a text console.
+systemctl enable lightdm.service

@@ -1,0 +1,7 @@
+# Calamares plugin descriptor for the optional-packages view module.
+# This file tells Calamares that the module provides a Qt view step and
+# which shared object to load.
+type: view
+name: optional-packages
+interface: qtplugin
+load: libcalamares_viewmodule_optional-packages.so

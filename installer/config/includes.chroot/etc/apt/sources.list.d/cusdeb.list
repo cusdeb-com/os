@@ -1,0 +1,1 @@
+deb [signed-by=/etc/apt/keyrings/cusdeb.gpg] https://cusdeb-com.github.io/os stable main

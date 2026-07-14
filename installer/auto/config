@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+lb config noauto \
+    --mode debian \
+    --distribution trixie \
+    --architecture amd64 \
+    --binary-images iso-hybrid \
+    --bootloader "grub-pc grub-efi" \
+    --debian-installer none \
+    --win32-loader false \
+    --archive-areas "main contrib non-free non-free-firmware" \
+    --updates true \
+    --security true \
+    --cache true \
+    --apt-indices false \
+    --apt-recommends false \
+    --firmware-chroot false \
+    --cache-stages "bootstrap chroot" \
+    --bootappend-live "boot=live components console=tty0 console=ttyS0,115200n8" \
+    "${@}"

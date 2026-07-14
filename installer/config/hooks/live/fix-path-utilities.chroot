@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# Calamares runs commands like blkid, smartctl via QProcess which uses a
+# minimal PATH. Create symlinks in /usr/local/bin so they are found.
+
+for util in blkid smartctl ckbcomp; do
+    if [ -x "/usr/sbin/$util" ] && [ ! -e "/usr/local/bin/$util" ]; then
+        ln -s "/usr/sbin/$util" "/usr/local/bin/$util"
+        echo "Symlinked $util to /usr/local/bin"
+    elif [ -x "/usr/bin/$util" ] && [ ! -e "/usr/local/bin/$util" ]; then
+        ln -s "/usr/bin/$util" "/usr/local/bin/$util"
+        echo "Symlinked $util to /usr/local/bin"
+    fi
+done
