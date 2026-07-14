@@ -1,0 +1,6 @@
+package wine
+interpreter /usr/bin/wine
+magic MZ
+offset 0
+credentials no
+fix_binary yes

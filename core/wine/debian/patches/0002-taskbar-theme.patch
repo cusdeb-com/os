@@ -1,0 +1,37 @@
+Author: CusDeb OS Team
+Description: Fix taskbar button theming. Map TaskBand part 1 to the BUTTON theme class
+ in uxtheme so DrawThemeBackground finds the button bitmap, and pass the real toolbar
+ hwnd to OpenThemeDataForDpi in comctl32 so the TaskBand theme override is respected.
+Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
+
+--- a/wine-src/dlls/comctl32/toolbar.c
++++ b/wine-src/dlls/comctl32/toolbar.c
+@@ -5302,7 +5302,7 @@
+ 
+     SystemParametersInfoW (SPI_GETICONTITLELOGFONT, 0, &logFont, 0);
+     infoPtr->hFont = infoPtr->hDefaultFont = CreateFontIndirectW (&logFont);
+-    infoPtr->hTheme = OpenThemeDataForDpi (NULL, themeClass, GetDpiForWindow (hwnd));
++    infoPtr->hTheme = OpenThemeDataForDpi (hwnd, themeClass, GetDpiForWindow (hwnd));
+ 
+     TOOLBAR_CheckStyle (infoPtr);
+ 
+@@ -6538,7 +6538,7 @@
+ static LRESULT theme_changed (TOOLBAR_INFO *infoPtr)
+ {
+     CloseThemeData (infoPtr->hTheme);
+-    infoPtr->hTheme = OpenThemeDataForDpi (NULL, themeClass, GetDpiForWindow (infoPtr->hwndSelf));
++    infoPtr->hTheme = OpenThemeDataForDpi (infoPtr->hwndSelf, themeClass, GetDpiForWindow (infoPtr->hwndSelf));
+     InvalidateRect (infoPtr->hwndSelf, NULL, TRUE);
+     return 0;
+ }
+--- a/wine-src/dlls/uxtheme/stylemap.c
++++ b/wine-src/dlls/uxtheme/stylemap.c
+@@ -1047,7 +1047,7 @@
+ };
+ 
+ static const MSSTYLES_CLASS_MAP classTaskband[] = {
+-    {TDP_GROUPCOUNT, 0, L"GROUPCOUNT"},
++    {TDP_GROUPCOUNT, 0, L"BUTTON"},
+     {TDP_FLASHBUTTON, 0, L"FLASHBUTTON"},
+     {TDP_FLASHBUTTONGROUPMENU, 0, L"FLASHBUTTONGROUPMENU"},
+     {0, 0, L""}

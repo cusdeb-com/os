@@ -1,0 +1,15 @@
+TESTDLL   = ucrtbase.dll
+IMPORTS   = ucrtbase
+EXTRADEFS = -fno-builtin
+
+SOURCES = \
+	cpp.c \
+	environ.c \
+	file.c \
+	misc.c \
+	printf.c \
+	scanf.c \
+	string.c \
+	thread.c \
+	threaddll.c \
+	threaddll.spec

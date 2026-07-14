@@ -1,0 +1,5 @@
+QUILT_PATCHES=debian/patches
+QUILT_SERIES=debian/patches/series
+QUILT_PATCH_OPTS="--reject-format=unified"
+QUILT_DIFF_ARGS="-p ab --no-timestamps --no-index"
+QUILT_REFRESH_ARGS="-p ab --no-timestamps --no-index"

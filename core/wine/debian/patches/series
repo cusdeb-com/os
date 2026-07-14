@@ -1,0 +1,9 @@
+0001-winex11-remove-invalid-assert.patch
+0002-taskbar-theme.patch
+0003-comctl32-shadow-text.patch
+0004-shell32-disable-xdg-shell-folder-symlinks.patch
+0005-gdifont-default-gui-size.patch
+0006-dialog-font-scale.patch
+0007-uxtheme-button-dc-font.patch
+0008-xvidmode-switch-sync-assert.patch
+0009-xrandr-notify-desktop-on-mode-change.patch
