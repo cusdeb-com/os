@@ -42,35 +42,51 @@ Depends: binfmt-support,
          xterm,
          yad,
          ${misc:Depends}
-Description: CusDeb ReactOS Explorer desktop environment (base)
- Custom ReactOS Explorer shell, taskbar bridge, and supporting
- configuration for the CusDeb Win32 desktop. This package builds a
- selected subset of ReactOS from source and installs it together with
- the LightDM/Openbox session needed to run it under Wine.
+Description: CDEX, a Windows-like desktop environment (base)
+ CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
+ experience. It is built on Win32 and uses the PE binary format, but is
+ designed to run on Unix-like operating systems.
 
 Package: mspaint
 Architecture: amd64
 Depends: cdex-base, ${misc:Depends}
-Description: ReactOS Paint
- mspaint.exe from ReactOS for the CusDeb Win32 desktop.
+Description: Simple image editor and drawing application
+ Mspaint is a free and open-source reimplementation of MS Paint. It aims to
+ be easy to use, offering just enough functionality for everyday tasks such
+ as drawing simple graphics and touching up images.
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: cdex-calc
 Architecture: amd64
 Depends: cdex-base, ${misc:Depends}
-Description: ReactOS Calculator
- calc.exe from ReactOS for the CusDeb Win32 desktop.
+Description: Simple and scientific calculator
+ Calc is a calculator application. It provides:
+ .
+  - standard arithmetic with memory functions and square root
+  - a scientific mode with trigonometric, logarithmic, and bitwise
+    operations in decimal, hexadecimal, octal, and binary bases
+  - a conversion mode for converting between units such as angles
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: winmine
 Architecture: amd64
 Depends: cdex-base, ${misc:Depends}
-Description: ReactOS Minesweeper
- winmine.exe from ReactOS for the CusDeb Win32 desktop.
+Description: Minesweeper game
+ Winmine is a game where the player finds hidden mines without setting them
+ off.
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: spider
 Architecture: amd64
 Depends: cdex-base, ${misc:Depends}
-Description: ReactOS Spider Solitaire
- spider.exe from ReactOS for the CusDeb Win32 desktop.
+Description: Spider solitaire card game
+ Spider is a solitaire card game played with two decks. The goal is to arrange
+ all cards into descending same-suit sequences from King to Ace.
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: cdex-full
 Section: metapackages
@@ -81,6 +97,10 @@ Depends: cdex-base,
          spider,
          winmine,
          ${misc:Depends}
-Description: CusDeb ReactOS Explorer desktop environment (full)
- Meta-package that installs the complete CusDeb Win32 desktop,
- including the ReactOS Explorer shell and all bundled applications.
+Description: Meta-package for CDEX, a Windows-like desktop environment
+ CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
+ experience. It is built on Win32 and uses the PE binary format, but is
+ designed to run on Unix-like operating systems.
+ .
+ This package is a metapackage; it depends on both the core packages of the
+ CDEX desktop environment and some extra CDEX packages.
