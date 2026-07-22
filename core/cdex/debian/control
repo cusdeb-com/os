@@ -1,5 +1,5 @@
 Source: cdex
-Section: misc
+Section: cdex
 Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends:
