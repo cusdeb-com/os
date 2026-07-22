@@ -90,31 +90,27 @@ Depends: binfmt-support,
          libxrender1:i386,
          ${misc:Depends},
          ${shlibs:Depends}
-Recommends:
- libgl1-mesa-dri,
- libasound2-plugins,
- libvulkan1,
- libvulkan1:i386
-Provides:
- wine64 (= ${binary:Version}),
- wine32 (= ${binary:Version}),
- wine-binfmt (= ${binary:Version}),
- libwine (= ${binary:Version}),
- fonts-wine (= ${binary:Version})
-Conflicts:
- wine64,
- wine32,
- wine-binfmt,
- libwine,
- fonts-wine,
- wine-stable
-Replaces:
- wine64,
- wine32,
- wine-binfmt,
- libwine,
- fonts-wine,
- wine-stable
+Recommends: libasound2-plugins,
+            libgl1-mesa-dri,
+            libvulkan1,
+            libvulkan1:i386
+Provides: fonts-wine (= ${binary:Version}),
+          libwine (= ${binary:Version}),
+          wine-binfmt (= ${binary:Version}),
+          wine32 (= ${binary:Version}),
+          wine64 (= ${binary:Version})
+Conflicts: fonts-wine,
+           libwine,
+           wine-binfmt,
+           wine-stable,
+           wine32,
+           wine64
+Replaces: fonts-wine,
+          libwine,
+          wine-binfmt,
+          wine-stable,
+          wine32,
+          wine64
 Description: Windows API implementation - CusDeb custom build
  Wine is a free MS-Windows API implementation.
  .
