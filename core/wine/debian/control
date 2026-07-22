@@ -56,7 +56,7 @@ Build-Depends: bison,
                libxxf86vm-dev:i386,
                quilt
 Standards-Version: 4.7.0
-Homepage: https://example.com
+Homepage: https://winehq.org
 
 Package: wine
 Architecture: amd64
