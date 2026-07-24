@@ -32,13 +32,6 @@ add_clsid() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\${clsid}\\InprocServer32" /v ThreadingModel /t REG_SZ /d Apartment /f
 }
 
-delete_shell_command() {
-  local class_name="$1"
-  local verb_name="$2"
-  local key="HKLM\\Software\\Classes\\${class_name}\\shell\\${verb_name}"
-  WINEDEBUG=-all wine reg delete "${key}\\command" /f >/dev/null 2>&1 || true
-}
-
 configure_reactos_registry() {
   # REACTOS_REGISTRY_MARKER must be set by the caller (cusdeb-win32-session).
   if [ -z "${REACTOS_REGISTRY_MARKER:-}" ]; then
@@ -96,12 +89,19 @@ configure_reactos_registry() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\ShellFolder" /v CallForAttributes /t REG_DWORD /d 0x00000040 /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
-  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore" /v BrowserFlags /t REG_DWORD /d 0x22 /f
+  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
+  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
-  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore" /v BrowserFlags /t REG_DWORD /d 0x22 /f
+  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
+  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
 
   # Register the ReactOS New Object Service (CLSID_NewMenu) so the New submenu
   # appears in desktop and folder context menus.
@@ -137,10 +137,6 @@ configure_reactos_registry() {
   reg_add "HKLM\\Software\\Classes\\.lnk\\ShellNew" /v Command /t REG_SZ /d "C:\\windows\\system32\\rundll32.exe appwiz.cpl,NewLinkHere %1" /f
   reg_add "HKLM\\Software\\Classes\\lnkfile" /ve /t REG_SZ /d "Shortcut" /f
 
-  delete_shell_command Folder open
-  delete_shell_command Folder explore
-  delete_shell_command Drive open
-  delete_shell_command Drive explore
   add_clsid "{00BB2763-6A77-11D0-A535-00C04FD7D062}" "Shell ReactOS AutoComplete" browseui.dll
   add_clsid "{00BB2764-6A77-11D0-A535-00C04FD7D062}" "ReactOS History AutoComplete List" browseui.dll
   add_clsid "{6935DB93-21E8-4CCC-BEB9-9FE3C77A297A}" "Custom MRU AutoComplete List" browseui.dll

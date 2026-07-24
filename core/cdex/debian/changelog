@@ -1,3 +1,19 @@
+cdex (0.0.1-12cd) trixie; urgency=medium
+
+  * Add shell commands for Directory, Folder and Drive open/explore verbs,
+    pointing them at C:\reactos\filebrowser.exe with the selected path.
+    Without a command key ShellExecuteExW falls back to DDE (which has no
+    running server), causing "File not found" on Open/Explore for virtual
+    Start Menu folders and for filesystem folders after a fresh prefix.
+  * Drop BrowserFlags for the explore verb: when it is non-zero,
+    InvokeRegVerb first tries TryToBrowse against the current shell browser.
+    In the Start Menu this path flashes and closes, so Explore now runs the
+    filebrowser command directly with the /E flag and shows the Folders pane.
+    Use the comma form /E,"%1" because SHExplorerParseCmdLine splits
+    arguments on ',' and '=' rather than whitespace.
+
+ -- Artem <artem@example.com>  Fri, 24 Jul 2026 14:30:00 +0300
+
 cdex (0.0.1-11cd) trixie; urgency=medium
 
   * Add 0018-start-menu-global-unfocus.patch: close the Start Menu when focus
