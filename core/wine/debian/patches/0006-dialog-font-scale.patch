@@ -7,8 +7,8 @@ Description: Scale dialog template fonts by 5/4.
  CusDeb global UI font size.
 Last-Modified: Fri, 17 Jul 2026 13:39:56 +0300
 
---- a/wine-src/dlls/user32/dialog.c
-+++ b/wine-src/dlls/user32/dialog.c
+--- a/src/dlls/user32/dialog.c
++++ b/src/dlls/user32/dialog.c
 @@ -491,6 +491,10 @@
              /* We convert the size to pixels and then make it -ve.  This works
               * for both +ve and -ve template.pointSize */
