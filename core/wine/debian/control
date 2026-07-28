@@ -111,8 +111,9 @@ Replaces: fonts-wine,
           wine-stable,
           wine32,
           wine64
-Description: Windows API implementation - CusDeb custom build
- Wine is a free MS-Windows API implementation.
+Description: Free and open-source Win32 implementation (CusDeb build)
+ Wine is a compatibility layer for running Windows applications on Unix-like
+ operating systems by implementing the Win32 API.
  .
- This package provides a patched Wine 10.0 build packaged as a drop-in
- replacement for the Debian wine suite.
+ This package provides a custom Wine build used as a dependency for the CDEX
+ desktop environment.
