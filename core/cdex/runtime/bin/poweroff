@@ -1,0 +1,6 @@
+#!/bin/bash
+# CusDeb poweroff wrapper: stops Wine prefixes before shutting down.
+set -euo pipefail
+
+/usr/bin/cdex-wine-cleanup
+exec /usr/bin/systemctl poweroff "$@"

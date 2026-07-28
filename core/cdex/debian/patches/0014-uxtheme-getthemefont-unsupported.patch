@@ -8,8 +8,8 @@ Description: Make GetThemeFont report no per-part theme fonts.
  dialog font like the rest of the UI.
 Last-Modified: Fri, 17 Jul 2026 14:56:39 +0300
 
---- a/reactos-src/dll/win32/uxtheme/property.c
-+++ b/reactos-src/dll/win32/uxtheme/property.c
+--- a/src/dll/win32/uxtheme/property.c
++++ b/src/dll/win32/uxtheme/property.c
 @@ -108,16 +108,17 @@
  HRESULT WINAPI GetThemeFont(HTHEME hTheme, HDC hdc, int iPartId,
                              int iStateId, int iPropId, LOGFONTW *pFont)

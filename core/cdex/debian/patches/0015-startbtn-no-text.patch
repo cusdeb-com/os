@@ -10,8 +10,8 @@ Description: Give the start button a single-space caption.
  then doubled to make the button easier to hit.
 Last-Modified: Fri, 17 Jul 2026 19:40:00 +0300
 
---- a/reactos-src/base/shell/explorer/traywnd.cpp
-+++ b/reactos-src/base/shell/explorer/traywnd.cpp
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
 @@ -215,6 +215,9 @@
              Size.cx = 2 * GetSystemMetrics(SM_CXEDGE) + GetSystemMetrics(SM_CYCAPTION) * 3;
          }

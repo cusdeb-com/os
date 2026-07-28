@@ -6,8 +6,8 @@ Description: Prefer the ReactOS Explorer desktop browser (Progman) when resolvin
  compatibility with native ReactOS.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/win32/shell32/changenotify.cpp
-+++ b/reactos-src/dll/win32/shell32/changenotify.cpp
+--- a/src/dll/win32/shell32/changenotify.cpp
++++ b/src/dll/win32/shell32/changenotify.cpp
 @@ -21,6 +21,24 @@ GetNotificationServer(BOOL bCreate)
      if (s_hwndServer && IsWindow(s_hwndServer))
          return s_hwndServer;

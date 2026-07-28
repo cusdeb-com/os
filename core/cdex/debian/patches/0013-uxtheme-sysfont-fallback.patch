@@ -7,8 +7,8 @@ Description: Make GetThemeSysFont ignore metric fonts from .msstyles.
  control the UI font size regardless of the installed theme.
 Last-Modified: Fri, 17 Jul 2026 13:41:49 +0300
 
---- a/reactos-src/dll/win32/uxtheme/metric.c
-+++ b/reactos-src/dll/win32/uxtheme/metric.c
+--- a/src/dll/win32/uxtheme/metric.c
++++ b/src/dll/win32/uxtheme/metric.c
 @@ -91,19 +91,11 @@
  HRESULT WINAPI GetThemeSysFont(HTHEME hTheme, int iFontID, LOGFONTW *plf)
  {

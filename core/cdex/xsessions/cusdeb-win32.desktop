@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=CusDeb Win32 Shell
-Comment=CusDeb experimental Wine shell session
-Exec=/usr/bin/cusdeb-win32-session
-Type=Application
-DesktopNames=CusDebWin32;Openbox

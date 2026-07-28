@@ -6,8 +6,8 @@ Description: Resize the desktop window on WM_DISPLAYCHANGE.
  underlying window manager shows through.
 Last-Modified: Tue, 21 Jul 2026 15:00:00 +0300
 
---- a/reactos-src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
-+++ b/reactos-src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
+--- a/src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
++++ b/src/dll/win32/shell32/shelldesktop/CDesktopBrowser.cpp
 @@ -33,6 +33,17 @@
  static const WCHAR szProgmanClassName[]  = L"Progman";
  static const WCHAR szProgmanWindowName[] = L"Program Manager";

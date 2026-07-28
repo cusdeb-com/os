@@ -1,0 +1,6 @@
+#!/bin/bash
+# CusDeb reboot wrapper: stops Wine prefixes before rebooting.
+set -euo pipefail
+
+/usr/bin/cdex-wine-cleanup
+exec /usr/bin/systemctl reboot "$@"

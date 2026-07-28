@@ -10,8 +10,8 @@ Description: Change base/shell/explorer/taskswnd.cpp to integrate the external P
  imagery.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/base/shell/explorer/taskswnd.cpp
-+++ b/reactos-src/base/shell/explorer/taskswnd.cpp
+--- a/src/base/shell/explorer/taskswnd.cpp
++++ b/src/base/shell/explorer/taskswnd.cpp
 @@ -37,6 +37,57 @@
  #define TIMER_ID_VALIDATE_RUDE_APP 5
  #define VALIDATE_RUDE_INTERVAL 1000

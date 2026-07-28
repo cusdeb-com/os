@@ -9,8 +9,8 @@ Description: Change dll/cpl/desk/theme.c to detect Wine via GetProcAddress(ntdll
  rendering on the Appearance tab.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/cpl/desk/theme.c
-+++ b/reactos-src/dll/cpl/desk/theme.c
+--- a/src/dll/cpl/desk/theme.c
++++ b/src/dll/cpl/desk/theme.c
 @@ -1003,6 +1003,9 @@ BOOL
  DrawThemePreview(IN HDC hdcMem, IN PCOLOR_SCHEME scheme, IN PTHEME_SELECTION pSelectedTheme, IN PRECT prcWindow)
  {

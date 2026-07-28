@@ -11,8 +11,8 @@ Description: Fix opening folders from the Search results folder.
  window instead of navigating the Search view and crashing on return.
 Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
 
---- a/reactos-src/dll/win32/browseui/shellfind/CFindFolder.cpp
-+++ b/reactos-src/dll/win32/browseui/shellfind/CFindFolder.cpp
+--- a/src/dll/win32/browseui/shellfind/CFindFolder.cpp
++++ b/src/dll/win32/browseui/shellfind/CFindFolder.cpp
 @@ -204,9 +204,9 @@
  static PIDLIST_ABSOLUTE _ILCreateAbsolute(LPCITEMIDLIST pidlChild)
  {

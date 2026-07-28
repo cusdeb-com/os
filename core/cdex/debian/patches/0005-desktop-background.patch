@@ -7,8 +7,8 @@ Description: Load and draw the desktop wallpaper directly in CDefView because Wi
  running ReactOS Explorer session repaints without logout.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/cpl/desk/background.c
-+++ b/reactos-src/dll/cpl/desk/background.c
+--- a/src/dll/cpl/desk/background.c
++++ b/src/dll/cpl/desk/background.c
 @@ -1144,6 +1144,7 @@ SetDesktopBackColor(HWND hwndDlg, PBACKG
                    (wcslen(clText) + 1) * sizeof(TCHAR));
  
@@ -17,8 +17,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  }
  
  static VOID
---- a/reactos-src/dll/win32/shell32/CDefView.cpp
-+++ b/reactos-src/dll/win32/shell32/CDefView.cpp
+--- a/src/dll/win32/shell32/CDefView.cpp
++++ b/src/dll/win32/shell32/CDefView.cpp
 @@ -286,6 +286,14 @@ private:
  
      HICON                     m_hMyComputerIcon;

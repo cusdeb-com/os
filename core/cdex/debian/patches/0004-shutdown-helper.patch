@@ -1,11 +1,11 @@
 Author: CusDeb OS Team
 Description: Replace ExitWindowsEx/RestartDialogEx reboot/shutdown paths with
- WriteCusdebPowerRequest() so ReactOS power UI invokes cusdeb-shutdown-helper;
+ WriteCusdebPowerRequest() so ReactOS power UI invokes cdex-shutdown-helper;
  restart uses the existing RestartDialogEx confirmation dialog.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/base/shell/explorer/lang/en-US.rc
-+++ b/reactos-src/base/shell/explorer/lang/en-US.rc
+--- a/src/base/shell/explorer/lang/en-US.rc
++++ b/src/base/shell/explorer/lang/en-US.rc
 @@ -62,6 +62,7 @@ BEGIN
          MENUITEM "&Log Off %s...", IDM_LOGOFF, MFT_STRING, MFS_ENABLED
          MENUITEM "D&isconnect...", IDM_DISCONNECT, MFT_STRING, MFS_ENABLED
@@ -14,8 +14,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          MENUITEM "Sh&ut Down...", IDM_SHUTDOWN, MFT_STRING, MFS_ENABLED
      END
  END
---- a/reactos-src/base/shell/explorer/resource.h
-+++ b/reactos-src/base/shell/explorer/resource.h
+--- a/src/base/shell/explorer/resource.h
++++ b/src/base/shell/explorer/resource.h
 @@ -82,6 +82,7 @@
  #define IDM_DISCONNECT              5000
  #define IDM_UNDOCKCOMPUTER          410
@@ -24,8 +24,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  #define IDM_LASTSTARTMENU_SEPARATOR 450
  
  /*******************************************************************************\
---- a/reactos-src/base/shell/explorer/startmnusite.cpp
-+++ b/reactos-src/base/shell/explorer/startmnusite.cpp
+--- a/src/base/shell/explorer/startmnusite.cpp
++++ b/src/base/shell/explorer/startmnusite.cpp
 @@ -121,7 +121,7 @@ public:
          HMENU hMenu, hSettingsMenu;
          DWORD dwLogoff;
@@ -35,8 +35,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          WCHAR szUser[128];
  
          TRACE("ITrayPriv::AppendMenu\n");
---- a/reactos-src/base/shell/explorer/traywnd.cpp
-+++ b/reactos-src/base/shell/explorer/traywnd.cpp
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
 @@ -457,6 +457,13 @@ public:
              ClearRecentAndMru();
      }
@@ -61,8 +61,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
              case TRAYCMD_SHUTDOWN_DIALOG:
                  DoExitWindows();
                  break;
---- a/reactos-src/dll/win32/shell32/dialogs/dialogs.cpp
-+++ b/reactos-src/dll/win32/shell32/dialogs/dialogs.cpp
+--- a/src/dll/win32/shell32/dialogs/dialogs.cpp
++++ b/src/dll/win32/shell32/dialogs/dialogs.cpp
 @@ -50,6 +50,57 @@ WINE_DEFAULT_DEBUG_CHANNEL(shell);
  static INT_PTR CALLBACK RunDlgProc(HWND, UINT, WPARAM, LPARAM);
  static void FillList(HWND, LPWSTR, UINT, BOOL);
@@ -165,8 +165,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
              break;
          }
          case 0x10: /* Sleep */
---- a/reactos-src/dll/win32/shell32/shellmenu/CStartMenu.cpp
-+++ b/reactos-src/dll/win32/shell32/shellmenu/CStartMenu.cpp
+--- a/src/dll/win32/shell32/shellmenu/CStartMenu.cpp
++++ b/src/dll/win32/shell32/shellmenu/CStartMenu.cpp
 @@ -40,6 +40,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(CStartMenu);
  #define IDM_CONTROLPANEL            505
  #define IDM_SHUTDOWN                506
