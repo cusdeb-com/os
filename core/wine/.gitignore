@@ -14,4 +14,4 @@ debian/patches/wine/*.patch~
 *.orig
 *.rej
 # Vendored Wine sources must match upstream exactly
-!wine-src/**
+!src/**

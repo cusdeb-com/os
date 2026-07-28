@@ -4,8 +4,8 @@ Description: Fix taskbar button theming. Map TaskBand part 1 to the BUTTON theme
  hwnd to OpenThemeDataForDpi in comctl32 so the TaskBand theme override is respected.
 Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 
---- a/wine-src/dlls/comctl32/toolbar.c
-+++ b/wine-src/dlls/comctl32/toolbar.c
+--- a/src/dlls/comctl32/toolbar.c
++++ b/src/dlls/comctl32/toolbar.c
 @@ -5302,7 +5302,7 @@
  
      SystemParametersInfoW (SPI_GETICONTITLELOGFONT, 0, &logFont, 0);
@@ -24,8 +24,8 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
      InvalidateRect (infoPtr->hwndSelf, NULL, TRUE);
      return 0;
  }
---- a/wine-src/dlls/uxtheme/stylemap.c
-+++ b/wine-src/dlls/uxtheme/stylemap.c
+--- a/src/dlls/uxtheme/stylemap.c
++++ b/src/dlls/uxtheme/stylemap.c
 @@ -1047,7 +1047,7 @@
  };
  

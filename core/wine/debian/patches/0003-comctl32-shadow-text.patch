@@ -5,8 +5,8 @@ Description: Add DrawShadowText support to comctl32. Implement the full ReactOS
  theme-defined text colour and a 1px black shadow.
 Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 
---- a/wine-src/dlls/comctl32/commctrl.c
-+++ b/wine-src/dlls/comctl32/commctrl.c
+--- a/src/dlls/comctl32/commctrl.c
++++ b/src/dlls/comctl32/commctrl.c
 @@ -1655,35 +1655,115 @@
  /***********************************************************************
   * DrawShadowText [COMCTL32.@]
@@ -149,8 +149,8 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
  }
  
  /***********************************************************************
---- a/wine-src/dlls/comctl32/listview.c
-+++ b/wine-src/dlls/comctl32/listview.c
+--- a/src/dlls/comctl32/listview.c
++++ b/src/dlls/comctl32/listview.c
 @@ -4752,7 +4752,16 @@
      if (infoPtr->uView == LV_VIEW_DETAILS && infoPtr->dwLvExStyle & LVS_EX_GRIDLINES)
          rcLabel.bottom--;
@@ -169,8 +169,8 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
  }
  
  /***
---- a/wine-src/dlls/comctl32/toolbar.c
-+++ b/wine-src/dlls/comctl32/toolbar.c
+--- a/src/dlls/comctl32/toolbar.c
++++ b/src/dlls/comctl32/toolbar.c
 @@ -612,6 +612,47 @@
                wine_dbgstr_rect(rcText));
  

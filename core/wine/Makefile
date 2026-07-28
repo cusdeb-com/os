@@ -5,7 +5,7 @@ SHELL := /bin/sh
 
 REPO_DIR   := $(CURDIR)
 WORK_DIR   := $(REPO_DIR)/debian/.wine-build
-SRC_DIR    := $(WORK_DIR)/wine-src
+SRC_DIR    := $(WORK_DIR)/src
 BUILD64    := $(WORK_DIR)/build64
 BUILD32    := $(WORK_DIR)/build32
 PREFIX     := /usr
@@ -31,10 +31,10 @@ $(BUILD32)/Makefile: $(SRC_DIR)/configure
 	  --with-wine64="$(BUILD64)" \
 	  --disable-tests
 
-$(SRC_DIR)/configure: $(REPO_DIR)/wine-src/configure
+$(SRC_DIR)/configure: $(REPO_DIR)/src/configure
 	mkdir -p "$(WORK_DIR)"
 	rm -rf "$(SRC_DIR)"
-	cp -a "$(REPO_DIR)/wine-src" "$(SRC_DIR)"
+	cp -a "$(REPO_DIR)/src" "$(SRC_DIR)"
 
 build: configure
 	@echo "Building 64-bit Wine..."

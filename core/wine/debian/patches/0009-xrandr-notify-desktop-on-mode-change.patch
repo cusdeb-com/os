@@ -10,8 +10,8 @@ Description: Notify the shell on display mode switch without deadlocking or
  uses send_notify_message so a mode switch never blocks for 2s per top-level
  window (previously desk.cpl froze and its window stopped repainting).
 Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
---- a/wine-src/dlls/winex11.drv/xrandr.c
-+++ b/wine-src/dlls/winex11.drv/xrandr.c
+--- a/src/dlls/winex11.drv/xrandr.c
++++ b/src/dlls/winex11.drv/xrandr.c
 @@ -406,6 +406,14 @@
          return DISP_CHANGE_FAILED;
  
@@ -94,8 +94,8 @@ Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
      return ret;
  }
  
---- a/wine-src/dlls/win32u/sysparams.c
-+++ b/wine-src/dlls/win32u/sysparams.c
+--- a/src/dlls/win32u/sysparams.c
++++ b/src/dlls/win32u/sysparams.c
 @@ -3843,9 +3843,12 @@
          NtUserClipCursor( NULL );
          send_notify_message( get_desktop_window(), WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,

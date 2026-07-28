@@ -10,8 +10,8 @@ Description: Resolve the push button label font from the DC.
  its caption is a single space (cdex 0015-startbtn-no-text).
 Last-Modified: Fri, 17 Jul 2026 19:00:00 +0300
 
---- a/wine-src/dlls/uxtheme/property.c
-+++ b/wine-src/dlls/uxtheme/property.c
+--- a/src/dlls/uxtheme/property.c
++++ b/src/dlls/uxtheme/property.c
 @@ -123,6 +123,19 @@
      if(!hTheme)
          return E_HANDLE;

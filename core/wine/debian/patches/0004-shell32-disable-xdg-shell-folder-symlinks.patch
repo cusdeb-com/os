@@ -5,8 +5,8 @@ Description: Disable creation of XDG shell-folder symlinks in Wine prefix. Keep
  desktop.
 Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 
---- a/wine-src/dlls/shell32/shellpath.c
-+++ b/wine-src/dlls/shell32/shellpath.c
+--- a/src/dlls/shell32/shellpath.c
++++ b/src/dlls/shell32/shellpath.c
 @@ -2798,31 +2798,11 @@
   */
  static void _SHCreateSymbolicLink(int nFolder, const WCHAR *path)

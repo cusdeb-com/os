@@ -8,8 +8,8 @@ Description: Harden XF86VidMode mode switch against invalid modes.
  by X11DRV_check_error() instead of killing the process later.
 Last-Modified: Tue, 21 Jul 2026 12:55:00 +0300
 
---- a/wine-src/dlls/winex11.drv/xvidmode.c
-+++ b/wine-src/dlls/winex11.drv/xvidmode.c
+--- a/src/dlls/winex11.drv/xvidmode.c
++++ b/src/dlls/winex11.drv/xvidmode.c
 @@ -229,10 +229,22 @@
          WARN("Cannot change screen bit depth from %dbits to %dbits!\n",
               screen_bpp, (int)mode->dmBitsPerPel);

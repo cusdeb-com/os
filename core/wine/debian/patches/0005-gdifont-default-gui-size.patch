@@ -8,8 +8,8 @@ Description: Enlarge the stock DEFAULT_GUI_FONT from -11/-12 to -14 px.
  96 DPI) to match the CusDeb global UI font size.
 Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
 
---- a/wine-src/dlls/win32u/gdiobj.c
-+++ b/wine-src/dlls/win32u/gdiobj.c
+--- a/src/dlls/win32u/gdiobj.c
++++ b/src/dlls/win32u/gdiobj.c
 @@ -157,7 +157,7 @@
             {'C','o','u','r','i','e','r'}
          },
