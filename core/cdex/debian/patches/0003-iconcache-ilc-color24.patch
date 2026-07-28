@@ -4,8 +4,8 @@ Description: Force ILC_COLOR24 (instead of auto-detected ILC_COLOR32) in
  issues that cause black backgrounds behind desktop icons.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/win32/shell32/iconcache.cpp
-+++ b/reactos-src/dll/win32/shell32/iconcache.cpp
+--- a/src/dll/win32/shell32/iconcache.cpp
++++ b/src/dll/win32/shell32/iconcache.cpp
 @@ -77,13 +77,6 @@ SIC_GetSmallIconSize(VOID)
      return (nIconSize > 0) ? nIconSize : nDefaultSize;
  }

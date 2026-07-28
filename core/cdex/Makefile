@@ -1,7 +1,7 @@
 #!/usr/bin/env make -f
 
 REPO_DIR := $(CURDIR)
-REACTOS_SRC_DIR := $(REPO_DIR)/reactos-src
+REACTOS_SRC_DIR := $(REPO_DIR)/src
 
 BUILD_DIR := $(REPO_DIR)/debian/.reactos-build/build
 OUT_DIR := $(BUILD_DIR)
@@ -156,36 +156,36 @@ install: build
 	done
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"
-	install -m 755 cusdeb-win32-session reactos-registry.sh reactos-taskbar-bridge \
-		cusdeb-shutdown-helper cusdeb-wine-cleanup poweroff reboot \
-		reactos-display-properties cusdeb-calamares-launcher \
+	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry.sh runtime/bin/cdex-taskbar-bridge \
+		runtime/bin/cdex-shutdown-helper runtime/bin/cdex-wine-cleanup runtime/bin/poweroff runtime/bin/reboot \
+		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher \
 		"$(BIN_DIR)/"
-	install -m 755 cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
-	install -m 644 create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
+	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
+	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
 	@echo "=== Installing session/config files ==="
-	install -D -m 644 xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
-	install -D -m 644 lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"
-	install -D -m 644 lightdm/50-cusdeb-gtk-greeter.conf "$(DESTDIR)/usr/share/lightdm/lightdm-gtk-greeter.conf.d/50-cusdeb.conf"
-	install -D -m 644 polkit/50-cusdeb-poweroff.rules "$(DESTDIR)/etc/polkit-1/rules.d/50-cusdeb-poweroff.rules"
-	install -D -m 644 systemd/20-wired.network "$(DESTDIR)/etc/systemd/network/20-wired.network"
-	install -D -m 644 openbox/rc.xml "$(DESTDIR)/etc/xdg/cusdeb/openbox/rc.xml"
-	install -D -m 644 gtk/gtkrc-2.0 "$(DESTDIR)/etc/xdg/cusdeb/gtk-2.0/gtkrc"
-	install -D -m 644 gtk/gtk-3.0/settings.ini "$(DESTDIR)/etc/xdg/cusdeb/gtk-3.0/settings.ini"
+	install -D -m 644 runtime/xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
+	install -D -m 644 runtime/config/lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"
+	install -D -m 644 runtime/config/lightdm/50-cusdeb-gtk-greeter.conf "$(DESTDIR)/usr/share/lightdm/lightdm-gtk-greeter.conf.d/50-cusdeb.conf"
+	install -D -m 644 runtime/config/polkit/50-cusdeb-poweroff.rules "$(DESTDIR)/etc/polkit-1/rules.d/50-cusdeb-poweroff.rules"
+	install -D -m 644 runtime/config/systemd/20-wired.network "$(DESTDIR)/etc/systemd/network/20-wired.network"
+	install -D -m 644 runtime/config/openbox/rc.xml "$(DESTDIR)/etc/xdg/cusdeb/openbox/rc.xml"
+	install -D -m 644 runtime/config/gtk/gtkrc-2.0 "$(DESTDIR)/etc/xdg/cusdeb/gtk-2.0/gtkrc"
+	install -D -m 644 runtime/config/gtk/gtk-3.0/settings.ini "$(DESTDIR)/etc/xdg/cusdeb/gtk-3.0/settings.ini"
 	@echo "=== Installing Openbox Win10 theme ==="
 	install -d "$(DESTDIR)/usr/share/themes"
-	cp -a themes/Win10 "$(DESTDIR)/usr/share/themes/"
+	cp -a runtime/themes/Win10 "$(DESTDIR)/usr/share/themes/"
 	chmod -R a+rX "$(DESTDIR)/usr/share/themes/Win10"
 
 	@echo "=== Installing Chicago95 GTK theme, SE98 icons and cursors ==="
 	install -d "$(DESTDIR)/usr/share/themes"
-	cp -a themes/Chicago95 "$(DESTDIR)/usr/share/themes/"
+	cp -a runtime/themes/Chicago95 "$(DESTDIR)/usr/share/themes/"
 	chmod -R a+rX "$(DESTDIR)/usr/share/themes/Chicago95"
 
 	install -d "$(DESTDIR)/usr/share/icons"
-	cp -a themes/SE98 "$(DESTDIR)/usr/share/icons/"
+	cp -a runtime/icons/SE98 "$(DESTDIR)/usr/share/icons/"
 	chmod -R a+rX "$(DESTDIR)/usr/share/icons/SE98"
 
-	cp -a themes/Chicago95_Standard_Cursors "$(DESTDIR)/usr/share/icons/"
+	cp -a runtime/icons/Chicago95_Standard_Cursors "$(DESTDIR)/usr/share/icons/"
 	chmod -R a+rX "$(DESTDIR)/usr/share/icons/Chicago95_Standard_Cursors"
 
 	@echo "=== Installing GASP-patched Ubuntu fonts ==="
@@ -193,7 +193,7 @@ install: build
 	set -e; for face in $(FONT_FACES); do \
 		install -m 644 "$(FONT_BUILD_DIR)/Ubuntu-$$face.ttf" "$(FONT_DIR)/Ubuntu-$$face.ttf"; \
 	done
-	install -D -m 644 fontconfig/52-cusdeb-ubuntu.conf "$(DESTDIR)/etc/fonts/conf.d/52-cusdeb-ubuntu.conf"
+	install -D -m 644 runtime/config/fontconfig/52-cusdeb-ubuntu.conf "$(DESTDIR)/etc/fonts/conf.d/52-cusdeb-ubuntu.conf"
 	install -d "$(DOC_DIR)"
 	install -m 644 fonts/ubuntu-font-family-0.83/LICENCE.txt \
 		fonts/ubuntu-font-family-0.83/copyright.txt "$(DOC_DIR)/"

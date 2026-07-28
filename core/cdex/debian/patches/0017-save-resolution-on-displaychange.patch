@@ -7,8 +7,8 @@ Description: Persist the display resolution on WM_DISPLAYCHANGE.
  the file with the reverted mode, so the file always holds the final mode.
 Last-Modified: Wed, 22 Jul 2026 18:00:00 +0300
 
---- a/reactos-src/base/shell/explorer/traywnd.cpp
-+++ b/reactos-src/base/shell/explorer/traywnd.cpp
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
 @@ -21,6 +21,34 @@
  #define AUTOHIDE_DELAY_SHOW 50
  #define AUTOHIDE_INTERVAL_ANIMATING 10

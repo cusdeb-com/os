@@ -10,8 +10,8 @@ Description: Change base/shell/explorer/taskswnd.cpp in several places. Disable 
  visible and ghost buttons are eliminated.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/base/shell/explorer/taskswnd.cpp
-+++ b/reactos-src/base/shell/explorer/taskswnd.cpp
+--- a/src/base/shell/explorer/taskswnd.cpp
++++ b/src/base/shell/explorer/taskswnd.cpp
 @@ -1799,6 +1799,11 @@ public:
          else
              m_Theme = NULL;

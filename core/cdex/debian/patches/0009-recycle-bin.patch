@@ -13,8 +13,8 @@ Description: Harden the Recycle Bin implementation. Fix the Properties dialog
  refreshes every desktop icon.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/win32/shell32/dialogs/recycler_prop.cpp
-+++ b/reactos-src/dll/win32/shell32/dialogs/recycler_prop.cpp
+--- a/src/dll/win32/shell32/dialogs/recycler_prop.cpp
++++ b/src/dll/win32/shell32/dialogs/recycler_prop.cpp
 @@ -20,6 +20,7 @@
   */
  
@@ -174,8 +174,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +        return E_FAIL;
      return AddPropSheetPage(hpsp, pfnAddPage, lParam);
  }
---- a/reactos-src/dll/win32/shell32/folders/CRecycleBin.cpp
-+++ b/reactos-src/dll/win32/shell32/folders/CRecycleBin.cpp
+--- a/src/dll/win32/shell32/folders/CRecycleBin.cpp
++++ b/src/dll/win32/shell32/folders/CRecycleBin.cpp
 @@ -861,11 +861,19 @@ HRESULT WINAPI CRecycleBin::GetAttribute
              *rgfInOut &= ~SFGAO_HASPROPSHEET;
          return hr;
@@ -209,8 +209,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
      if (!(dwFlags & SHERB_NOSOUND))
      {
          TRASH_PlayEmptyRecycleBinSound();
---- a/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
-+++ b/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
+--- a/src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
++++ b/src/dll/win32/shell32/shellrecyclebin/recyclebin_generic.cpp
 @@ -155,7 +155,14 @@ STDMETHODIMP RecycleBinGeneric::EmptyRec
          IRecycleBin *prb;
          HRESULT hr = GetDefaultRecycleBin(szVolumeName, &prb);
@@ -226,8 +226,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
          hr = prb->EmptyRecycleBin();
          prb->Release();
---- a/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
-+++ b/reactos-src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
+--- a/src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
++++ b/src/dll/win32/shell32/shellrecyclebin/recyclebin_generic_enumerator.cpp
 @@ -113,12 +113,29 @@ RecycleBinGenericEnum::Next(DWORD celt,
                      IRecycleBin *prb;
                      hr = GetDefaultRecycleBin(szVolumeName, &prb);
@@ -258,8 +258,8 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
                      m_dwLogicalDrives &= ~(1 << i);
                      break;
---- a/reactos-src/dll/win32/shell32/shlfileop.cpp
-+++ b/reactos-src/dll/win32/shell32/shlfileop.cpp
+--- a/src/dll/win32/shell32/shlfileop.cpp
++++ b/src/dll/win32/shell32/shlfileop.cpp
 @@ -1693,8 +1693,12 @@ static HRESULT delete_files(FILE_OPERATI
          return ERROR_SUCCESS;
  

@@ -15,4 +15,4 @@ debian/patches/reactos/*.patch~
 *.rej
 *.deb
 # Vendored ReactOS sources must match upstream exactly
-!reactos-src/**
+!src/**

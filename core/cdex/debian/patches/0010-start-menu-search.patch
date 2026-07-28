@@ -6,8 +6,8 @@ Description: Bypass SHFindFiles for the Start Menu Search button under Wine. Rea
  search window reliably from the tray window process.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/base/shell/explorer/traywnd.cpp
-+++ b/reactos-src/base/shell/explorer/traywnd.cpp
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
 @@ -858,8 +858,20 @@ public:
                  break;
              case IDM_SEARCH:

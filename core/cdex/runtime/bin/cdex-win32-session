@@ -1,0 +1,352 @@
+#!/bin/bash
+set -euo pipefail
+
+export DESKTOP_SESSION=cusdeb-win32
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=CusDebWin32
+export XDG_CONFIG_DIRS="/etc/xdg/cusdeb:/etc/xdg"
+export XCURSOR_THEME="Chicago95_Standard_Cursors"
+export XCURSOR_SIZE=16
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
+REACTOS_PREFIX="$HOME/.wine"
+REACTOS_DRIVE_DIR="$REACTOS_PREFIX/drive_c/reactos"
+REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
+
+# Keep taskbar bridge state/control in the per-user runtime directory so
+# multiple users do not collide on the sticky /tmp shared files.
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+mkdir -p "$XDG_RUNTIME_DIR"
+export REACTOS_TASKBAR_STATE="${REACTOS_TASKBAR_STATE:-$XDG_RUNTIME_DIR/reactos-taskbar-windows.json}"
+export REACTOS_TASKBAR_CONTROL="${REACTOS_TASKBAR_CONTROL:-$XDG_RUNTIME_DIR/reactos-taskbar-control.json}"
+# Launch requests are written by Windows shortcuts to a Wine-mapped path under
+# C:\cusdeb and consumed by cdex-taskbar-bridge to start native Linux
+# applications.  The real file lives inside the Wine prefix.
+export REACTOS_LAUNCH_REQUEST="${REACTOS_LAUNCH_REQUEST:-$REACTOS_PREFIX/drive_c/cusdeb/launch-request}"
+
+BRIDGE_STATE="$REACTOS_TASKBAR_STATE"
+BRIDGE_CONTROL="$REACTOS_TASKBAR_CONTROL"
+BRIDGE_LAUNCH_REQUEST="$REACTOS_LAUNCH_REQUEST"
+BRIDGE_LOG="$HOME/cdex-taskbar-bridge.log"
+SESSION_LOG="$HOME/reactos-session-start.log"
+bridge_pid=""
+SPLASH_FD=""
+splash_pid=""
+
+start_splash() {
+  local splash_text="${1:-Loading CDEX...}"
+  if [ -x /usr/bin/yad ]; then
+    local splash_pipe="$XDG_RUNTIME_DIR/cusdeb-splash.fifo"
+    rm -f "$splash_pipe"
+    mkfifo "$splash_pipe"
+    # Use an isolated GTK config dir and bump the splash font size.
+    mkdir -p "$XDG_RUNTIME_DIR/gtk-3.0"
+    cat > "$XDG_RUNTIME_DIR/gtk-3.0/gtk.css" <<'EOF'
+* {
+    font-size: 16px;
+    font-family: sans-serif;
+}
+EOF
+    XDG_CONFIG_HOME="$XDG_RUNTIME_DIR" yad --progress \
+        --text="$splash_text" \
+        --no-buttons --undecorated --center --on-top --no-focus \
+        --width=450 --height=100 2>/dev/null < "$splash_pipe" &
+    splash_pid=$!
+    exec {SPLASH_FD}>"$splash_pipe"
+    rm -f "$splash_pipe"
+    splash_update 0
+  fi
+}
+
+splash_update() {
+  local percent="$1"
+  if [ -n "${SPLASH_FD:-}" ]; then
+    printf '%d\n' "$percent" >&"$SPLASH_FD" || true
+  fi
+}
+
+stop_splash() {
+  if [ -n "${SPLASH_FD:-}" ]; then
+    printf '100\n' >&"$SPLASH_FD" || true
+    exec {SPLASH_FD}>&-
+    SPLASH_FD=""
+    if [ -n "${splash_pid:-}" ]; then
+      kill "$splash_pid" 2>/dev/null || true
+      wait "$splash_pid" 2>/dev/null || true
+    fi
+  fi
+}
+
+log_stage() {
+  printf '%s %s\n' "$(date -Is)" "$1" >>"$SESSION_LOG"
+}
+
+ensure_wine_prefix() {
+  local marker="$WINEPREFIX/drive_c/windows/system32/kernel32.dll"
+
+  # If the prefix exists but the marker is missing or empty, kill any stale
+  # wineserver and wipe the prefix so wineboot can create a clean one.
+  if [ -d "$WINEPREFIX" ]; then
+    if [ ! -s "$marker" ]; then
+      log_stage "prefix-corrupt-wiping"
+      wineserver -k 2>/dev/null || true
+      rm -rf "$WINEPREFIX"
+    fi
+  fi
+
+  if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ]; then
+    log_stage "wineboot-start"
+    wineserver -k 2>/dev/null || true
+    # Disable winemenubuilder so Wine does not create its own Linux desktop
+    # icons (/, My Documents, Internet Explorer, etc.); only CusDeb shortcuts
+    # should remain.
+    WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d" WINEDEBUG=-all wineboot --init
+    wineserver -w
+    log_stage "wineboot-done"
+  fi
+
+  # Final sanity check: kernel32.dll must exist and be non-empty.
+  if [ ! -s "$marker" ]; then
+    log_stage "prefix-validation-failed"
+    echo "ERROR: Wine prefix marker $marker is missing or empty" >&2
+    exit 1
+  fi
+}
+
+# Re-apply the display resolution the user last chose (persisted by Explorer to
+# C:\cusdeb\resolution on WM_DISPLAYCHANGE). The X server always starts at its
+# own default mode, so without this the user's choice is lost on every login.
+# Runs early, before reactos-explorer starts, so the shell initializes at the
+# correct resolution and no resize is needed afterwards.
+restore_saved_resolution() {
+  local file="$REACTOS_PREFIX/drive_c/cusdeb/resolution"
+  local mode output
+  [ -f "$file" ] || return 0
+  mode="$(cat "$file")"
+  output="$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}')"
+  if [ -n "$mode" ] && [ -n "$output" ]; then
+    log_stage "resolution-restore-$mode"
+    xrandr --output "$output" --mode "$mode" >/dev/null 2>&1 || log_stage "resolution-restore-failed"
+  fi
+}
+
+cleanup() {
+  if [ -n "$bridge_pid" ]; then
+    kill "$bridge_pid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  exec /usr/bin/dbus-run-session -- "$0" "$@"
+fi
+
+: >"$SESSION_LOG"
+log_stage "session-start"
+
+# shellcheck source=cdex-registry.sh
+source "$(dirname "$0")/cdex-registry.sh"
+
+export WINEPREFIX="$REACTOS_PREFIX"
+export WINEARCH=win32
+
+# Decide whether this is a first-time initialization or a regular login.
+initial_run=false
+payload_ready=false
+if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ] || [ ! -f "$REACTOS_REGISTRY_MARKER" ]; then
+  initial_run=true
+fi
+
+prepare_reactos_payload() {
+  if [ ! -x "$REACTOS_SOURCE_DIR/explorer.exe" ]; then
+    return 1
+  fi
+
+  install -d "$REACTOS_PREFIX/drive_c/windows/system32" "$REACTOS_PREFIX/drive_c/cusdeb"
+  # Replace any existing copied payload with a live symlink so that
+  # post-install application packages are visible immediately.
+  rm -rf "$REACTOS_DRIVE_DIR"
+  ln -s "$REACTOS_SOURCE_DIR" "$REACTOS_DRIVE_DIR"
+
+  ln -sf "$REACTOS_SOURCE_DIR/explorer.exe" "$REACTOS_DRIVE_DIR/reactos-explorer.exe"
+  install -m 755 "$REACTOS_SOURCE_DIR/filebrowser.exe" "$REACTOS_PREFIX/drive_c/windows/explorer.exe"
+  for dll in shell32.dll shlwapi.dll browseui.dll rshell.dll shdocvw.dll uxtheme.dll version.dll sendmail.dll w32time.dll; do
+    rm -f "$REACTOS_PREFIX/drive_c/windows/system32/$dll"
+    ln -s "$REACTOS_SOURCE_DIR/$dll" "$REACTOS_PREFIX/drive_c/windows/system32/$dll"
+  done
+  if compgen -G "$REACTOS_SOURCE_DIR/*.cpl" >/dev/null; then
+    for cpl in "$REACTOS_SOURCE_DIR"/*.cpl; do
+      [ -f "$cpl" ] || continue
+      rm -f "$REACTOS_PREFIX/drive_c/windows/system32/$(basename "$cpl")"
+      ln -s "$cpl" "$REACTOS_PREFIX/drive_c/windows/system32/$(basename "$cpl")"
+    done
+  fi
+  if [ -f "$REACTOS_SOURCE_DIR/mizu.msstyles" ]; then
+    install -d "$REACTOS_PREFIX/drive_c/windows/Resources/Themes/Mizu"
+    rm -f "$REACTOS_PREFIX/drive_c/windows/Resources/Themes/Mizu/mizu.msstyles"
+    ln -s "$REACTOS_SOURCE_DIR/mizu.msstyles" "$REACTOS_PREFIX/drive_c/windows/Resources/Themes/Mizu/mizu.msstyles"
+  fi
+
+  # Expose the bundled GASP-patched fonts inside the Wine prefix so Win32
+  # applications can use them even when they only look in C:\windows\Fonts.
+  if compgen -G "/usr/share/fonts/truetype/cusdeb-ubuntu/*.ttf" >/dev/null; then
+    install -d "$REACTOS_PREFIX/drive_c/windows/Fonts"
+    for font in /usr/share/fonts/truetype/cusdeb-ubuntu/*.ttf; do
+      [ -f "$font" ] || continue
+      rm -f "$REACTOS_PREFIX/drive_c/windows/Fonts/$(basename "$font")"
+      ln -s "$font" "$REACTOS_PREFIX/drive_c/windows/Fonts/$(basename "$font")"
+    done
+  fi
+
+  # Ensure the Wine prefix sees a stable C:\cusdeb\launch-request path for
+  # shortcuts that ask the taskbar bridge to start native Linux apps.
+  install -d "$REACTOS_PREFIX/drive_c/cusdeb"
+  : >"$REACTOS_PREFIX/drive_c/cusdeb/launch-request"
+}
+
+# Recreate the ReactOS/Windows-style shortcuts on every login.  The old
+# one-shot marker lived inside ~/.wine, so dropping ~/.wine also dropped the
+# marker and the shortcuts were never recreated.  Running this every login
+# fixes that and also picks up newly installed application packages.
+create_reactos_shortcuts() {
+  local user_drive_dir="$REACTOS_PREFIX/drive_c/users/$USER"
+  local start_menu_dir="$user_drive_dir/AppData/Roaming/Microsoft/Windows/Start Menu"
+  # Keep Linux .desktop cleanup idempotent: it only needs to run once per
+  # Wine prefix, not on every login.
+  local desktop_cleanup_marker="$REACTOS_PREFIX/.cusdeb-desktop-cleanup-done"
+
+  install -d \
+    "$HOME/Desktop" \
+    "$start_menu_dir/Programs/Accessories" \
+    "$start_menu_dir/Programs/Games" \
+    "$user_drive_dir/AppData/Roaming/Microsoft/Windows/SendTo"
+  # Copy the static JScript helper into the prefix.  Keeping it in a separate
+  # file makes editing and syntax-checking much easier than an inline heredoc.
+  if [ ! -f "$REACTOS_SOURCE_DIR/create-cusdeb-shortcuts.js" ]; then
+    log_stage "shortcut-helper-missing"
+    return 1
+  fi
+  cp "$REACTOS_SOURCE_DIR/create-cusdeb-shortcuts.js" \
+     "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
+  local cscript_rc=0
+  # Suppress Wine debug spam; failure is logged by the caller via return value.
+  # mscoree=d prevents Wine Mono Installer (appwiz.cpl install_mono) from
+  # blocking the first login while it tries to download/install Mono.
+  WINEDEBUG=-all WINEDLLOVERRIDES='mscoree=d;winemenubuilder.exe=d;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b' wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
+  rm -f "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
+  # Wait for wineserver so that registry changes and shortcut writes are flushed
+  # before Explorer starts.
+  WINEDEBUG=-all timeout 5s wineserver -w >/dev/null 2>&1 || true
+  # Remove stale Linux .desktop files once per prefix; otherwise they can shadow
+  # or duplicate the Windows shortcuts on the desktop.
+  if [ ! -f "$desktop_cleanup_marker" ]; then
+    rm -f "$HOME/Desktop"/*.desktop
+    touch "$desktop_cleanup_marker" || true
+  fi
+  : >"$user_drive_dir/AppData/Roaming/Microsoft/Windows/SendTo/Desktop (create shortcut).DeskLink"
+  return "$cscript_rc"
+}
+
+# ---------------------------------------------------------------------------
+# Splash and window manager startup.
+# Openbox is started before any Wine operations so that the window manager
+# can keep the splash above transient Wine windows during initialization.
+# ---------------------------------------------------------------------------
+if $initial_run; then
+  start_splash "Initializing CDEX..."
+  log_stage "init-start"
+else
+  start_splash "Loading CDEX..."
+fi
+
+xsetroot -solid '#5D81AB' || true
+log_stage "x-root-ready"
+splash_update 5
+
+if command -v spice-vdagent >/dev/null 2>&1; then
+  spice-vdagent &
+fi
+
+openbox &
+wm_pid=$!
+sleep 1
+log_stage "openbox-started pid=$wm_pid"
+splash_update 15
+
+if [ -x /usr/bin/cdex-taskbar-bridge ]; then
+  rm -f "$BRIDGE_CONTROL" "$BRIDGE_LOG" 2>/dev/null || true
+  /usr/bin/cdex-taskbar-bridge --state "$BRIDGE_STATE" --control "$BRIDGE_CONTROL" --launch-request "$BRIDGE_LAUNCH_REQUEST" >"$BRIDGE_LOG" 2>&1 &
+  bridge_pid=$!
+  log_stage "bridge-started pid=$bridge_pid"
+fi
+
+# ---------------------------------------------------------------------------
+# Wine prefix + ReactOS payload.
+# On first login this runs under "Initializing CDEX..."; afterwards under
+# "Loading CDEX...".
+# ---------------------------------------------------------------------------
+ensure_wine_prefix
+splash_update 40
+
+if prepare_reactos_payload; then
+  payload_ready=true
+  log_stage "payload-ready"
+  splash_update 60
+
+  if [ ! -f "$REACTOS_REGISTRY_MARKER" ]; then
+    log_stage "registry-start"
+    configure_reactos_registry
+    log_stage "registry-ready"
+  else
+    log_stage "registry-skip"
+  fi
+  splash_update 75
+fi
+
+# If the ReactOS payload is unavailable, fall back to the stock Wine explorer.
+if ! $payload_ready; then
+  log_stage "fallback-wine-explorer-start"
+  splash_update 95
+  wine explorer &
+  stop_splash
+  wait "$wm_pid"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# First-login transition: after prefix/registry are ready, switch the splash
+# to the regular "Loading CDEX..." text for the rest of the startup.
+# ---------------------------------------------------------------------------
+if $initial_run; then
+  log_stage "init-done"
+  stop_splash
+  start_splash "Loading CDEX..."
+  splash_update 80
+fi
+
+# Live installer images expose a Calamares desktop shortcut only while the
+# kernel cmdline indicates a live boot; installed systems must not keep it.
+if grep -q "boot=live" /proc/cmdline 2>/dev/null; then
+  export CUSDEB_LIVE=1
+fi
+
+log_stage "shortcuts-start"
+create_reactos_shortcuts && log_stage "shortcuts-ready" || log_stage "shortcuts-failed"
+splash_update 90
+
+# mscoree=d keeps Wine Mono Installer from popping up when Explorer or a
+# Control Panel applet triggers a .NET/Mono dependency check.
+export WINEDLLOVERRIDES="mscoree=d;desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b;winemenubuilder.exe=d"
+# wine.inf (after Wine upgrades) and theme applications clobber the shell
+# and UI font settings; restore them on every login. The desktop background
+# color is set once on prefix creation and left to the user afterwards.
+ensure_reactos_ui_settings || log_stage "ui-settings-failed"
+restore_saved_resolution
+log_stage "reactos-explorer-start"
+splash_update 95
+
+wine 'C:\reactos\reactos-explorer.exe' &
+
+stop_splash
+wait "$wm_pid"

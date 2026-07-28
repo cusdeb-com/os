@@ -7,8 +7,8 @@ Description: Change dll/cpl/desk/settings.c to add a fallback in GetPossibleSett
  tab in desk.cpl.
 Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 
---- a/reactos-src/dll/cpl/desk/settings.c
-+++ b/reactos-src/dll/cpl/desk/settings.c
+--- a/src/dll/cpl/desk/settings.c
++++ b/src/dll/cpl/desk/settings.c
 @@ -164,6 +164,9 @@ GetPossibleSettings(IN LPCTSTR DeviceNam
      }
  

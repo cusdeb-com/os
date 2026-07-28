@@ -6,8 +6,8 @@ Description: Close Start Menu on global unfocus via WM_ACTIVATEAPP timer.
  _IsSubMenuParent by using a temporary CComPtr.
 Last-Modified: Thu, 23 Jul 2026 15:00:00 +0300
 
---- a/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
-+++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
+--- a/src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
++++ b/src/dll/win32/shell32/shellmenu/CMenuDeskBar.cpp
 @@ -22,6 +22,7 @@
  #include <shlwapi_undoc.h>
  
@@ -151,8 +151,8 @@ Last-Modified: Thu, 23 Jul 2026 15:00:00 +0300
      return 0;
  }
  
---- a/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
-+++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
+--- a/src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
++++ b/src/dll/win32/shell32/shellmenu/CMenuDeskBar.h
 @@ -51,6 +51,8 @@
      BOOL  m_Shown;
      DWORD m_ShowFlags;
@@ -181,8 +181,8 @@ Last-Modified: Thu, 23 Jul 2026 15:00:00 +0300
      HRESULT _AdjustForTheme(BOOL bFlatStyle);
      BOOL _IsSubMenuParent(HWND hwnd);
 
---- a/reactos-src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
-+++ b/reactos-src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
+--- a/src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
++++ b/src/dll/win32/shell32/shellmenu/CMenuFocusManager.h
 @@ -28,8 +28,10 @@
  private:
      static DWORD TlsIndex;

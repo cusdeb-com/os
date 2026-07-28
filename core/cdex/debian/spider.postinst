@@ -5,7 +5,7 @@ case "$1" in
     configure)
         # Recreate the Windows-style shortcuts for this application in every
         # existing Wine prefix.  If Wine cannot run right now (no X session),
-        # cusdeb-win32-session will recreate the shortcuts at the next login.
+        # cdex-win32-session will recreate the shortcuts at the next login.
         /usr/share/cusdeb/cdex/cdex-shortcut-helper create \
             "-" \
             "Games\\Spider Solitaire" \
