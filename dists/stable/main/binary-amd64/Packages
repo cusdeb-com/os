@@ -1,130 +1,151 @@
 Package: cdex-base
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 84820
-Depends: wine (>= 10.0.1-1cd), binfmt-support, lightdm, lightdm-gtk-greeter, openbox, xorg, python3, fontconfig, x11-utils, wmctrl, xdotool, spice-vdagent, dbus-x11, gtk2-engines-pixbuf, x11-xserver-utils, xterm, yad, polkitd, systemd-resolved, libnss-resolve, libnss-myhostname
+Depends: binfmt-support, dbus-x11, fontconfig, gtk2-engines-pixbuf, libnss-myhostname, libnss-resolve, lightdm, lightdm-gtk-greeter, openbox, polkitd, python3, spice-vdagent, systemd-resolved, wine (>= 10.0.1-1cd), wmctrl, x11-utils, x11-xserver-utils, xdotool, xorg, xterm, yad
 Priority: optional
-Section: misc
-Filename: pool/main/c/cdex/cdex-base_0.0.1-1cd_amd64.deb
-Size: 15065288
-SHA256: 5119784868a846f3c5f8540519e60febf6d8c41719db597af3f002419b7fa455
-SHA1: 6af2562c5563685c008f2090b7fcac8c6b9c5ba5
-MD5sum: a50549d169209441e3740c199dcd8318
-Description: CusDeb ReactOS Explorer desktop environment (base)
- Custom ReactOS Explorer shell, taskbar bridge, and supporting
- configuration for the CusDeb Win32 desktop. This package builds a
- selected subset of ReactOS from source and installs it together with
- the LightDM/Openbox session needed to run it under Wine.
+Section: cdex
+Filename: pool/main/c/cdex/cdex-base_0.0.1-2cd_amd64.deb
+Size: 15060568
+SHA256: 93ff3b224ecba1463207fba148266f9fb2f61ab62fca605f6ffe0f2ea59bffdb
+SHA1: 59a93525a0a1a4d781c4d5d457d435b36c6615c7
+MD5sum: f6739eb955bec680e0be022e9a220bd7
+Description: CDEX, a Windows-like desktop environment (base)
+ CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
+ experience. It is built on Win32 and uses the PE binary format, but is
+ designed to run on Unix-like operating systems.
 
 Package: cdex-calc
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 548
 Depends: cdex-base
 Priority: optional
-Section: misc
-Filename: pool/main/c/cdex/cdex-calc_0.0.1-1cd_amd64.deb
-Size: 82240
-SHA256: 611a6fbee813b8b6a9f3cb1feed9e1c747f1a46b416cc581f8b37ad9db4ffa8c
-SHA1: 200a6f4dcfd5cba04267c40f61ae0831e2feeb22
-MD5sum: f3977b3327705ee4a2bd8eb65a815628
-Description: ReactOS Calculator
- calc.exe from ReactOS for the CusDeb Win32 desktop.
+Section: cdex
+Filename: pool/main/c/cdex/cdex-calc_0.0.1-2cd_amd64.deb
+Size: 82736
+SHA256: fb9345336712737914e154001378ea44a8b8d68b430afd41d3f3256060ed516f
+SHA1: b61398b8e088f278db467ed3043dbcc72e69700b
+MD5sum: c459cadfe44ea77a22d94c769cb8425a
+Description: Simple and scientific calculator
+ Calc is a calculator application. It provides:
+ .
+  - standard arithmetic with memory functions and square root
+  - a scientific mode with trigonometric, logarithmic, and bitwise
+    operations in decimal, hexadecimal, octal, and binary bases
+  - a conversion mode for converting between units such as angles
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: cdex-full
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 8
-Depends: cdex-base, mspaint, cdex-calc, winmine, spider
+Depends: cdex-base, cdex-calc, mspaint, spider, winmine
 Priority: optional
 Section: metapackages
-Filename: pool/main/c/cdex/cdex-full_0.0.1-1cd_amd64.deb
-Size: 1724
-SHA256: b29a5da5a82a8102dec96f08f275f4d143ea16c28c1d5e9de6922d5340023eef
-SHA1: 7faf9da274f0918a6832076ed9c7a12431cbcfe8
-MD5sum: 2205e38339a1d2eb4229ece0b4a03321
-Description: CusDeb ReactOS Explorer desktop environment (full)
- Meta-package that installs the complete CusDeb Win32 desktop,
- including the ReactOS Explorer shell and all bundled applications.
+Filename: pool/main/c/cdex/cdex-full_0.0.1-2cd_amd64.deb
+Size: 2160
+SHA256: 240064dcd989de92ebc9a8e2d230349895541037ad7cdaff479b42d8ef9ed9ed
+SHA1: dbe7e4ecb47930bf18dba1cd8ad8c841cdb9ff26
+MD5sum: eacdb7895676e25026d92193a551e226
+Description: Meta-package for CDEX, a Windows-like desktop environment
+ CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
+ experience. It is built on Win32 and uses the PE binary format, but is
+ designed to run on Unix-like operating systems.
+ .
+ This package is a metapackage; it depends on both the core packages of the
+ CDEX desktop environment and some extra CDEX packages.
 
 Package: mspaint
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 1024
 Depends: cdex-base
 Priority: optional
-Section: misc
-Filename: pool/main/c/cdex/mspaint_0.0.1-1cd_amd64.deb
-Size: 231424
-SHA256: b5498b3907245b73639dec1d6d155b360af944c1a37a76386b4b3c5433e0f9e1
-SHA1: 08e40630ea6edac2a3b282e24bd3cfa4fa851801
-MD5sum: 75c53545d238c604a076cc7566b8412e
-Description: ReactOS Paint
- mspaint.exe from ReactOS for the CusDeb Win32 desktop.
+Section: cdex
+Filename: pool/main/c/cdex/mspaint_0.0.1-2cd_amd64.deb
+Size: 232376
+SHA256: 362b3b2e0bc847dc628dcd27b3384dc3038eaa9818190ae99b136fa4852d595d
+SHA1: ff34f3b787fa020645a7fb727ef62da82f5d0363
+MD5sum: 380c76725875e05b6170280b80181bf7
+Description: Simple image editor and drawing application
+ Mspaint is a free and open-source reimplementation of MS Paint. It aims to
+ be easy to use, offering just enough functionality for everyday tasks such
+ as drawing simple graphics and touching up images.
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: spider
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 313
 Depends: cdex-base
 Priority: optional
-Section: misc
-Filename: pool/main/c/cdex/spider_0.0.1-1cd_amd64.deb
-Size: 91804
-SHA256: 90aad1d43630809f54448320b769ef21e3e9cc85a8837e1d3efcf91ed102d0eb
-SHA1: 1732c46c33cbcd7bedba41d425e85fc89c5d9bab
-MD5sum: 5635388b2692e0b56cb800666ff2952e
-Description: ReactOS Spider Solitaire
- spider.exe from ReactOS for the CusDeb Win32 desktop.
+Section: cdex
+Filename: pool/main/c/cdex/spider_0.0.1-2cd_amd64.deb
+Size: 92168
+SHA256: e14c43fcd47f852093e4dd30ebc410da8ed8e39d9bf831b727fa19b20f26efd0
+SHA1: ac89d8795746cc56f24198914b9fdf9c6f5cd4f4
+MD5sum: 60d5908c676882bae38bc99c7946fddb
+Description: Spider solitaire card game
+ Spider is a solitaire card game played with two decks. The goal is to arrange
+ all cards into descending same-suit sequences from King to Ace.
+ .
+ This package is part of the CDEX desktop environment.
 
 Package: wine
-Version: 10.0.1-1cd
+Version: 10.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 583569
-Depends: libasound2t64 (>= 1.0.16), libc6 (>= 2.38), libgcc-s1 (>= 3.0), libx11-6, libxext6, binfmt-support, libc6:i386, libgcc-s1:i386, libasound2t64:i386, libfontconfig1, libfontconfig1:i386, libfreetype6, libfreetype6:i386, libgl1, libgl1:i386, libgnutls30t64, libgnutls30t64:i386, libjpeg62-turbo, libjpeg62-turbo:i386, libmpg123-0t64, libmpg123-0t64:i386, libncurses6, libncurses6:i386, libpng16-16t64, libpng16-16t64:i386, libx11-6:i386, libxext6:i386, libxml2, libxml2:i386, libxrandr2, libxrandr2:i386, libxrender1, libxrender1:i386
-Recommends: libgl1-mesa-dri, libasound2-plugins, libvulkan1, libvulkan1:i386
+Installed-Size: 583557
+Depends: binfmt-support, libasound2t64:i386, libc6:i386, libfontconfig1, libfontconfig1:i386, libfreetype6, libfreetype6:i386, libgcc-s1:i386, libgl1, libgl1:i386, libgnutls30t64, libgnutls30t64:i386, libjpeg62-turbo, libjpeg62-turbo:i386, libmpg123-0t64, libmpg123-0t64:i386, libncurses6, libncurses6:i386, libpng16-16t64, libpng16-16t64:i386, libx11-6:i386, libxext6:i386, libxml2, libxml2:i386, libxrandr2, libxrandr2:i386, libxrender1, libxrender1:i386, libasound2t64 (>= 1.0.16), libc6 (>= 2.38), libgcc-s1 (>= 3.0), libx11-6, libxext6
+Recommends: libasound2-plugins, libgl1-mesa-dri, libvulkan1, libvulkan1:i386
 Conflicts: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
 Replaces: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
-Provides: fonts-wine (= 10.0.1-1cd), libwine (= 10.0.1-1cd), wine-binfmt (= 10.0.1-1cd), wine32 (= 10.0.1-1cd), wine64 (= 10.0.1-1cd)
-Homepage: https://example.com
+Provides: fonts-wine (= 10.0.1-2cd), libwine (= 10.0.1-2cd), wine-binfmt (= 10.0.1-2cd), wine32 (= 10.0.1-2cd), wine64 (= 10.0.1-2cd)
+Homepage: https://winehq.org
 Priority: optional
 Section: otherosfs
-Filename: pool/main/w/wine/wine_10.0.1-1cd_amd64.deb
-Size: 63505872
-SHA256: a21ec3ea02abd99adcb48c6717dfccbd8e3eeb70df0fdbd609b66cb623dabcb7
-SHA1: d0dc118744ec6cd43b3fc761e00804f3e32831bd
-MD5sum: e41d4a978bc3a7406e8feac0a627fb3a
-Description: Windows API implementation - CusDeb custom build
- Wine is a free MS-Windows API implementation.
+Filename: pool/main/w/wine/wine_10.0.1-2cd_amd64.deb
+Size: 63502572
+SHA256: 99bbefac3e3f7dc7aa34f9b6c78bf0e2c893a87affc836bf1bfdd6599d014572
+SHA1: 4840970b9ac3687d525b80bc1c293c7f03469ee5
+MD5sum: 56db54e52fe9bd834c234a76cde3e26c
+Description: Free and open-source Win32 implementation (CusDeb build)
+ Wine is a compatibility layer for running Windows applications on Unix-like
+ operating systems by implementing the Win32 API.
  .
- This package provides a patched Wine 10.0 build packaged as a drop-in
- replacement for the Debian wine suite.
+ This package provides a custom Wine build used as a dependency for the CDEX
+ desktop environment.
 
 Package: winmine
 Source: cdex
-Version: 0.0.1-1cd
+Version: 0.0.1-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Installed-Size: 1161
 Depends: cdex-base
 Priority: optional
-Section: misc
-Filename: pool/main/c/cdex/winmine_0.0.1-1cd_amd64.deb
-Size: 740496
-SHA256: 264094b7bbd07ce2e49039558696253af0a13b9bb938aeac723dd964ca8dbf54
-SHA1: 3585ac7481b8fe3fc9683abfe20ce49330b8e942
-MD5sum: 147344ffbd273e0d7f01028cf04061cf
-Description: ReactOS Minesweeper
- winmine.exe from ReactOS for the CusDeb Win32 desktop.
+Section: cdex
+Filename: pool/main/c/cdex/winmine_0.0.1-2cd_amd64.deb
+Size: 740400
+SHA256: 4d3301d9d0e7c167965009fd79381277ed4246e4479b0e64d048c8c4d3022680
+SHA1: 4914094dc24adb22c56cd868f91b00240f94e8ba
+MD5sum: 5897747e5f574612d3264a3e9e82e283
+Description: Minesweeper game
+ Winmine is a game where the player finds hidden mines without setting them
+ off.
+ .
+ This package is part of the CDEX desktop environment.
 
