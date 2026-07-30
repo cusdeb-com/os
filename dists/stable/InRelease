@@ -1,0 +1,39 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: os-packages
+Label: os-packages
+Suite: stable
+Codename: stable
+Date: Thu, 30 Jul 2026 11:41:20 UTC
+Architectures: amd64
+Components: main
+Description: APT repository for os-packages
+MD5Sum:
+ bc7d2c02bf58437050d5d30b14838221 5267 main/binary-amd64/Packages
+ ea5ea09a976ff4dcc9381cbc7bdfcd01 1971 main/binary-amd64/Packages.gz
+ 330e20963f60f0576a6869ab1e9215e2 135 main/binary-amd64/Release
+SHA1:
+ 546c37a4136658d2326736614a0ae655ce9b656e 5267 main/binary-amd64/Packages
+ 6b68bd4ad307ac6d75ff1ff4c210a0ad1efb8dd4 1971 main/binary-amd64/Packages.gz
+ 470bacbdd3b22caffed713e70278d91fbef591e3 135 main/binary-amd64/Release
+SHA256:
+ 244609933279ac846504a11c0e1524462818b884af4bf2787c46ad7f565ea5ba 5267 main/binary-amd64/Packages
+ 82609b9e3ba5e31308fbe26998b683c299332bebacdca47891329cbedf8bf487 1971 main/binary-amd64/Packages.gz
+ 22a013ca4d7f477ccd0e1a33e91905d978f53bb9a86775b2e076455713ae495d 135 main/binary-amd64/Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEO8HYiwWv7DZG3gH5/UxAsw+/nEAFAmprOGAACgkQ/UxAsw+/
+nEB06hAApb5Tlky+/c4Z8N2S52rcVqz27aRfcC/49vZhLlBoEXD02izpBk0+Aqkg
+jYmJH0hi/ULi5vPy8xIcRpIxCXHQEje/rdDFri7XvhEO+L0A+EdaHNqMiAsUhRmc
+0bmGUp4rlecrhjXkDFudJS50MX61wIcOSBm37aTiMOO2JmiZ2kijqVdvHTrcV4o5
+tL+1akQ5/QrnAU09byZ079g7wCW6Mx/cBy0v9MUrjkuTQHJk7PrTan5OifT/XnXM
+tfsGIQOFZWzBhuZJZsbiA8Gxeexvto0CGBHTR1V4WUK4jWbArPVZWF4HISFgk8Zm
+eEhSlWpcFzC0She8LjJFBCRbO6URp7XbTtTDZZkNW2Q2ArSjUnNtMrPU4zZc4Szc
+sekZVWa9/8Y0oloIdutWUvkgNK5dgURGOJp/v0ssuI4+M2RTtIieRN/5lUSpB+xL
+FP6XC/j3xeYCyCY6Q+dIkWaCGurqbwpu0Gctv0OLFG3SeBiVnsDpF1ItwEjZfyat
+gbydgI6BfwW+vq/7li7HiTfgXWQiULzexgR4LlVLkseA5xbymv1OM39qUWVSj1pX
+oLiNBsWYckAvyu9lrcu8FBIOLQE5D/5kNoACoZICiRztiYnHVExGmSH/hRK34wrK
+WdI+8bI43b3vvrKibi+M1kux7o4SD8NFjzmy65VaFF/8YiA6r7c=
+=EDKY
+-----END PGP SIGNATURE-----

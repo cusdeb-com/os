@@ -1,0 +1,6 @@
+Archive: stable
+Component: main
+Origin: os-packages
+Label: os-packages
+Architecture: amd64
+Description: APT repository for os-packages

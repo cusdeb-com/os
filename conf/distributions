@@ -1,0 +1,8 @@
+Origin: os-packages
+Label: os-packages
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: APT repository for os-packages
+SignWith: FD4C40B30FBF9C40
