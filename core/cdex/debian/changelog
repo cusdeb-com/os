@@ -1,3 +1,16 @@
+cdex (0.0.1-2cd) trixie; urgency=medium
+
+  * debian/control: use a dedicated Section, matching the convention of
+    other desktop environments (GNOME, KDE, Xfce).
+  * debian/control: sort and align Depends/Build-Depends.
+  * debian/control: rewrite package descriptions.
+  * Reorganize package layout: move runtime files under runtime/
+    (bin/config/themes/icons split), rename reactos-src/ to src/,
+    normalize utility names to a single cdex- prefix, and fix the
+    Makefile's stale fontconfig install path.
+
+ -- Evgeny Golyshev <eugulixes@cusdeb.com>  Thu, 30 Jul 2026 14:35:09 +0300
+
 cdex (0.0.1-1cd) trixie; urgency=medium
 
   * Initial release.
