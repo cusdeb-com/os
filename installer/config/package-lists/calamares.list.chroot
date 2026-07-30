@@ -84,6 +84,9 @@ usbutils
 sudo
 ca-certificates
 
+# Web browser
+firefox-esr
+
 # Optional packages pre-installed in live so they are available in target
 # regardless of Calamares network state. The optional-packages-apply job
 # removes the ones the user deselects.

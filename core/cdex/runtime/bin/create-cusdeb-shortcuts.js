@@ -74,6 +74,7 @@ var programsEntries = [
   ["Administrative Tools\\Terminal", "C:\\windows\\system32\\cmd.exe", "/c echo terminal > C:\\cusdeb\\launch-request", "C:\\windows\\system32", "Terminal", "C:\\windows\\system32\\cmd.exe,0"],
   ["Accessories\\Paint", "C:\\reactos\\mspaint.exe", "", "C:\\reactos", "Paint", ""],
   ["Accessories\\Calculator", "C:\\reactos\\calc.exe", "", "C:\\reactos", "Calculator", ""],
+  ["Firefox", "C:\\windows\\system32\\cmd.exe", "/c echo firefox > C:\\cusdeb\\launch-request", "C:\\windows\\system32", "Firefox", "C:\\reactos\\firefox.ico,0"],
   ["Games\\Minesweeper", "C:\\reactos\\winmine.exe", "", "C:\\reactos", "Minesweeper", ""],
   ["Games\\Spider Solitaire", "C:\\reactos\\spider.exe", "", "C:\\reactos", "Spider Solitaire", ""]
 ];

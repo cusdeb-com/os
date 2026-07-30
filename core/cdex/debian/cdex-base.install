@@ -3,6 +3,7 @@ usr/share/cusdeb/cdex/filebrowser.exe
 usr/share/cusdeb/cdex/control.exe
 usr/share/cusdeb/cdex/create-cusdeb-shortcuts.js
 usr/share/cusdeb/cdex/cdex-shortcut-helper
+usr/share/cusdeb/cdex/firefox.ico
 usr/share/cusdeb/cdex/*.dll
 usr/share/cusdeb/cdex/*.cpl
 usr/share/cusdeb/cdex/mizu.msstyles

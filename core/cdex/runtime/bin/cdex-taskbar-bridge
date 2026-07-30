@@ -318,6 +318,7 @@ def handle_control(path):
 LINUX_LAUNCHERS = {
     "terminal": ["xterm"],
     "calamares": ["/usr/bin/cdex-calamares-launcher"],
+    "firefox": ["firefox-esr"],
     "display-settings": ["/usr/bin/cdex-display-properties"],
     "poweroff": ["/usr/bin/cdex-shutdown-helper", "poweroff"],
     "reboot": ["/usr/bin/cdex-shutdown-helper", "reboot"],
