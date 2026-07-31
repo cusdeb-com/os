@@ -3,9 +3,11 @@ set -e
 
 case "$1" in
     remove|purge|disappear)
-        /usr/share/cusdeb/cdex/cdex-shortcut-helper remove \
-            "-" \
-            "Games\\Minesweeper"
+        if [ -x /usr/share/cusdeb/cdex/cdex-shortcut-helper ]; then
+            /usr/share/cusdeb/cdex/cdex-shortcut-helper remove \
+                "-" \
+                "Games\\Minesweeper"
+        fi
         ;;
     upgrade|failed-upgrade|abort-install|abort-upgrade)
         ;;
