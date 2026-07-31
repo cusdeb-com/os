@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # ReactOS registry setup helpers.
 # Sourced by cdex-win32-session.
 
