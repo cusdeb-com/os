@@ -1,3 +1,17 @@
+cdex (0.0.1-3cd) trixie; urgency=medium
+
+  * debian/control: bump Standards-Version to 4.7.4 and drop the
+    Priority field, which just spelled out the default.
+  * debian/copyright: document the actual per-component licensing of
+    the vendored ReactOS tree, its bundled third-party libraries under
+    sdk/lib/3rdparty, wallpapers, and fonts, instead of the previous
+    blanket GPL-2.0+ claim.
+  * runtime/bin: drop the .sh extension from cdex-registry, matching
+    every other script, and normalize shebangs to #!/bin/bash /
+    #!/usr/bin/python3 throughout.
+
+ -- Evgeny Golyshev <eugulixes@cusdeb.com>  Fri, 31 Jul 2026 18:07:47 +0300
+
 cdex (0.0.1-2cd) trixie; urgency=medium
 
   * debian/control: use a dedicated Section, matching the convention of
