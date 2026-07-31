@@ -57,7 +57,7 @@ function createShortcuts(baseDir, entries) {
 
 var desktopEntries = [
   // No CusDeb-managed desktop shortcuts here. "My Computer" and "Recycle Bin"
-  // are rendered as real shell namespace icons by cdex-registry.sh.
+  // are rendered as real shell namespace icons by cdex-registry.
 ];
 
 // Live installer images get a one-time Calamares shortcut on the desktop.

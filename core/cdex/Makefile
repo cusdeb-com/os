@@ -156,7 +156,7 @@ install: build
 	done
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"
-	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry.sh runtime/bin/cdex-taskbar-bridge \
+	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry runtime/bin/cdex-taskbar-bridge \
 		runtime/bin/cdex-shutdown-helper runtime/bin/cdex-wine-cleanup runtime/bin/poweroff runtime/bin/reboot \
 		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher \
 		"$(BIN_DIR)/"
