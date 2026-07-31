@@ -145,8 +145,8 @@ fi
 : >"$SESSION_LOG"
 log_stage "session-start"
 
-# shellcheck source=cdex-registry.sh
-source "$(dirname "$0")/cdex-registry.sh"
+# shellcheck source=cdex-registry
+source "$(dirname "$0")/cdex-registry"
 
 export WINEPREFIX="$REACTOS_PREFIX"
 export WINEARCH=win32
