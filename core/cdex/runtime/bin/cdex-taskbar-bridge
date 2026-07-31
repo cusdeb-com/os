@@ -360,6 +360,72 @@ def handle_launch_request(path):
         launch_linux_app(launcher)
 
 
+def open_folder_in_filebrowser(path):
+    """Open a Linux folder path inside the ReactOS filebrowser.
+
+    Accepts either a directory or a file; a file is resolved to its parent
+    directory.  The path must be inside the user's home directory, and is
+    converted to a Windows path via winepath before launching filebrowser.
+    """
+    if not os.path.exists(path):
+        print(f"taskbar bridge: open-folder skip missing {path!r}", flush=True)
+        return
+    if not os.path.isdir(path):
+        path = os.path.dirname(path)
+
+    # Resolve symlinks and enforce a simple sandbox: only paths inside $HOME.
+    real = os.path.realpath(path)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real != home and not real.startswith(home + os.sep):
+        print(f"taskbar bridge: open-folder skip outside home {real!r}", flush=True)
+        return
+
+    # Convert the Linux path to the form Windows apps understand, e.g.
+    # /home/user/Downloads -> Z:\home\user\Downloads.
+    winpath = run_text(["wine", "winepath", "-w", real]).strip()
+    if not winpath:
+        print(f"taskbar bridge: open-folder winepath failed for {real!r}", flush=True)
+        return
+    print(f"taskbar bridge: open-folder {real} -> {winpath}", flush=True)
+    subprocess.Popen(["wine", "C:\\reactos\\filebrowser.exe", winpath],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def handle_open_requests(directory):
+    """Consume JSON open-folder requests dropped into directory by Linux apps.
+
+    Each request is a single .json file created atomically by
+    cdex-open-folder.  Files are removed after reading, even if parsing or
+    validation fails, so a broken request does not block later ones.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        # The directory is created on demand by cdex-open-folder.
+        return
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            stat_result = os.stat(path)
+            if stat_result.st_uid != os.getuid() or not os.path.isfile(path):
+                continue
+            with open(path, "r", encoding="utf-8") as handle:
+                message = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        finally:
+            # Always clean up the request file so it is not processed twice.
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        folder = str(message.get("path", ""))
+        if folder:
+            open_folder_in_filebrowser(folder)
+
+
 def build_payload():
     return {"version": 1, "timestamp": time.time(), "windows": read_windows()}
 
@@ -372,6 +438,10 @@ def main():
         "REACTOS_LAUNCH_REQUEST",
         os.path.expanduser("~/.wine/drive_c/cusdeb/launch-request"),
     ))
+    parser.add_argument("--open-requests", default=os.environ.get(
+        "REACTOS_OPEN_REQUESTS",
+        os.path.expanduser("~/.wine/drive_c/cusdeb/open-requests"),
+    ))
     parser.add_argument("--interval", type=float, default=0.5)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
@@ -383,6 +453,7 @@ def main():
         write_atomic(args.state, build_payload())
         handle_control(args.control)
         handle_launch_request(args.launch_request)
+        handle_open_requests(args.open_requests)
         if args.once:
             break
         time.sleep(args.interval)

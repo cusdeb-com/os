@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CusDeb File Browser
+Comment=Open folders in the ReactOS file browser
+Exec=cdex-open-folder %f
+NoDisplay=true
+MimeType=inode/directory;

@@ -1,3 +1,15 @@
+cdex (0.0.1-4cd) trixie; urgency=medium
+
+  * Add cdex-open-folder handler and taskbar-bridge open-request inbox,
+    making Linux applications open folders in the ReactOS filebrowser.
+  * Link the user's Downloads folder into the Wine prefix so that files
+    saved by native Linux apps are visible to Win32 apps at
+    C:\users\<user>\Downloads.
+  * Add a Firefox ESR launcher and Programs -> Firefox shortcut with a
+    multi-size icon.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 31 Jul 2026 16:14:07 +0300
+
 cdex (0.0.1-3cd) trixie; urgency=medium
 
   * debian/control: bump Standards-Version to 4.7.4 and drop the
