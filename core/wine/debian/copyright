@@ -3,5 +3,107 @@ Upstream-Name: Wine
 Source: https://www.winehq.org/
 
 Files: *
-Copyright: 1993-2024 the Wine project authors
+Copyright: 2026 the CusDeb OS Project
+License: Apache-2.0
+
+Files: src/*
+Copyright: 1993-2025 the Wine project authors
 License: LGPL-2.1+
+ Wine itself (dlls/, programs/, server/, loader/, and the small GUID-
+ definition helper libraries under libs/) is licensed LGPL-2.1-or-later;
+ find the full text in src/COPYING.LIB and src/LICENSE. Releases up to
+ 20020228 were distributed under a separate MIT-style licence, kept for
+ historical reference in src/LICENSE.OLD.
+ .
+ The stanzas below cover the vendored third-party libraries under
+ libs/ that ship under a different licence than the surrounding Wine
+ tree.
+
+Files: src/libs/capstone/*
+Copyright: 2013 COSEINC
+License: BSD-3-Clause
+ Find the full text in src/libs/capstone/LICENSE.TXT.
+
+Files: src/libs/faudio/*
+Copyright: 2011-2024 Ethan Lee, Luigi Auriemma, and the MonoGame Team
+License: Zlib
+ Find the full text in src/libs/faudio/LICENSE.
+
+Files: src/libs/fluidsynth/*
+Copyright: the FluidSynth project
+License: LGPL-2.1
+ Find the full text in src/libs/fluidsynth/COPYING.md.
+
+Files: src/libs/gsm/*
+Copyright: 1992-1994, 2009 Jutta Degener and Carsten Bormann
+License: HPND
+ Find the full text in src/libs/gsm/COPYRIGHT.
+
+Files: src/libs/jpeg/*
+Copyright: 1991-2020 Thomas G. Lane, Guido Vollbeding
+License: IJG
+ The Independent JPEG Group's licence; find the full text in
+ src/libs/jpeg/LICENSE.
+
+Files: src/libs/jxr/*
+Copyright: Microsoft Corp.
+License: BSD-2-Clause
+ Find the full text in src/libs/jxr/LICENSE.
+
+Files: src/libs/lcms2/*
+Copyright: 1998-2020 Marti Maria Saguer
+License: MIT
+ Find the full text in src/libs/lcms2/COPYING.
+
+Files: src/libs/ldap/*
+Copyright: the OpenLDAP Foundation
+License: OLDAP-2.8
+ Find the full text in src/libs/ldap/LICENSE.
+
+Files: src/libs/mpg123/*
+Copyright: 1995-2020 Michael Hipp and others
+License: LGPL-2.1
+ Find the full text in src/libs/mpg123/LICENSE.
+
+Files: src/libs/musl/*
+Copyright: 2005-2020 Rich Felker and contributors
+License: MIT
+ Find the full text in src/libs/musl/COPYRIGHT.
+
+Files: src/libs/png/*
+Copyright: 1995-2024 The PNG Reference Library Authors
+ 2018-2024 Cosmin Truta
+ 1996-1997 Andreas Dilger
+ 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+License: libpng-2.0
+ Find the full text in src/libs/png/LICENSE.
+
+Files: src/libs/tiff/*
+Copyright: 1988-1997 Sam Leffler
+ 1991-1997 Silicon Graphics, Inc.
+License: libtiff
+ Find the full text in src/libs/tiff/COPYRIGHT.
+
+Files: src/libs/vkd3d/*
+Copyright: 2016-2024 the Vkd3d project authors
+License: LGPL-2.1+
+ Find the full text in src/libs/vkd3d/COPYING.
+
+Files: src/libs/xml2/*
+Copyright: 1998-2012 Daniel Veillard
+License: MIT
+ Find the full text in src/libs/xml2/COPYING. Some files (hash.c, list.c,
+ the trio sources) carry the same licence under a different copyright
+ notice - see the individual file headers.
+
+Files: src/libs/xslt/*
+Copyright: 2001-2002 Daniel Veillard
+License: MIT
+ Find the full text in src/libs/xslt/COPYING. libexslt within the same
+ tree carries the same licence under a different copyright notice - see
+ the file for details.
+
+Files: src/libs/zlib/*
+Copyright: 1995-2022 Jean-loup Gailly and Mark Adler
+License: Zlib
+ Find the full text in src/libs/zlib/LICENSE.
