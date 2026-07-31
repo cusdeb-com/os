@@ -1,6 +1,5 @@
 Source: cdex
 Section: cdex
-Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends: binutils-mingw-w64-i686,
                bison,
@@ -16,7 +15,7 @@ Build-Depends: binutils-mingw-w64-i686,
                python3,
                python3-fonttools,
                quilt
-Standards-Version: 4.6.2
+Standards-Version: 4.7.4
 
 Package: cdex-base
 Architecture: amd64
