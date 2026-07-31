@@ -1,6 +1,5 @@
 Source: wine
 Section: otherosfs
-Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends: bison,
                build-essential,
@@ -55,7 +54,7 @@ Build-Depends: bison,
                libxxf86vm-dev,
                libxxf86vm-dev:i386,
                quilt
-Standards-Version: 4.7.0
+Standards-Version: 4.7.4
 Homepage: https://winehq.org
 
 Package: wine
