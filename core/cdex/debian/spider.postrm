@@ -4,9 +4,11 @@ set -e
 case "$1" in
     remove|purge|disappear)
         # Remove this application's shortcuts from every existing Wine prefix.
-        /usr/share/cusdeb/cdex/cdex-shortcut-helper remove \
-            "-" \
-            "Games\\Spider Solitaire"
+        if [ -x /usr/share/cusdeb/cdex/cdex-shortcut-helper ]; then
+            /usr/share/cusdeb/cdex/cdex-shortcut-helper remove \
+                "-" \
+                "Games\\Spider Solitaire"
+        fi
         ;;
     upgrade|failed-upgrade|abort-install|abort-upgrade)
         ;;
