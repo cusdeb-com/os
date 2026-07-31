@@ -3,8 +3,23 @@ Upstream-Name: cdex-base
 Source: https://github.com/cusdeb-com/os
 
 Files: *
-Copyright: 2026 CusDeb
+Copyright: 2026 the CusDeb OS Project
+License: Apache-2.0
+
+Files: src/*
+Copyright: 1996-2026 the ReactOS Project and contributors
 License: GPL-2.0+
+ The bulk of the vendored ReactOS tree (kernel, drivers, DLLs, shell) is
+ licensed GPL-2.0-or-later; find the full text in src/COPYING. Newer files
+ carry an explicit per-file SPDX LICENSE tag instead - most commonly
+ LGPL-2.1-or-later for usermode client libraries and shell components (find
+ the full text in src/COPYING.LIB), with a handful of files under
+ GPL-3.0-or-later/LGPL-3.0-or-later (src/COPYING3, src/COPYING3.LIB) and a
+ BSD-style licence for ARM Portable Systems Group code (src/COPYING.ARM).
+ .
+ The stanzas below cover the vendored third-party libraries and media
+ assets that ship under a different licence than the surrounding
+ ReactOS tree.
 
 Files: fonts/ubuntu-font-family-0.83/*
 Copyright: 2010-2011 Canonical Ltd
@@ -17,3 +32,171 @@ License: Ubuntu-Font-Licence-1.0
  so FreeType renders it antialiased at every size. As required by UFL 1.0
  clause 2(c) for Modified Versions, the family is renamed to
  "Ubuntu derivative CusDeb" (tools/rename_font.py).
+
+Files: src/media/fonts/arial*.ttf
+ src/media/fonts/ariblk.ttf
+ src/media/fonts/comic*.ttf
+ src/media/fonts/georgia*.ttf
+ src/media/fonts/times*.ttf
+ src/media/fonts/framd*.ttf
+ src/media/fonts/SourceSansPro-*.ttf
+ src/media/fonts/micross.ttf
+License: OFL-1.1
+Copyright: 2010 Google Corporation (Arimo/Tinos/Cousine)
+ 2012 Red Hat, Inc. (Liberation)
+ 2019 Katayama Hirofumi MZ
+ Comment: metric-compatible replacements for Arial/Arial Black/Comic Sans
+ MS/Georgia/Times New Roman/Franklin Gothic Medium/Source Sans Pro/
+ Microsoft Sans Serif; full text alongside each font under
+ src/media/fonts/doc/<FontName>/.
+
+Files: src/media/fonts/lucon.ttf
+ src/media/fonts/tahoma*.ttf
+ src/media/fonts/verdana*.ttf
+Copyright: Bitstream, Inc. (Vera fonts)
+ the DejaVu fonts team
+ Tavmjong Bah (Arev glyphs)
+ 2019 Katayama Hirofumi MZ
+License: Bitstream-Vera
+ DejaVu-derived metric-compatible replacements for Lucida Console/
+ Tahoma/Verdana; full text under
+ src/media/fonts/doc/{LucidaConsole,Tahoma,Verdana}/LICENSE.txt.
+
+Files: src/media/fonts/pala*.ttf
+Copyright: the GUST e-foundry font project
+License: GUST-Font-License
+ Find the full text in src/media/fonts/doc/PalatinoLinotype/LICENSE.txt (GUST
+ Font License, a variant of the LaTeX Project Public License).
+
+Files: src/media/fonts/trebuc*.ttf
+Copyright: unspecified upstream
+License: Apache-2.0
+ Find the full text in src/media/fonts/doc/TrebuchetMS/"Apache License.txt".
+
+Files: src/media/fonts/UniVGA16.ttf
+Copyright: 2001 Dmitry Yu. Bolkhovityanov
+License: MIT
+ "Can be distributed and modified freely, according to the X license."
+ (src/media/fonts/doc/UniVGA/README.txt).
+
+Files: src/media/fonts/vgaoem.fon
+ src/media/fonts/ssee*.fon
+ src/media/fonts/sserife*.fon
+Copyright: 1994-1999 The XFree86 Project, Inc.
+License: MIT
+ Find the full text in src/media/fonts/doc/vgaoem/LICENSE.txt.
+
+Files: src/media/fonts/cour*.ttf
+ src/media/fonts/FreeSans*.ttf
+Copyright: the GNU FreeFont project
+License: GPL-3.0+
+ Find the full text in src/media/fonts/doc/{CourierNew,FreeFont}/COPYING.txt.
+ GNU FreeFont grants a font-embedding exception; see the same file for
+ its exact terms before treating embedding as a GPL derivative-work
+ trigger.
+
+Files: src/media/fonts/FSEX301.ttf
+ src/media/fonts/FSEX301-L2.ttf
+Copyright: Darien Gavin Valentine
+ Jean-Baptiste Lallement
+ Derek Veit
+License: public-domain
+ "Fixedsys Excelsior is free software and appears to have been released
+ by its author into the public domain." (src/media/fonts/doc/Fixedsys/README.txt).
+
+Files: src/media/fonts/symbol.ttf
+ src/media/fonts/wingding.ttf
+ src/media/fonts/Marlett.ttf
+Copyright: unknown
+License: GPL-2.0+
+Comment: No dedicated licence documentation ships under
+ src/media/fonts/doc/ for these three symbol/dingbat fonts; they fall
+ back to the surrounding ReactOS tree's default licence pending upstream
+ clarification.
+
+Files: src/modules/wallpapers/Backwoods.jpg
+ src/modules/wallpapers/Borealis.jpg
+ src/modules/wallpapers/Borealis Dark.jpg
+Copyright: Forum user "Angelus" (jedi.knight@wanadoo.es)
+License: CC-BY-NC-3.0
+
+Files: src/modules/wallpapers/Grass.jpg
+ src/modules/wallpapers/Polarlicht.jpg
+Copyright: none claimed (public domain submission)
+License: CC0-1.0
+
+Files: src/modules/wallpapers/Mizu.png
+ src/modules/wallpapers/Mizu (4x3).png
+Copyright: Forum user "Foxlet" (foxlet@furcode.co)
+License: CC-BY-SA-4.0
+
+Files: src/modules/wallpapers/Nebula.jpg
+Copyright: Community member _twotime (Discord)
+License: CC-BY-1.0
+
+Files: src/modules/wallpapers/Silhouette.png
+ src/modules/wallpapers/Silhouette Dark.png
+Copyright: Jake Collins <polar@ever3st.com>
+License: CC-BY-4.0
+Comment: See src/modules/wallpapers/README.txt for the full per-image
+ attribution table this package's licensing follows.
+
+Files: src/sdk/lib/3rdparty/adns/*
+Copyright: 1997-2000 Ian Jackson
+License: GPL-2.0+
+ Find the full text in src/sdk/lib/3rdparty/adns/COPYING.
+
+Files: src/sdk/lib/3rdparty/cardlib/*
+Copyright: 2001 J Brown
+License: cardlib-freeware
+ "Freeware" per the file header; no formal OSI-approved licence text is
+ shipped upstream.
+
+Files: src/sdk/lib/3rdparty/freetype/*
+Copyright: 1996-2023 David Turner, Robert Wilhelm, and Werner Lemberg
+License: FTL or GPL-2.0+
+ Dual-licensed under the FreeType Project Licence (FTL) or GPL-2.0-or-later,
+ at the recipient's option; see src/sdk/lib/3rdparty/freetype/docs/LICENSE.TXT.
+
+Files: src/sdk/lib/3rdparty/libmpg123/*
+Copyright: 1995-2020 the mpg123 project
+License: LGPL-2.1
+
+Files: src/sdk/lib/3rdparty/libsamplerate/*
+Copyright: 2012-2016 Erik de Castro Lopo <erikd@mega-nerd.com>
+License: BSD-2-Clause
+ Find the full text in src/sdk/lib/3rdparty/libsamplerate/COPYING.
+
+Files: src/sdk/lib/3rdparty/libwin-iconv/*
+Copyright: none claimed
+License: public-domain
+ "This file is placed in the public domain" (win_iconv.c header).
+
+Files: src/sdk/lib/3rdparty/libwine/*
+Copyright: Alexandre Julliard and the Wine project contributors
+License: LGPL-2.1
+
+Files: src/sdk/lib/3rdparty/libxml2/*
+Copyright: 1998-2012 Daniel Veillard
+License: MIT
+ Find the full text in src/sdk/lib/3rdparty/libxml2/COPYING. Some files (hash.c,
+ list.c, the trio sources) carry the same licence under a different
+ copyright notice - see the individual file headers.
+
+Files: src/sdk/lib/3rdparty/stlport/*
+Copyright: 1999 Silicon Graphics Computer Systems, Inc.
+ 1999 Boris Fomitchev
+License: SGI-permissive
+ "Permission to use or copy this software for any purpose is hereby
+ granted without fee [...]" - the permissive SGI/STLport licence
+ predating SPDX's SGI-B identifiers; see the boilerplate repeated at
+ the top of each header, e.g. src/sdk/lib/3rdparty/stlport/stlport/cstdio.
+
+Files: src/sdk/lib/3rdparty/strmbase/*
+Copyright: 2012 Aric Stewart, CodeWeavers
+License: LGPL-2.1+
+
+Files: src/sdk/lib/3rdparty/zlib/*
+Copyright: 1995-2022 Jean-loup Gailly and Mark Adler
+License: Zlib
+ Find the full text in src/sdk/lib/3rdparty/zlib/LICENSE.
