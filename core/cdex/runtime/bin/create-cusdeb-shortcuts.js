@@ -78,6 +78,24 @@ var programsEntries = [
   ["Games\\Spider Solitaire", "C:\\reactos\\spider.exe", "", "C:\\reactos", "Spider Solitaire", ""]
 ];
 
+// Only create the Firefox shortcut if the host firefox-esr binary is installed.
+// The session sets CDEX_FIREFOX_AVAILABLE=1 when it detects the binary.
+if (shell.Environment("PROCESS")("CDEX_FIREFOX_AVAILABLE") === "1") {
+  programsEntries.push(["Firefox", "C:\\windows\\system32\\cmd.exe", "/c echo firefox > C:\\cusdeb\\launch-request", "C:\\windows\\system32", "Firefox", "C:\\reactos\\firefox.ico,0"]);
+}
+
+// Remove all CusDeb-managed program shortcuts first so that optional entries
+// (e.g. Firefox) disappear when the host application is no longer installed.
+var programsEntriesToRemove = [
+  "Administrative Tools\\Terminal",
+  "Accessories\\Paint",
+  "Accessories\\Calculator",
+  "Firefox",
+  "Games\\Minesweeper",
+  "Games\\Spider Solitaire"
+];
+
 removeShortcuts(desktop, desktopEntriesToRemove);
 createShortcuts(desktop, desktopEntries);
+removeShortcuts(programs, programsEntriesToRemove);
 createShortcuts(programs, programsEntries);

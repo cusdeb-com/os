@@ -158,6 +158,32 @@ if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ] || [ ! -f "$REACTOS_REGISTRY_
   initial_run=true
 fi
 
+# Link a Wine prefix user folder (Downloads, Desktop, ...) to the real home
+# directory one, so that native Linux apps and Win32 apps see the same files
+# at both ~/<name> and C:\users\<user>\<name>.  The files physically live in
+# the home directory, so dropping ~/.wine does not lose them.
+bridge_user_folder() {
+  local name="$1"
+  local home_dir="$HOME/$name"
+  local prefix_dir="$REACTOS_PREFIX/drive_c/users/$USER/$name"
+
+  # Make sure the real home folder exists before pointing the prefix at it.
+  install -d "$home_dir"
+
+  if [ -d "$prefix_dir" ] && [ ! -L "$prefix_dir" ]; then
+    # The prefix already has its own real directory.  Preserve anything that
+    # was saved inside it before replacing it with a symlink to the home dir.
+    if [ -n "$(ls -A "$prefix_dir" 2>/dev/null)" ]; then
+      mv "$prefix_dir"/* "$home_dir/" 2>/dev/null || true
+    fi
+    rm -rf "$prefix_dir"
+  fi
+
+  # Point the Wine prefix folder at the real home folder.  Use -n so that an
+  # existing symlink target is overwritten rather than followed.
+  ln -sfn "$home_dir" "$prefix_dir"
+}
+
 prepare_reactos_payload() {
   if [ ! -x "$REACTOS_SOURCE_DIR/explorer.exe" ]; then
     return 1
@@ -203,6 +229,12 @@ prepare_reactos_payload() {
   # shortcuts that ask the taskbar bridge to start native Linux apps.
   install -d "$REACTOS_PREFIX/drive_c/cusdeb"
   : >"$REACTOS_PREFIX/drive_c/cusdeb/launch-request"
+
+  # Bridge user folders between the Wine prefix and the home directory so
+  # that files saved by native Linux apps (e.g. firefox-esr downloads land
+  # in ~/Downloads) are visible to Win32 apps at C:\users\<user>\<folder>,
+  # and vice versa.  Add more folders here as needed.
+  bridge_user_folder Downloads
 }
 
 # Recreate the ReactOS/Windows-style shortcuts on every login.  The old
@@ -230,10 +262,17 @@ create_reactos_shortcuts() {
   cp "$REACTOS_SOURCE_DIR/create-cusdeb-shortcuts.js" \
      "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
   local cscript_rc=0
+  # Only create a Firefox shortcut if the host actually has firefox-esr installed.
+  # The JScript helper reads this flag and skips the entry otherwise.
+  if command -v firefox-esr >/dev/null 2>&1; then
+    export CDEX_FIREFOX_AVAILABLE=1
+  fi
+
   # Suppress Wine debug spam; failure is logged by the caller via return value.
   # mscoree=d prevents Wine Mono Installer (appwiz.cpl install_mono) from
   # blocking the first login while it tries to download/install Mono.
   WINEDEBUG=-all WINEDLLOVERRIDES='mscoree=d;winemenubuilder.exe=d;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b' wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
+  unset CDEX_FIREFOX_AVAILABLE
   rm -f "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
   # Wait for wineserver so that registry changes and shortcut writes are flushed
   # before Explorer starts.
