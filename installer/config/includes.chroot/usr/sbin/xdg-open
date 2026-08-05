@@ -1,0 +1,34 @@
+#!/bin/sh
+# Wrapper around /usr/bin/xdg-open for the live installer session.
+#
+# Calamares runs as root (pkexec via calamares-install-debian), so
+# QDesktopServices::openUrl() spawns xdg-open as root. A browser started
+# as root cannot (and must not) attach to the live user's X session, so
+# the welcome-page buttons (support/known-issues/release-notes) silently
+# did nothing.
+#
+# pkexec gives root a PATH of /usr/sbin:/usr/bin:/sbin:/bin (no
+# /usr/local/bin), so this file lives in /usr/sbin, ahead of the real
+# /usr/bin/xdg-open. When invoked as root it re-runs the real xdg-open
+# as the live user; otherwise it just forwards the call.
+#
+# pkexec (allow_gui=true in the Calamares polkit action) already passes
+# the live session's DISPLAY and XAUTHORITY into root's environment, so
+# they are inherited; the :- fallbacks below only cover callers that
+# lack them.
+#
+# Note: this file is live-only. Calamares' unpackfs configuration
+# (modules/unpackfs.conf) excludes it from the copy to the target disk,
+# so it never lands on the installed system.
+
+REAL_XDG_OPEN=/usr/bin/xdg-open
+LIVE_USER=user
+
+if [ "$(id -u)" = 0 ] && id "${LIVE_USER}" >/dev/null 2>&1; then
+    exec runuser -u "${LIVE_USER}" -- env \
+        DISPLAY="${DISPLAY:-:0}" \
+        XAUTHORITY="${XAUTHORITY:-/home/${LIVE_USER}/.Xauthority}" \
+        "${REAL_XDG_OPEN}" "$@"
+fi
+
+exec "${REAL_XDG_OPEN}" "$@"
