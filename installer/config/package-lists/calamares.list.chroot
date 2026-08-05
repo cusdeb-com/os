@@ -1,6 +1,12 @@
 calamares
 calamares-settings-debian
 
+# QML modules required by the Calamares slideshow (slideshowAPI 2).
+# Without them the exec-phase slideshow fails with
+# "module "QtQuick.Window" is not installed" and shows a blank page.
+qml6-module-qtquick
+qml6-module-qtquick-window
+
 # Password strength dictionary required by Calamares users module
 # Without it the installer prints: "the password fails the dictionary check - error loading dictionary"
 cracklib-runtime
@@ -82,6 +88,7 @@ usbutils
 # Essentials
 sudo
 ca-certificates
+xdg-utils
 
 # Optional packages pre-installed in live so they are available in target
 # regardless of Calamares network state. The optional-packages-apply job
