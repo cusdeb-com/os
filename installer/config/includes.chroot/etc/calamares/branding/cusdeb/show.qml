@@ -14,7 +14,7 @@ Presentation
     Slide {
         Image {
             id: background1
-            source: "slide1.png"
+            source: "welcome.png"
             width: 467; height: 280
             fillMode: Image.PreserveAspectFit
             anchors.centerIn: parent
