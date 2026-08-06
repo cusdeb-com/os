@@ -2,19 +2,19 @@ Origin: os-packages
 Label: os-packages
 Suite: stable
 Codename: stable
-Date: Thu, 30 Jul 2026 12:41:27 UTC
+Date: Thu, 06 Aug 2026 11:19:49 UTC
 Architectures: amd64
 Components: main
 Description: APT repository for os-packages
 MD5Sum:
- a8f218e6d6e9c4e9ab5516ada1f423af 6277 main/binary-amd64/Packages
- 14eb1b4343faf3a58c1cacc3de314c7a 2373 main/binary-amd64/Packages.gz
+ 3fceec1a2dcc3a3a98b4f6baa1cb4779 6278 main/binary-amd64/Packages
+ 719f991c2773e2c82303e977a5df79ac 2366 main/binary-amd64/Packages.gz
  330e20963f60f0576a6869ab1e9215e2 135 main/binary-amd64/Release
 SHA1:
- e7d29c1b4a6af6d4035f0297850ba4fa9854619e 6277 main/binary-amd64/Packages
- 8ab015e2947454965dcb5ebe0326ee27e572a121 2373 main/binary-amd64/Packages.gz
+ 8e2c33a8ae5840aeb26f271d7f622b02cb39e3e7 6278 main/binary-amd64/Packages
+ de024b00af027542a855e9f81b090429069b10ed 2366 main/binary-amd64/Packages.gz
  470bacbdd3b22caffed713e70278d91fbef591e3 135 main/binary-amd64/Release
 SHA256:
- debfe7447df5a61acf14a1eff0570c94767fed96ff5c42b6a3041a2c8b9dc1d5 6277 main/binary-amd64/Packages
- 41a6ea4d2e24c3a3835b1c4fdf96c7c86ed4da1e09ac6d99c1aed816743c1e35 2373 main/binary-amd64/Packages.gz
+ c39b614883958e33c36d2a327141a895d90a67e33085f2f633171fca381f2937 6278 main/binary-amd64/Packages
+ 5ba39ee78d555f817ce75de4a7782e8493ca8af6edde5cf0d56c444138aa6a5b 2366 main/binary-amd64/Packages.gz
  22a013ca4d7f477ccd0e1a33e91905d978f53bb9a86775b2e076455713ae495d 135 main/binary-amd64/Release
