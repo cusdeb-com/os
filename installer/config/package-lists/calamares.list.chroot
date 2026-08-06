@@ -52,9 +52,6 @@ firmware-atheros
 firmware-brcm80211
 firmware-mediatek
 
-# SSH access for debug
-openssh-server
-
 # Kernel and live-boot stack
 linux-image-amd64
 live-boot
