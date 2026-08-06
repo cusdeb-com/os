@@ -17,5 +17,5 @@ lb config noauto \
     --apt-recommends false \
     --firmware-chroot false \
     --cache-stages "bootstrap chroot" \
-    --bootappend-live "boot=live components console=tty0 console=ttyS0,115200n8" \
+    --bootappend-live "boot=live components" \
     "${@}"

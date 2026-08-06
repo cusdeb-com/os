@@ -1,5 +1,0 @@
-#!/bin/sh
-set -e
-
-# Enable serial console login on ttyS0 for Live session
-systemctl enable serial-getty@ttyS0.service
