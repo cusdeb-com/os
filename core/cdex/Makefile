@@ -158,7 +158,7 @@ install: build
 	install -d "$(BIN_DIR)"
 	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry runtime/bin/cdex-taskbar-bridge \
 		runtime/bin/cdex-shutdown-helper runtime/bin/cdex-wine-cleanup runtime/bin/poweroff runtime/bin/reboot \
-		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher \
+		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher runtime/bin/cdex-open-folder \
 		"$(BIN_DIR)/"
 	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
@@ -172,6 +172,8 @@ install: build
 	install -D -m 644 runtime/config/openbox/rc.xml "$(DESTDIR)/etc/xdg/cusdeb/openbox/rc.xml"
 	install -D -m 644 runtime/config/gtk/gtkrc-2.0 "$(DESTDIR)/etc/xdg/cusdeb/gtk-2.0/gtkrc"
 	install -D -m 644 runtime/config/gtk/gtk-3.0/settings.ini "$(DESTDIR)/etc/xdg/cusdeb/gtk-3.0/settings.ini"
+	install -D -m 644 runtime/applications/cdex-open-folder.desktop "$(DESTDIR)/usr/share/applications/cdex-open-folder.desktop"
+	install -D -m 644 runtime/config/mimeapps.list "$(DESTDIR)/etc/xdg/mimeapps.list"
 	@echo "=== Installing Openbox Win10 theme ==="
 	install -d "$(DESTDIR)/usr/share/themes"
 	cp -a runtime/themes/Win10 "$(DESTDIR)/usr/share/themes/"

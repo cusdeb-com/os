@@ -9,6 +9,7 @@ usr/share/cusdeb/cdex/*.cpl
 usr/share/cusdeb/cdex/mizu.msstyles
 usr/bin
 usr/share/xsessions
+usr/share/applications
 usr/share/lightdm
 etc/lightdm
 etc/fonts

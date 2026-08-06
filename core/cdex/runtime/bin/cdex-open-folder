@@ -1,0 +1,47 @@
+#!/bin/sh
+# Queue a request for cdex-taskbar-bridge to open a folder in the ReactOS
+# filebrowser. Accepts a plain path or a file:// URI; a file argument is
+# resolved to its parent directory.
+set -eu
+
+if [ $# -lt 1 ] || [ -z "$1" ]; then
+    echo "usage: cdex-open-folder <path|file://uri>" >&2
+    exit 1
+fi
+
+target=$1
+case $target in
+    file://*)
+        # Drop the scheme, then convert percent-encoded bytes (e.g. %20) into
+        # the real characters so that spaces and non-ASCII paths work.
+        target=${target#file://}
+        target=$(printf '%s' "$target" | sed 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')
+        target=$(printf '%b' "$target")
+        ;;
+esac
+
+if [ ! -e "$target" ]; then
+    echo "cdex-open-folder: no such path: $target" >&2
+    exit 1
+fi
+
+# When a file is passed (e.g. Firefox "Show in folder"), open its parent
+# directory because ReactOS filebrowser cannot highlight a single file.
+if [ ! -d "$target" ]; then
+    target=$(dirname "$target")
+fi
+
+# Get the canonical absolute path; this also resolves any symlinks.
+target=$(cd "$target" && pwd)
+
+# Drop the request into the bridge inbox.  The file is created atomically
+# (write to a temp name, then rename) so the bridge never reads a half-written
+# request.
+requests_dir="$HOME/.wine/drive_c/cusdeb/open-requests"
+mkdir -p "$requests_dir"
+
+escaped=$(printf '%s' "$target" | sed 's/\\/\\\\/g; s/"/\\"/g')
+id="$$-$(date +%s%N)"
+tmp="$requests_dir/.$id.tmp"
+printf '{"path": "%s"}\n' "$escaped" > "$tmp"
+mv "$tmp" "$requests_dir/$id.json"
