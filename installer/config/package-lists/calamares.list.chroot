@@ -66,6 +66,8 @@ live-tools
 live-task-localisation
 live-task-recommended
 firmware-linux-free
+# Needed by live-config to create the live user (--apt-recommends false drops it).
+user-setup
 
 # Bootloader (needed by calamares-bootloader-config)
 grub-pc
