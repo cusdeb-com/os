@@ -1,5 +1,6 @@
 Source: wine
 Section: otherosfs
+Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends: bison,
                build-essential,

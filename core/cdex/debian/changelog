@@ -1,3 +1,10 @@
+cdex (0.0.1-4cd) trixie; urgency=medium
+
+  * debian/control: restore Priority: optional, dropped in 0.0.1-3cd,
+    because reprepro requires the field to publish the .deb.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 06 Aug 2026 13:15:15 +0300
+
 cdex (0.0.1-3cd) trixie; urgency=medium
 
   * debian/control: bump Standards-Version to 4.7.4 and drop the

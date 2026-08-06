@@ -1,5 +1,6 @@
 Source: cdex
 Section: cdex
+Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends: binutils-mingw-w64-i686,
                bison,
