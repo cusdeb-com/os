@@ -7,13 +7,13 @@
     <font place="ActiveWindow">
       <name>Sans</name>
       <size>10</size>
-      <weight>bold</weight>
+      <weight>normal</weight>
       <slant>normal</slant>
     </font>
     <font place="InactiveWindow">
       <name>Sans</name>
       <size>10</size>
-      <weight>bold</weight>
+      <weight>normal</weight>
       <slant>normal</slant>
     </font>
     <font place="MenuHeader">

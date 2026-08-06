@@ -1,3 +1,11 @@
+cdex (0.0.1-4cd) trixie; urgency=medium
+
+  * runtime/config/openbox/rc.xml: set window title font weight to normal.
+  * runtime/themes/Win10/openbox-3/themerc: switch titlebar to white
+    background with black text and Mizu-like button glyphs.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 06 Aug 2026 13:26:10 +0300
+
 cdex (0.0.1-3cd) trixie; urgency=medium
 
   * debian/control: bump Standards-Version to 4.7.4 and drop the
