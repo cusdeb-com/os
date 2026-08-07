@@ -1,6 +1,15 @@
-# CusDeb OS Calamares Installer
+# CusDeb OS Installer
 
-This directory builds a bootable Debian trixie Live ISO with a graphical Calamares installer. The live environment is intentionally minimal: Openbox + LightDM, no full desktop environment. Calamares installs a minimal Debian system to disk.
+Builds a bootable Debian trixie Live ISO with Calamares. The live environment ships Wine, the ReactOS Explorer-based `cdex` shell, and Chicago95 theming.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [What the installer builds](#what-the-installer-builds)
+- [Build overview](#build-overview)
+- [Live image architecture](#live-image-architecture)
+- [Calamares configuration](#calamares-configuration)
+- [Custom modules](#custom-modules)
 
 ## Quick start
 
@@ -8,123 +17,67 @@ This directory builds a bootable Debian trixie Live ISO with a graphical Calamar
 ./installer/run-iso-build.sh
 ```
 
-Result: `out/cusdeb-os.iso`
+Result: `out/cusdeb-os.iso` (hybrid BIOS/UEFI, amd64).
 
-> **Note:** the ISO is a **hybrid BIOS/UEFI** image for amd64 (Intel/AMD x86_64).
+Every build is currently a full clean rebuild and takes roughly 10–20 minutes depending on mirror speed and hardware.
 
-## High-level layout
+## What the installer builds
 
-```
-installer/
-├── Dockerfile            # Debian trixie builder image (live-build + Calamares build deps)
-├── run-iso-build.sh      # Host wrapper: builds/runs the Docker builder
-├── build-iso.sh          # In-container orchestration: builds C++ module + runs live-build
-├── auto/config           # live-build distribution/bootloader options
-├── config/               # live-build config, package list, hooks, includes.chroot
-│   └── includes.chroot/
-│       ├── etc/calamares/               # Calamares override configs and branding
-│       │   ├── settings.conf
-│       │   ├── modules/
-│       │   └── branding/cusdeb/
-│       └── usr/lib/x86_64-linux-gnu/calamares/modules/
-│           └── optional-packages/       # C++ viewmodule (built in Docker)
-└── modules/              # Custom Calamares C++ viewmodules
-    └── optional-packages/
-```
+1. A Debian trixie live image configured by `live-build`.
+2. A minimal X11 environment (`openbox`, `lightdm`, selected drivers).
+3. Calamares installer with CusDeb branding.
+4. The CusDeb OS layer: `cdex-full` (Wine, ReactOS Explorer shell, Chicago95 theme, Linux-to-Win32 taskbar bridge).
+5. A hybrid ISO bootable on both BIOS and UEFI.
 
-## Documentation
+## Build overview
 
-| Document | What it covers |
-|---|---|
-| [`config/README.md`](config/README.md) | live-build configuration, package list, `includes.chroot` layout, Calamares overrides |
-| [`config/hooks/live/README.md`](config/hooks/live/README.md) | Live chroot hooks (live user, serial console, SSH) |
-| [`modules/optional-packages/README.md`](modules/optional-packages/README.md) | Custom C++ viewmodule for optional package selection |
-| [`config/includes.chroot/usr/lib/x86_64-linux-gnu/calamares/modules/optional-packages-apply/`](config/includes.chroot/usr/lib/x86_64-linux-gnu/calamares/modules/optional-packages-apply/) | Python job module that removes deselected optional packages from the target system |
+`run-iso-build.sh` builds a Docker image and runs `build-iso.sh` inside it. `build-iso.sh` compiles the custom Calamares viewmodule, then runs `lb build`.
 
-## Boot process
+`auto/config` sets the main `live-build` options: Debian trixie, amd64, `iso-hybrid`, GRUB for BIOS/UEFI, no apt recommends, firmware controlled via `calamares.list.chroot`.
 
-The ISO is built as `iso-hybrid` with GRUB for both firmware types:
+`package-lists/calamares.list.chroot` installs Calamares, the live-boot stack, minimal X11, bootloader tools, networking, and firmware. `cdex-full` is installed separately by the `010-install-cdex.chroot` hook, which adds the CusDeb APT repository.
 
-- **BIOS:** El Torito loads the GRUB PC bootloader.
-- **UEFI:** The firmware loads `/EFI/BOOT/BOOTX64.EFI` from the EFI System Partition image embedded in the ISO.
-- Kernel and initrd are loaded from `/live/vmlinuz-*` and `/live/initrd.img-*`.
-- `live-boot` mounts `/live/filesystem.squashfs` as the root filesystem via overlay/tmpfs.
+## Live image architecture
 
-## Calamares module sequence
+### Live user
 
-The full sequence is committed in
-[`config/includes.chroot/etc/calamares/settings.conf`](config/includes.chroot/etc/calamares/settings.conf).
-It overrides the sequence shipped by `calamares-settings-debian` because Calamares
-loads files from `/etc/calamares/` (`local` search path) before `/usr/share/calamares/`.
+Created by `live-config` at boot, not baked into the squashfs. This prevents hardcoded credentials from being copied to every installed system by Calamares `unpackfs`.
 
-```yaml
-show:
-  - welcome
-  - locale
-  - keyboard
-  - partition
-  - users
-  - optional-packages
-  - summary
+- Username: `user`, password: `live`.
+- Root is locked by default.
+- Default groups are configured in `config/includes.chroot/etc/live/config.conf.d/cusdeb.conf`.
+- The `users` group is required for the CusDeb polkit poweroff rule.
 
-exec:
-  - partition
-  - mount
-  - unpackfs
-  - luksbootkeyfile
-  - dpkg-unsafe-io
-  - sources-media
-  - machineid
-  - fstab
-  - locale
-  - keyboard
-  - localecfg
-  - users
-  - displaymanager
-  - networkcfg
-  - hwclock
-  - services-systemd
-  - bootloader-config
-  - grubcfg
-  - bootloader
-  - packages
-  - plymouthcfg
-  - initramfscfg
-  - initramfs
-  - dpkg-unsafe-io-undo
-  - sources-media-unmount
-  - sources-final
-  - optional-packages-apply
-  - umount
+### Chroot hooks
 
-show:
-  - finished
-```
+Hooks in `config/hooks/live/` run after packages are installed:
 
-Improvements over the previous hook-patched sequence:
+- `010-install-cdex.chroot` — adds the CusDeb APT repository and installs `cdex-full`.
+- `enable-lightdm.chroot` — enables `lightdm.service`.
+- `fix-path-utilities.chroot` — symlinks utilities Calamares needs (`blkid`, `smartctl`, `ckbcomp`).
 
-- `displaymanager` configures LightDM autologin for the installed user.
-- `machineid` explicitly writes `/etc/machine-id` and `/var/lib/dbus/machine-id`.
-- `dpkg-unsafe-io` speeds up package installation in the target system.
-- `bootloader-config` runs the Debian helper that installs the correct `grub-pc`
-  or `grub-efi` package set depending on the firmware mode.
-- `packages` runs before `sources-final`, so `apt-get remove` of live-only
-  packages uses the live media sources.list.
-- `optional-packages-apply` runs after `sources-final`, so its `apt-get
-  remove` operation uses the target's final network sources.list.
+### Boot process
 
-See the per-module READMEs above for details.
+The ISO is `iso-hybrid` with GRUB. `live-boot` mounts `/live/filesystem.squashfs` as the root filesystem via overlay/tmpfs.
 
-## Debug features
+## Calamares configuration
 
-The live image currently includes debug helpers that are **not suitable for release builds**:
+Upstream configuration lives in `/usr/share/calamares/` from `calamares-settings-debian`. Calamares treats `/etc/calamares/` as the `local` config tree, so files in `config/includes.chroot/etc/calamares/` override upstream settings.
 
-- SSH server enabled with root password login (`setup-ssh.chroot`).
-- Fixed passwords `user:user` and `root:root` (`create-live-user.chroot`).
+Key overrides:
 
-Remove or gate these hooks before producing a release image.
+- `settings.conf` — module sequence and branding.
+- `modules/users.conf` — default groups (`users`, `sudo`), locked root.
+- `modules/packages.conf` — live-only packages to remove from target.
+- `modules/optional-packages.conf` — catalog for the custom selection page.
+- `modules/displaymanager.conf` — LightDM autologin for the installed user.
 
-## Future work
+Sequence notes:
 
-- Integrate Wine + ReactOS Explorer into the live squashfs.
-- Add post-install scripts for Wine prefix, registry, and theme setup.
+- `packages` runs before `sources-final` to remove live-only packages using live media sources.
+- `optional-packages-apply` runs after `sources-final` to remove deselected optional packages using target network sources.
+
+## Custom modules
+
+- `optional-packages` (C++ / Qt6) — tree of optional package groups. Built in Docker and copied to `config/includes.chroot/usr/lib/x86_64-linux-gnu/calamares/modules/optional-packages/`.
+- `optional-packages-apply` (Python) — removes unselected packages from `/target`.
