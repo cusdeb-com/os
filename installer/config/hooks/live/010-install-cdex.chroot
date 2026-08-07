@@ -5,6 +5,11 @@ echo "[hook] Adding CusDeb apt repository and installing cdex-full..."
 
 dpkg --add-architecture i386
 update-ca-certificates --fresh
+
+mkdir -p /etc/apt/keyrings
+curl -fsSL -o /etc/apt/keyrings/cusdeb.gpg https://cusdeb-com.github.io/os/KEY.gpg
+chmod 644 /etc/apt/keyrings/cusdeb.gpg
+
 apt-get update
 apt-get install -y cdex-full
 
