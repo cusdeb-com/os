@@ -1,3 +1,23 @@
+cdex (0.0.2-1cd) trixie; urgency=medium
+
+  * cdex-taskbar-bridge: minimize a window when its taskbar button is
+    clicked while the window is active (standard taskbar toggle);
+    previously the click always activated the window, doing nothing for
+    an already-focused one. The last active task window is tracked on
+    each poll, since a taskbar click moves X activation to the taskbar
+    dock before the command arrives.
+  * cdex-taskbar-bridge: re-assert activation when focusing a window if
+    it did not stick; the taskbar (or Wine on unminimize) can steal the
+    focus back, leaving a restored window unfocused.
+  * cdex-taskbar-bridge: poll the control/launch files every 0.1 s
+    between window list syncs (still 0.5 s), cutting taskbar click
+    latency from up to 0.5 s to ~0.1 s at ~1% CPU.
+  * cdex-taskbar-bridge: don't let a missing _NET_WM_NAME clobber the
+    WM_NAME fallback, which hid windows without it (e.g. xterm) from
+    the taskbar.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 12 Aug 2026 16:30:42 +0300
+
 cdex (0.0.1-5cd) trixie; urgency=medium
 
   * cdex-calc.postrm, mspaint.postrm, spider.postrm, winmine.postrm:
