@@ -16,6 +16,14 @@ _ROOT_WIDTH = None
 _ROOT_HEIGHT = None
 _NORMALIZED_WINDOWS = set()
 
+# The last poll's active task window. Clicking a taskbar button moves X
+# activation to the taskbar dock *before* the control command reaches the
+# bridge, so _NET_ACTIVE_WINDOW cannot be trusted at the moment a command
+# is processed. The poll loop keeps this updated instead, and deliberately
+# keeps the current value while activation sits on a dock (the taskbar
+# itself), so a taskbar click never clobbers it.
+_LAST_ACTIVE_TASK_WINDOW = None
+
 
 def run_text(command):
     try:
@@ -79,7 +87,11 @@ def read_window(window_id):
             if len(strings) > 1:
                 window["class"] = strings[1]
         elif line.startswith("_NET_WM_NAME"):
-            window["title"] = parse_string(line)
+            # xprop prints WM_NAME before _NET_WM_NAME; don't let a missing
+            # _NET_WM_NAME ("not found.") clobber the WM_NAME fallback.
+            title = parse_string(line)
+            if title:
+                window["title"] = title
         elif line.startswith("WM_NAME") and not window["title"]:
             window["title"] = parse_string(line)
         elif line.startswith("_NET_WM_PID"):
@@ -283,7 +295,48 @@ def log_startup():
         print(f"taskbar bridge: {tool}={shutil.which(tool) or 'missing'}", flush=True)
 
 
+def get_active_window_id():
+    output = run_text(["xprop", "-root", "_NET_ACTIVE_WINDOW"])
+    match = WINDOW_ID_RE.search(output)
+    return match.group(0).lower() if match else ""
+
+
+def is_dock_window(window_id):
+    output = run_text(["xprop", "-id", window_id, "_NET_WM_WINDOW_TYPE"])
+    return "_NET_WM_WINDOW_TYPE_DOCK" in output
+
+
+def track_active_task_window(windows):
+    global _LAST_ACTIVE_TASK_WINDOW
+    active = get_active_window_id()
+    task_ids = {window["window_id"].lower() for window in windows}
+    if active in task_ids:
+        _LAST_ACTIVE_TASK_WINDOW = active
+    elif not active or active == "0x0" or not is_dock_window(active):
+        _LAST_ACTIVE_TASK_WINDOW = None
+
+
+def activate_window(window_id):
+    """Unminimize + activate, then verify the activation stuck.
+
+    When the request comes from a taskbar click, the taskbar (or Wine,
+    on unminimize) can steal the focus back right after the first
+    attempt, leaving the restored window unfocused. Retry a couple of
+    times. Returns True when the window ended up active.
+    """
+    for _attempt in range(3):
+        if not launch_first_available([["wmctrl", "-ia", window_id],
+                                       ["xdotool", "windowmap", window_id, "windowactivate", window_id]]):
+            return False
+        time.sleep(0.2)
+        if window_id.lower() == get_active_window_id():
+            return True
+        print(f"taskbar bridge: focus {window_id} did not stick, retrying", flush=True)
+    return False
+
+
 def handle_control(path):
+    global _LAST_ACTIVE_TASK_WINDOW
     if not os.path.exists(path):
         return
     try:
@@ -305,8 +358,17 @@ def handle_control(path):
     if not WINDOW_ID_RE.fullmatch(window_id):
         return
     if action == "focus":
-        print(f"taskbar bridge: focus {window_id}", flush=True)
-        launch_first_available([["wmctrl", "-ia", window_id], ["xdotool", "windowmap", window_id, "windowactivate", window_id]])
+        # Clicking the taskbar button of the already-active window must
+        # minimize it (standard taskbar toggle behaviour); only activate
+        # the window when it is not the active one.
+        if window_id.lower() == _LAST_ACTIVE_TASK_WINDOW:
+            print(f"taskbar bridge: minimize active {window_id}", flush=True)
+            launch_first_available([["xdotool", "windowminimize", window_id]])
+            _LAST_ACTIVE_TASK_WINDOW = None
+        else:
+            print(f"taskbar bridge: focus {window_id}", flush=True)
+            if activate_window(window_id):
+                _LAST_ACTIVE_TASK_WINDOW = window_id.lower()
     elif action == "minimize":
         print(f"taskbar bridge: minimize {window_id}", flush=True)
         launch_first_available([["xdotool", "windowminimize", window_id]])
@@ -371,7 +433,10 @@ def main():
         "REACTOS_LAUNCH_REQUEST",
         os.path.expanduser("~/.wine/drive_c/cusdeb/launch-request"),
     ))
-    parser.add_argument("--interval", type=float, default=0.5)
+    parser.add_argument("--interval", type=float, default=0.5,
+                        help="window list sync interval, seconds")
+    parser.add_argument("--control-interval", type=float, default=0.1,
+                        help="control/launch file poll interval, seconds")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
@@ -379,12 +444,24 @@ def main():
 
     while True:
         scan_and_normalize_windows()
-        write_atomic(args.state, build_payload())
+        payload = build_payload()
+        track_active_task_window(payload["windows"])
+        write_atomic(args.state, payload)
         handle_control(args.control)
         handle_launch_request(args.launch_request)
         if args.once:
             break
-        time.sleep(args.interval)
+        # Poll the control/launch files cheaply until the next window sync
+        # is due, so taskbar clicks are handled within ~control-interval
+        # instead of waiting a full sync cycle.
+        deadline = time.monotonic() + args.interval
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(args.control_interval, remaining))
+            handle_control(args.control)
+            handle_launch_request(args.launch_request)
 
 
 if __name__ == "__main__":
