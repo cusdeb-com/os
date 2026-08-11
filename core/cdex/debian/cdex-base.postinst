@@ -23,13 +23,6 @@ if [ -x /usr/bin/fc-cache ]; then
     fc-cache -f || true
 fi
 
-# Create a distinct launcher name for ReactOS Explorer so Wine does not
-# confuse it with its own explorer.exe when the payload is symlinked into
-# the per-user Wine prefix.
-if [ -f /usr/share/cusdeb/cdex/explorer.exe ]; then
-    ln -sf explorer.exe /usr/share/cusdeb/cdex/reactos-explorer.exe
-fi
-
 #DEBHELPER#
 
 exit 0
