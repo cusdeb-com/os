@@ -1,3 +1,17 @@
+cdex (0.0.1-5cd) trixie; urgency=medium
+
+  * cdex-calc.postrm, mspaint.postrm, spider.postrm, winmine.postrm:
+    guard the cdex-shortcut-helper call. It is installed by cdex-base,
+    and "Depends: cdex-base" does not guarantee it is still present
+    across separate remove/purge transactions, so the unguarded call
+    could fail under set -e and leave dpkg --purge in a broken state.
+  * Stop creating reactos-explorer.exe in cdex-base.postinst, where it
+    was never tracked by cdex-base.install and never cleaned up on
+    purge. Its target is constant and known at build time, so it is
+    now created during install and owned by dpkg like any other file.
+
+ -- Evgeny Golyshev <eugulixes@cusdeb.com>  Tue, 11 Aug 2026 18:19:09 +0300
+
 cdex (0.0.1-4cd) trixie; urgency=medium
 
   * debian/control: restore Priority: optional, dropped in 0.0.1-3cd,
