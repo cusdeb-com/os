@@ -5,35 +5,35 @@ Origin: os-packages
 Label: os-packages
 Suite: stable
 Codename: stable
-Date: Thu, 06 Aug 2026 11:19:49 UTC
+Date: Tue, 11 Aug 2026 17:09:54 UTC
 Architectures: amd64
 Components: main
 Description: APT repository for os-packages
 MD5Sum:
- 3fceec1a2dcc3a3a98b4f6baa1cb4779 6278 main/binary-amd64/Packages
- 719f991c2773e2c82303e977a5df79ac 2366 main/binary-amd64/Packages.gz
+ 594b63ac0c992fec411bdf896fc30ba5 6278 main/binary-amd64/Packages
+ 70eedf7ad9f12f20aeaaaec7eaa650c0 2376 main/binary-amd64/Packages.gz
  330e20963f60f0576a6869ab1e9215e2 135 main/binary-amd64/Release
 SHA1:
- 8e2c33a8ae5840aeb26f271d7f622b02cb39e3e7 6278 main/binary-amd64/Packages
- de024b00af027542a855e9f81b090429069b10ed 2366 main/binary-amd64/Packages.gz
+ 2f223dd6776fb6885463110202eed8eb8fa1f9b8 6278 main/binary-amd64/Packages
+ 7ccf4d3d7fd3404c075f8a3a0e6b15a323d716a3 2376 main/binary-amd64/Packages.gz
  470bacbdd3b22caffed713e70278d91fbef591e3 135 main/binary-amd64/Release
 SHA256:
- c39b614883958e33c36d2a327141a895d90a67e33085f2f633171fca381f2937 6278 main/binary-amd64/Packages
- 5ba39ee78d555f817ce75de4a7782e8493ca8af6edde5cf0d56c444138aa6a5b 2366 main/binary-amd64/Packages.gz
+ 4421263b862f30709ab8e8a5c87f4d1af05d916fd062c642fdda01fbfd328262 6278 main/binary-amd64/Packages
+ e74e298e4195933f8de820a9f4814e91c8f0e4d55afbc739d72c553d09cc859a 2376 main/binary-amd64/Packages.gz
  22a013ca4d7f477ccd0e1a33e91905d978f53bb9a86775b2e076455713ae495d 135 main/binary-amd64/Release
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEEO8HYiwWv7DZG3gH5/UxAsw+/nEAFAmp0bdUACgkQ/UxAsw+/
-nEAbLg/+PeLYU3cAl9P+kzxzUHKjAreqUjfZ/5Dr8MzkzV0PZnWGkCgV1MsM8dQM
-E6lRrrTRA6DXG93hCmRoC3pvbHmUsNTljISvBUyhF2Wr1tnn3RXFMq5LqwyCnOr5
-M7SmlpRR449N7SdccFkRmyo3+GyglNM2LGZoxoYHK2kfNCEnb9nJdN10YI0DbTEv
-6S6/jjeVRU/mmLGe31jl3ZRNA5fhfTdP6WXtEfeMyNPmLZrZrEATox9CMv5791P4
-6ftf7r2/DAEhUFs45h7e6n0jVlmGIuKqcJNzbFsKcUclD/8shA+omynvcWUlzcPs
-FbpUX9jYYXVnrUyIACK+71rI3VGKOHgHXwsJ1cjZD1QpeGdFTawqk0hIBmILN37d
-FL3pHgODKlKl4sAsmUYWM5+APH8wcsc1umtUwWDGUmteiTOIlNFZNqq+TftnTZTP
-fXkFkDRwaqZOke4x2thwrsis3WCPyOEglIozTQH9laDhpdTXGbCmSc6c7zBILRY9
-h5MbssozQ/ahiotYUvRInLIqey5pPUQZH28ApKUMSPPUJQHtnn9sSX+i47S+64I3
-LjkTG1zOaICZydNNuoCWjP3V+9vFxd/41VJG++0ztLXwuCG/nZ+u6SGyNDqoqYFl
-YghqMbzw4YaPdbCQGINxs8qecKD0cdfsfjao0Qy+pIFhLBL+c/c=
-=BnE7
+iQIzBAEBCgAdFiEEO8HYiwWv7DZG3gH5/UxAsw+/nEAFAmp7V2IACgkQ/UxAsw+/
+nEBoZRAAh3UIUnzALAtPmfi9RtnWk6iXm7OPtAje1q2xRD6GVg70gj0okCslmGtz
+qfqQP9MK35jYtW2ByGRiQpRcTxk2oDKV3uVfuaRFHimpghaUMUlSTHKRwMsPZGJ5
+VhViSyy/zOzIt1h8wrGA5ANb41cx7/bijGBCxXrfxOnxgJEZ3TV+daOb5kC7dAI4
+XRCHtEWLZKiUw3qzbyyhFIPmvAasDJvAV5IuNxNbpF+rnpjJkE+wxts8hwOjhhUL
+4ur0B7xwlGjRQ2Za4lA2TWHRBn0hmv+0OncsaS3c8DQjf8jHmZ8b0r9riBzG7PDV
+zJOkrGK7E8hYthYfXH/CNLjuv8jglIWXA/bRKeOeOAKKeHLnDFXt8ePVByM7w9Kr
+5ziNu1YtNdso9DRaBNPmmAModZBIQk1juKceSl6Hcx7kJnFI7oM9Y3xJAkbVnD3+
+F8QvYPz0eemc0/oCKs7Wcrwmv2C9T83ax6F/qg5wPMTFCBiAgTRqJ4R/7bjv5Y+W
+e+2V/VZwbq2EbdXTFBu3nONCYddssZ4CjEwH/kEIwJzQjxA6A4+WiDuLMd8SjYoe
+ez0NdVm+I3plSqF5I0uzX80MlDzo0E0APYOzGDrYu3/Sq2dX5j7KznHyAh9PbRQ7
+9FASVWFsibcNKK6ZEXg96gDsAu5EHEdQlraH1iNet4M5c7zkPks=
+=y7Wu
 -----END PGP SIGNATURE-----
