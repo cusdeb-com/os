@@ -18,8 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#import <Carbon/Carbon.h>
-
 #import "cocoa_app.h"
 #import "cocoa_cursorclipping.h"
 #import "cocoa_event.h"
@@ -43,16 +41,7 @@ static NSString* const WineActivatingAppPrefixKey = @"ActivatingAppPrefix";
 static NSString* const WineActivatingAppConfigDirKey = @"ActivatingAppConfigDir";
 
 
-int macdrv_err_on;
-
-
-#if !defined(MAC_OS_X_VERSION_10_12) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
-@interface NSWindow (WineAutoTabbingExtensions)
-
-    + (void) setAllowsAutomaticWindowTabbing:(BOOL)allows;
-
-@end
-#endif
+bool macdrv_err_on;
 
 
 #if !defined(MAC_OS_VERSION_14_0) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_VERSION_14_0
@@ -145,8 +134,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
             [[NSUserDefaults standardUserDefaults] registerDefaults:defaults];
 
-            if ([NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)])
-                [NSWindow setAllowsAutomaticWindowTabbing:NO];
+            [NSWindow setAllowsAutomaticWindowTabbing:NO];
         }
     }
 
@@ -191,15 +179,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
             windowsBeingDragged = [[NSMutableSet alloc] init];
 
-            // On macOS 10.12+, use notifications to more reliably detect when windows are being dragged.
-            if ([NSProcessInfo instancesRespondToSelector:@selector(isOperatingSystemAtLeastVersion:)])
-            {
-                NSOperatingSystemVersion requiredVersion = { 10, 12, 0 };
-                useDragNotifications = [[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:requiredVersion];
-            }
-            else
-                useDragNotifications = NO;
-
             if (!requests || !requestsManipQueue || !eventQueues || !eventQueuesLock ||
                 !keyWindows || !originalDisplayModes || !latentDisplayModes)
             {
@@ -238,6 +217,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             CFRunLoopSourceInvalidate(requestSource);
             CFRelease(requestSource);
         }
+        CGDisplayRemoveReconfigurationCallback(DisplayReconfigCallback, NULL);
         [super dealloc];
     }
 
@@ -256,13 +236,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
             if (activateIfTransformed)
                 [self tryToActivateIgnoringOtherApps:YES];
 
-#if defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9
-            if (!enable_app_nap && [NSProcessInfo instancesRespondToSelector:@selector(beginActivityWithOptions:reason:)])
+            if (!enable_app_nap)
             {
                 [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
                                                                 reason:@"Running Windows program"] retain]; // intentional leak
             }
-#endif
 
             mainMenu = [[[NSMenu alloc] init] autorelease];
 
@@ -328,7 +306,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
         }
     }
 
-    - (BOOL) waitUntilQueryDone:(int*)done timeout:(NSDate*)timeout processEvents:(BOOL)processEvents
+    - (BOOL) waitUntilQueryDone:(bool*)done timeout:(NSDate*)timeout processEvents:(BOOL)processEvents
     {
         PerformRequest(NULL);
 
@@ -602,7 +580,8 @@ static NSString* WineLocalizedString(unsigned int stringID)
         NSUInteger nextFloatingIndex = 0;
         __block NSInteger maxLevel = NSIntegerMin;
         __block NSInteger maxNonfloatingLevel = NSNormalWindowLevel;
-        __block NSInteger minFloatingLevel = NSFloatingWindowLevel;
+        /* Windows with WS_EX_TOPMOST should have a window level higher than the macOS dock */
+        __block NSInteger minFloatingLevel = kCGDockWindowLevel + 1;
         __block WineWindow* prev = nil;
         WineWindow* window;
 
@@ -1846,17 +1825,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
                     [window postKeyEvent:anEvent];
             }
         }
-        else if (!useDragNotifications && type == NSEventTypeAppKitDefined)
-        {
-            WineWindow *window = (WineWindow *)[anEvent window];
-            short subtype = [anEvent subtype];
-
-            // These subtypes are not documented but they appear to mean
-            // "a window is being dragged" and "a window is no longer being
-            // dragged", respectively.
-            if ((subtype == 20 || subtype == 21) && [window isKindOfClass:[WineWindow class]])
-                [self handleWindowDrag:window begin:(subtype == 20)];
-        }
 
         return ret;
     }
@@ -1916,25 +1884,23 @@ static NSString* WineLocalizedString(unsigned int stringID)
             [windowsBeingDragged removeObject:window];
         }];
 
-        if (useDragNotifications) {
-            [nc addObserverForName:NSWindowWillStartDraggingNotification
-                            object:nil
-                             queue:[NSOperationQueue mainQueue]
-                        usingBlock:^(NSNotification *note){
-                NSWindow* window = [note object];
-                if ([window isKindOfClass:[WineWindow class]])
-                    [self handleWindowDrag:(WineWindow *)window begin:YES];
-            }];
+        [nc addObserverForName:NSWindowWillStartDraggingNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note){
+            NSWindow* window = [note object];
+            if ([window isKindOfClass:[WineWindow class]])
+                [self handleWindowDrag:(WineWindow *)window begin:YES];
+        }];
 
-            [nc addObserverForName:NSWindowDidEndDraggingNotification
-                            object:nil
-                             queue:[NSOperationQueue mainQueue]
-                        usingBlock:^(NSNotification *note){
-                NSWindow* window = [note object];
-                if ([window isKindOfClass:[WineWindow class]])
-                    [self handleWindowDrag:(WineWindow *)window begin:NO];
-            }];
-        }
+        [nc addObserverForName:NSWindowDidEndDraggingNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note){
+            NSWindow* window = [note object];
+            if ([window isKindOfClass:[WineWindow class]])
+                [self handleWindowDrag:(WineWindow *)window begin:NO];
+        }];
 
         [nc addObserver:self
                selector:@selector(keyboardSelectionDidChange)
@@ -2172,7 +2138,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
         [bestOption deminiaturize:self];
     }
 
-    - (void) setRetinaMode:(int)mode
+    - (void) setRetinaMode:(BOOL)mode
     {
         retina_on = mode;
 
@@ -2189,6 +2155,48 @@ static NSString* WineLocalizedString(unsigned int stringID)
     /*
      * ---------- NSApplicationDelegate methods ----------
      */
+    - (void)cgDisplay:(CGDirectDisplayID)display wasReconfiguredWithFlags:(CGDisplayChangeSummaryFlags)flags
+    {
+        NSDictionary *userInfo;
+
+        primaryScreenHeightValid = FALSE;
+        [self sendDisplaysChanged:FALSE];
+        [self adjustWindowLevels];
+
+        /* When the display configuration changes, the cursor position may jump.
+           Accumulated mouse movement deltas are invalidated.  Make sure the
+           next mouse move event starts over from an absolute baseline. */
+        forceNextMouseMoveAbsolute = TRUE;
+
+        userInfo = @{
+            WineDisplayConfigurationNotificationDisplayIDKey: @(display),
+            WineDisplayConfigurationNotificationFlagsKey: @(flags)
+        };
+        [NSNotificationCenter.defaultCenter postNotificationName:WineDisplayConfigurationChangedNotification
+                                                          object:NSApp
+                                                        userInfo:userInfo];
+    }
+
+    static void DisplayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSummaryFlags flags, void *userInfo)
+    {
+        /* A callback with flag == kCGDisplayBeginConfigurationFlag is
+           documented to be sent at the beginning of a change set. We should
+           ignore it; the actual changes will come in separate callbacks. */
+        if (flags == kCGDisplayBeginConfigurationFlag)
+            return;
+
+        /* We're called back on an internal CG thread, so kick this over to the
+           main thread. */
+        OnMainThreadAsync(^{
+            [WineApplicationController.sharedController cgDisplay:display wasReconfiguredWithFlags:flags];
+        });
+    }
+
+    - (void)applicationDidFinishLaunching:(NSNotification *)notification
+    {
+        CGDisplayRegisterReconfigurationCallback(DisplayReconfigCallback, NULL);
+    }
+
     - (void)applicationDidBecomeActive:(NSNotification *)notification
     {
         NSNumber* displayID;
@@ -2223,18 +2231,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
         // The cursor probably moved while we were inactive.  Accumulated mouse
         // movement deltas are invalidated.  Make sure the next mouse move event
         // starts over from an absolute baseline.
-        forceNextMouseMoveAbsolute = TRUE;
-    }
-
-    - (void)applicationDidChangeScreenParameters:(NSNotification *)notification
-    {
-        primaryScreenHeightValid = FALSE;
-        [self sendDisplaysChanged:FALSE];
-        [self adjustWindowLevels];
-
-        // When the display configuration changes, the cursor position may jump.
-        // Accumulated mouse movement deltas are invalidated.  Make sure the next
-        // mouse move event starts over from an absolute baseline.
         forceNextMouseMoveAbsolute = TRUE;
     }
 
@@ -2431,7 +2427,7 @@ void macdrv_window_rejected_focus(const macdrv_event *event)
  *
  * Returns the keyboard layout uchr data, keyboard type and input source.
  */
-void macdrv_get_input_source_info(CFDataRef* uchr, CGEventSourceKeyboardType* keyboard_type, int* is_iso, TISInputSourceRef* input_source)
+void macdrv_get_input_source_info(CFDataRef* uchr, CGEventSourceKeyboardType* keyboard_type, bool* is_iso, TISInputSourceRef* input_source)
 {
     OnMainThread(^{
         TISInputSourceRef inputSourceLayout;
@@ -2467,13 +2463,12 @@ void macdrv_beep(void)
 /***********************************************************************
  *              macdrv_set_display_mode
  */
-int macdrv_set_display_mode(const struct macdrv_display* display,
-                            CGDisplayModeRef display_mode)
+int macdrv_set_display_mode(CGDirectDisplayID displayID, CGDisplayModeRef display_mode)
 {
     __block int ret;
 
     OnMainThread(^{
-        ret = [[WineApplicationController sharedController] setMode:display_mode forDisplay:display->displayID];
+        ret = [[WineApplicationController sharedController] setMode:display_mode forDisplay:displayID];
     });
 
     return ret;
@@ -2645,9 +2640,9 @@ void macdrv_quit_reply(int reply)
 /***********************************************************************
  *              macdrv_using_input_method
  */
-int macdrv_using_input_method(void)
+bool macdrv_using_input_method(void)
 {
-    __block BOOL ret;
+    __block bool ret;
 
     OnMainThread(^{
         ret = [[WineApplicationController sharedController] inputSourceIsInputMethod];
@@ -2719,9 +2714,9 @@ CFArrayRef macdrv_create_input_source_list(void)
     return ret;
 }
 
-int macdrv_select_input_source(TISInputSourceRef input_source)
+bool macdrv_select_input_source(TISInputSourceRef input_source)
 {
-    __block int ret = FALSE;
+    __block bool ret = false;
 
     OnMainThread(^{
         ret = (TISSelectInputSource(input_source) == noErr);
@@ -2730,16 +2725,16 @@ int macdrv_select_input_source(TISInputSourceRef input_source)
     return ret;
 }
 
-void macdrv_set_cocoa_retina_mode(int new_mode)
+void macdrv_set_cocoa_retina_mode(bool new_mode)
 {
     OnMainThread(^{
         [[WineApplicationController sharedController] setRetinaMode:new_mode];
     });
 }
 
-int macdrv_is_any_wine_window_visible(void)
+bool macdrv_is_any_wine_window_visible(void)
 {
-    __block int ret = FALSE;
+    __block bool ret = false;
 
     OnMainThread(^{
         ret = [[WineApplicationController sharedController] isAnyWineWindowVisible];

@@ -22,7 +22,6 @@
 #include <stdlib.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -236,9 +235,9 @@ static void translate_report_to_xinput_state(struct func_device *fdo)
         fdo->xinput_state.buttons |= (1 << (usages[i] - 1));
     }
     fdo->xinput_state.lx_axis = scale_value(lx, &fdo->lx_caps, 0, 65535);
-    fdo->xinput_state.ly_axis = scale_value(ly, &fdo->ly_caps, 0, 65535);
+    fdo->xinput_state.ly_axis = 65535 - scale_value(ly, &fdo->ly_caps, 0, 65535);
     fdo->xinput_state.rx_axis = scale_value(rx, &fdo->rx_caps, 0, 65535);
-    fdo->xinput_state.ry_axis = scale_value(ry, &fdo->ry_caps, 0, 65535);
+    fdo->xinput_state.ry_axis = 65535 - scale_value(ry, &fdo->ry_caps, 0, 65535);
     rt = scale_value(rt, &fdo->rt_caps, 0, 255);
     lt = scale_value(lt, &fdo->lt_caps, 0, 255);
     fdo->xinput_state.trigger = 0x8000 + (lt - rt) * 128;
@@ -461,6 +460,24 @@ static WCHAR *query_compatible_ids(DEVICE_OBJECT *device)
     return dst;
 }
 
+static void remove_pending_irps(DEVICE_OBJECT *device)
+{
+    struct func_device *fdo = fdo_from_DEVICE_OBJECT(device);
+    IRP *pending;
+
+    RtlEnterCriticalSection(&fdo->cs);
+    pending = fdo->pending_read;
+    fdo->pending_read = NULL;
+    RtlLeaveCriticalSection(&fdo->cs);
+
+    if (pending)
+    {
+        pending->IoStatus.Status = STATUS_DELETE_PENDING;
+        pending->IoStatus.Information = 0;
+        IoCompleteRequest(pending, IO_NO_INCREMENT);
+    }
+}
+
 static NTSTATUS WINAPI pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
 {
     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
@@ -468,7 +485,6 @@ static NTSTATUS WINAPI pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
     struct device *impl = impl_from_DEVICE_OBJECT(device);
     UCHAR code = stack->MinorFunction;
     NTSTATUS status;
-    IRP *pending;
 
     TRACE("device %p, irp %p, code %#x, bus_device %p.\n", device, irp, code, fdo->bus_device);
 
@@ -481,21 +497,11 @@ static NTSTATUS WINAPI pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
     case IRP_MN_SURPRISE_REMOVAL:
         status = STATUS_SUCCESS;
         if (InterlockedExchange(&impl->removed, TRUE)) break;
-
-        RtlEnterCriticalSection(&fdo->cs);
-        pending = fdo->pending_read;
-        fdo->pending_read = NULL;
-        RtlLeaveCriticalSection(&fdo->cs);
-
-        if (pending)
-        {
-            pending->IoStatus.Status = STATUS_DELETE_PENDING;
-            pending->IoStatus.Information = 0;
-            IoCompleteRequest(pending, IO_NO_INCREMENT);
-        }
+        remove_pending_irps(device);
         break;
 
     case IRP_MN_REMOVE_DEVICE:
+        remove_pending_irps(device);
         irp->IoStatus.Status = STATUS_SUCCESS;
         IoCompleteRequest(irp, IO_NO_INCREMENT);
         IoDeleteDevice(device);

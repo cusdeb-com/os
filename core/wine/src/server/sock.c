@@ -87,8 +87,15 @@
 # define HAS_IRDA
 #endif
 
+#ifdef HAVE_BLUETOOTH_BLUETOOTH_H
+# include <bluetooth/bluetooth.h>
+# ifdef HAVE_BLUETOOTH_RFCOMM_H
+#  include <bluetooth/rfcomm.h>
+#  define HAS_BLUETOOTH
+# endif
+#endif
+
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "winerror.h"
@@ -98,6 +105,10 @@
 #include "tcpmib.h"
 #include "wsipx.h"
 #include "af_irda.h"
+#include "bthsdpdef.h"
+#include "bluetoothapis.h"
+#include "bthdef.h"
+#include "ws2bth.h"
 #include "wine/afd.h"
 #include "wine/rbtree.h"
 
@@ -147,6 +158,9 @@ union unix_sockaddr
 #endif
 #ifdef HAS_IRDA
     struct sockaddr_irda irda;
+#endif
+#ifdef HAS_BLUETOOTH
+    struct sockaddr_rc rfcomm;
 #endif
 };
 
@@ -465,42 +479,24 @@ static void poll_socket( struct sock *poll_sock, struct async *async, int exclus
 
 static const struct object_ops sock_ops =
 {
-    sizeof(struct sock),          /* size */
-    &file_type,                   /* type */
-    sock_dump,                    /* dump */
-    add_queue,                    /* add_queue */
-    remove_queue,                 /* remove_queue */
-    default_fd_signaled,          /* signaled */
-    no_satisfied,                 /* satisfied */
-    no_signal,                    /* signal */
-    sock_get_fd,                  /* get_fd */
-    default_map_access,           /* map_access */
-    default_get_sd,               /* get_sd */
-    default_set_sd,               /* set_sd */
-    no_get_full_name,             /* get_full_name */
-    no_lookup_name,               /* lookup_name */
-    no_link_name,                 /* link_name */
-    NULL,                         /* unlink_name */
-    no_open_file,                 /* open_file */
-    no_kernel_obj_list,           /* get_kernel_obj_list */
-    sock_close_handle,            /* close_handle */
-    sock_destroy                  /* destroy */
+    .size         = sizeof(struct sock),
+    .type         = &file_type,
+    .dump         = sock_dump,
+    .get_fd       = sock_get_fd,
+    .get_sync     = default_fd_get_sync,
+    .close_handle = sock_close_handle,
+    .destroy      = sock_destroy,
 };
 
 static const struct fd_ops sock_fd_ops =
 {
-    sock_get_poll_events,         /* get_poll_events */
-    sock_poll_event,              /* poll_event */
-    sock_get_fd_type,             /* get_fd_type */
-    no_fd_read,                   /* read */
-    no_fd_write,                  /* write */
-    no_fd_flush,                  /* flush */
-    default_fd_get_file_info,     /* get_file_info */
-    no_fd_get_volume_info,        /* get_volume_info */
-    sock_ioctl,                   /* ioctl */
-    sock_cancel_async,            /* cancel_async */
-    no_fd_queue_async,            /* queue_async */
-    sock_reselect_async           /* reselect_async */
+    .get_poll_events = sock_get_poll_events,
+    .poll_event      = sock_poll_event,
+    .get_fd_type     = sock_get_fd_type,
+    .get_file_info   = default_fd_get_file_info,
+    .ioctl           = sock_ioctl,
+    .cancel_async    = sock_cancel_async,
+    .reselect_async  = sock_reselect_async,
 };
 
 static int sockaddr_from_unix( const union unix_sockaddr *uaddr, struct WS_sockaddr *wsaddr, socklen_t wsaddrlen )
@@ -569,6 +565,21 @@ static int sockaddr_from_unix( const union unix_sockaddr *uaddr, struct WS_socka
     }
 #endif
 
+#ifdef HAS_BLUETOOTH
+    case AF_BLUETOOTH:
+    {
+        SOCKADDR_BTH win = {0};
+        BLUETOOTH_ADDRESS addr = {0};
+
+        if (wsaddrlen < sizeof(win)) return -1;
+        win.addressFamily = WS_AF_BTH;
+
+        memcpy( addr.rgBytes, uaddr->rfcomm.rc_bdaddr.b, sizeof( addr.rgBytes ));
+        win.btAddr = addr.ullLong;
+        win.port = uaddr->rfcomm.rc_channel;
+        return sizeof(win);
+    }
+#endif
     case AF_UNSPEC:
         return 0;
 
@@ -645,6 +656,24 @@ static socklen_t sockaddr_to_unix( const struct WS_sockaddr *wsaddr, int wsaddrl
         }
         memcpy( &uaddr->irda.sir_addr, win.irdaDeviceID, sizeof(win.irdaDeviceID) );
         return sizeof(uaddr->irda);
+    }
+#endif
+
+#ifdef HAS_BLUETOOTH
+    case WS_AF_BTH:
+    {
+        SOCKADDR_BTH win = {0};
+        BLUETOOTH_ADDRESS addr = {0};
+
+        if (wsaddrlen != sizeof(win)) return 0;
+        memcpy( &win, wsaddr, sizeof(win) );
+        addr.ullLong = win.btAddr;
+
+        uaddr->rfcomm.rc_family = AF_BLUETOOTH;
+        memcpy( &uaddr->rfcomm.rc_bdaddr, addr.rgBytes, sizeof( addr.rgBytes ) );
+        /* There can only be a maximum of 30 RFCOMM channels, so UINT8_MAX is safe to use here. */
+        uaddr->rfcomm.rc_channel = win.port == BT_PORT_ANY ? UINT8_MAX : win.port;
+        return sizeof(uaddr->rfcomm);
     }
 #endif
 
@@ -1795,6 +1824,9 @@ static int get_unix_family( int family )
 #ifdef AF_IRDA
         case WS_AF_IRDA: return AF_IRDA;
 #endif
+#ifdef AF_BLUETOOTH
+        case WS_AF_BTH: return AF_BLUETOOTH;
+#endif
         case WS_AF_UNSPEC: return AF_UNSPEC;
         default: return -1;
     }
@@ -1811,14 +1843,20 @@ static int get_unix_type( int type )
     }
 }
 
-static int get_unix_protocol( int protocol )
+static int get_unix_protocol( int family, int protocol )
 {
     if (protocol >= WS_NSPROTO_IPX && protocol <= WS_NSPROTO_IPX + 255)
         return protocol;
 
+#ifdef HAS_BLUETOOTH
+    if (family == WS_AF_BTH)
+        return protocol == WS_BTHPROTO_RFCOMM ? BTPROTO_RFCOMM : -1;
+#endif
+
     switch (protocol)
     {
         case WS_IPPROTO_ICMP: return IPPROTO_ICMP;
+        case WS_IPPROTO_ICMPV6: return IPPROTO_ICMPV6;
         case WS_IPPROTO_IGMP: return IPPROTO_IGMP;
         case WS_IPPROTO_IP: return IPPROTO_IP;
         case WS_IPPROTO_IPV4: return IPPROTO_IPIP;
@@ -1868,11 +1906,13 @@ static int init_socket( struct sock *sock, int family, int type, int protocol )
 
     unix_family = get_unix_family( family );
     unix_type = get_unix_type( type );
-    unix_protocol = get_unix_protocol( protocol );
+    unix_protocol = get_unix_protocol( family, protocol );
 
     if (unix_protocol < 0)
     {
-        if (type && unix_type < 0)
+        if (family && unix_family < 0)
+            set_win32_error( WSAEAFNOSUPPORT );
+        else if (type && unix_type < 0)
             set_win32_error( WSAESOCKTNOSUPPORT );
         else
             set_win32_error( WSAEPROTONOSUPPORT );
@@ -1888,19 +1928,28 @@ static int init_socket( struct sock *sock, int family, int type, int protocol )
     }
 
     sockfd = socket( unix_family, unix_type, unix_protocol );
-
 #ifdef linux
-    if (sockfd == -1 && errno == EPERM && unix_family == AF_INET
-        && unix_type == SOCK_RAW && unix_protocol == IPPROTO_ICMP)
+    if (sockfd == -1 && errno == EPERM && unix_type == SOCK_RAW
+        && ((unix_family == AF_INET && unix_protocol == IPPROTO_ICMP)
+            || (unix_family == AF_INET6 && unix_protocol == IPPROTO_ICMPV6)))
     {
         sockfd = socket( unix_family, SOCK_DGRAM, unix_protocol );
         if (sockfd != -1)
         {
             const int val = 1;
 
-            setsockopt( sockfd, IPPROTO_IP, IP_RECVTTL, (const char *)&val, sizeof(val) );
-            setsockopt( sockfd, IPPROTO_IP, IP_RECVTOS, (const char *)&val, sizeof(val) );
-            setsockopt( sockfd, IPPROTO_IP, IP_PKTINFO, (const char *)&val, sizeof(val) );
+            if (unix_family == AF_INET6)
+            {
+#ifdef IPV6_RECVPKTINFO
+                setsockopt( sockfd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (const char *)&val, sizeof(val) );
+#endif
+            }
+            else
+            {
+                setsockopt( sockfd, IPPROTO_IP, IP_RECVTTL, (const char *)&val, sizeof(val) );
+                setsockopt( sockfd, IPPROTO_IP, IP_RECVTOS, (const char *)&val, sizeof(val) );
+                setsockopt( sockfd, IPPROTO_IP, IP_PKTINFO, (const char *)&val, sizeof(val) );
+            }
         }
     }
 #endif
@@ -1908,6 +1957,10 @@ static int init_socket( struct sock *sock, int family, int type, int protocol )
     if (sockfd == -1)
     {
         if (errno == EINVAL) set_win32_error( WSAESOCKTNOSUPPORT );
+#ifdef AF_BLUETOOTH
+        else if (errno == ESOCKTNOSUPPORT && unix_family == AF_BLUETOOTH)
+            set_win32_error( WSAEAFNOSUPPORT );
+#endif
         else set_win32_error( sock_get_error( errno ));
         return -1;
     }
@@ -2670,6 +2723,11 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
             set_error( STATUS_INVALID_ADDRESS );
             return;
         }
+        if (sock->state == SOCK_UNCONNECTED) /* clear events */
+        {
+            sock->pending_events &= ~AFD_POLL_CONNECT_ERR;
+            sock->reported_events &= ~AFD_POLL_CONNECT_ERR;
+        }
         if (unix_addr.addr.sa_family == AF_INET && !memcmp( &unix_addr.in.sin_addr, magic_loopback_addr, 4 ))
             unix_addr.in.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
 
@@ -3021,6 +3079,40 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         if (check_addr_usage( sock, &bind_addr, v6only ))
             return;
 
+#ifdef HAS_BLUETOOTH
+        if (unix_addr.rfcomm.rc_family == AF_BLUETOOTH
+            && !(unix_addr.rfcomm.rc_channel >= 1 && unix_addr.rfcomm.rc_channel <= 30))
+        {
+            int i;
+            if (unix_addr.rfcomm.rc_channel != UINT8_MAX)
+            {
+                set_error( sock_get_ntstatus( EADDRNOTAVAIL ) );
+                return;
+            }
+            /* If the RFCOMM channel was set to BT_PORT_ANY, we need to find an available RFCOMM
+             *  channel. The Linux kernel has a similar mechanism, but the channel is only assigned
+             *  on listen(), which we cannot call yet. The other, albeit hacky/race-y way to find an available
+             *  channel is to loop through all valid channel values (1 to 30) until bind() succeeds.
+             */
+            for (i = 1; i <= 30; i++)
+            {
+                bind_addr.rfcomm.rc_channel = i;
+                if (!bind( unix_fd, &bind_addr.addr, unix_len ))
+                    break;
+                if (errno != EADDRINUSE)
+                {
+                    set_error( sock_get_ntstatus( errno ) );
+                    return;
+                }
+            }
+            if (i > 30)
+            {
+                set_error( sock_get_ntstatus( EADDRINUSE ) );
+                return;
+            }
+        }
+        else
+#endif
         if (bind( unix_fd, &bind_addr.addr, unix_len ) < 0)
         {
             if (errno == EADDRINUSE && sock->reuseaddr)
@@ -3593,42 +3685,17 @@ struct ifchange
 
 static const struct object_ops ifchange_ops =
 {
-    sizeof(struct ifchange), /* size */
-    &no_type,                /* type */
-    ifchange_dump,           /* dump */
-    no_add_queue,            /* add_queue */
-    NULL,                    /* remove_queue */
-    NULL,                    /* signaled */
-    no_satisfied,            /* satisfied */
-    no_signal,               /* signal */
-    ifchange_get_fd,         /* get_fd */
-    default_map_access,      /* map_access */
-    default_get_sd,          /* get_sd */
-    default_set_sd,          /* set_sd */
-    no_get_full_name,        /* get_full_name */
-    no_lookup_name,          /* lookup_name */
-    no_link_name,            /* link_name */
-    NULL,                    /* unlink_name */
-    no_open_file,            /* open_file */
-    no_kernel_obj_list,      /* get_kernel_obj_list */
-    no_close_handle,         /* close_handle */
-    ifchange_destroy         /* destroy */
+    .size    = sizeof(struct ifchange),
+    .type    = &no_type,
+    .dump    = ifchange_dump,
+    .get_fd  = ifchange_get_fd,
+    .destroy = ifchange_destroy,
 };
 
 static const struct fd_ops ifchange_fd_ops =
 {
-    ifchange_get_poll_events, /* get_poll_events */
-    ifchange_poll_event,      /* poll_event */
-    NULL,                     /* get_fd_type */
-    no_fd_read,               /* read */
-    no_fd_write,              /* write */
-    no_fd_flush,              /* flush */
-    no_fd_get_file_info,      /* get_file_info */
-    no_fd_get_volume_info,    /* get_volume_info */
-    no_fd_ioctl,              /* ioctl */
-    NULL,                     /* cancel_async */
-    NULL,                     /* queue_async */
-    NULL                      /* reselect_async */
+    .get_poll_events = ifchange_get_poll_events,
+    .poll_event      = ifchange_poll_event,
 };
 
 static void ifchange_dump( struct object *obj, int verbose )
@@ -3814,26 +3881,11 @@ static struct object *socket_device_open_file( struct object *obj, unsigned int 
 
 static const struct object_ops socket_device_ops =
 {
-    sizeof(struct object),      /* size */
-    &device_type,               /* type */
-    socket_device_dump,         /* dump */
-    no_add_queue,               /* add_queue */
-    NULL,                       /* remove_queue */
-    NULL,                       /* signaled */
-    no_satisfied,               /* satisfied */
-    no_signal,                  /* signal */
-    no_get_fd,                  /* get_fd */
-    default_map_access,         /* map_access */
-    default_get_sd,             /* get_sd */
-    default_set_sd,             /* set_sd */
-    default_get_full_name,      /* get_full_name */
-    socket_device_lookup_name,  /* lookup_name */
-    directory_link_name,        /* link_name */
-    default_unlink_name,        /* unlink_name */
-    socket_device_open_file,    /* open_file */
-    no_kernel_obj_list,         /* get_kernel_obj_list */
-    no_close_handle,            /* close_handle */
-    no_destroy                  /* destroy */
+    .size        = sizeof(struct object),
+    .type        = &device_type,
+    .dump        = socket_device_dump,
+    .lookup_name = socket_device_lookup_name,
+    .open_file   = socket_device_open_file,
 };
 
 static void socket_device_dump( struct object *obj, int verbose )
@@ -3862,10 +3914,13 @@ static struct object *socket_device_open_file( struct object *obj, unsigned int 
     return &sock->obj;
 }
 
-struct object *create_socket_device( struct object *root, const struct unicode_str *name,
+struct object *create_socket_device( struct object *root, struct unicode_str name,
                                      unsigned int attr, const struct security_descriptor *sd )
 {
-    return create_named_object( root, &socket_device_ops, name, attr, sd );
+    struct object_params params = { .ops = &socket_device_ops, .root = root,
+                                    .name = name, .attr = attr, .sd = sd };
+
+    return create_named_object( &params );
 }
 
 DECL_HANDLER(recv_socket)

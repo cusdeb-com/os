@@ -46,10 +46,9 @@ static inline MACDRV_PDEVICE *get_macdrv_dev(PHYSDEV dev)
 static CGRect desktop_rect;     /* virtual desktop rectangle */
 static int horz_size;           /* horz. size of screen in millimeters */
 static int vert_size;           /* vert. size of screen in millimeters */
-static int bits_per_pixel;      /* pixel depth of screen */
-static int device_data_valid;   /* do the above variables have up-to-date values? */
+static bool device_data_valid;  /* do the above variables have up-to-date values? */
 
-int retina_on = FALSE;
+bool retina_on = false;
 
 static pthread_mutex_t device_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -112,7 +111,6 @@ static void device_init(void)
 {
     CGDirectDisplayID mainDisplay = CGMainDisplayID();
     CGSize size_mm = CGDisplayScreenSize(mainDisplay);
-    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(mainDisplay);
 
     check_retina_status();
 
@@ -120,35 +118,16 @@ static void device_init(void)
     horz_size = size_mm.width;
     vert_size = size_mm.height;
 
-    bits_per_pixel = 32;
-    if (mode)
-    {
-        CFStringRef pixelEncoding = CGDisplayModeCopyPixelEncoding(mode);
-
-        if (pixelEncoding)
-        {
-            if (CFEqual(pixelEncoding, CFSTR(IO32BitDirectPixels)))
-                bits_per_pixel = 32;
-            else if (CFEqual(pixelEncoding, CFSTR(IO16BitDirectPixels)))
-                bits_per_pixel = 16;
-            else if (CFEqual(pixelEncoding, CFSTR(IO8BitIndexedPixels)))
-                bits_per_pixel = 8;
-            CFRelease(pixelEncoding);
-        }
-
-        CGDisplayModeRelease(mode);
-    }
-
     compute_desktop_rect();
 
-    device_data_valid = TRUE;
+    device_data_valid = true;
 }
 
 
 void macdrv_reset_device_metrics(void)
 {
     pthread_mutex_lock(&device_data_mutex);
-    device_data_valid = FALSE;
+    device_data_valid = false;
     pthread_mutex_unlock(&device_data_mutex);
 }
 
@@ -234,9 +213,6 @@ static INT macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
     case VERTSIZE:
         ret = vert_size;
         break;
-    case BITSPIXEL:
-        ret = bits_per_pixel;
-        break;
     case HORZRES:
     case VERTRES:
     default:
@@ -286,7 +262,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pSetCursor = macdrv_SetCursor,
     .pSetCursorPos = macdrv_SetCursorPos,
     .pSetDesktopWindow = macdrv_SetDesktopWindow,
-    .pSetFocus = macdrv_SetFocus,
+    .pActivateWindow = macdrv_ActivateWindow,
     .pSetLayeredWindowAttributes = macdrv_SetLayeredWindowAttributes,
     .pSetParent = macdrv_SetParent,
     .pSetWindowRgn = macdrv_SetWindowRgn,
@@ -301,16 +277,17 @@ static const struct user_driver_funcs macdrv_funcs =
     .pUpdateClipboard = macdrv_UpdateClipboard,
     .pUpdateLayeredWindow = macdrv_UpdateLayeredWindow,
     .pVkKeyScanEx = macdrv_VkKeyScanEx,
-    .pImeProcessKey = macdrv_ImeProcessKey,
+    .pImeToAsciiEx = macdrv_ImeToAsciiEx,
     .pNotifyIMEStatus = macdrv_NotifyIMEStatus,
     .pSetIMECompositionRect = macdrv_SetIMECompositionRect,
     .pWindowMessage = macdrv_WindowMessage,
     .pWindowPosChanged = macdrv_WindowPosChanged,
     .pWindowPosChanging = macdrv_WindowPosChanging,
     .pGetWindowStyleMasks = macdrv_GetWindowStyleMasks,
+    .pCreateClientSurface = macdrv_CreateClientSurface,
     .pCreateWindowSurface = macdrv_CreateWindowSurface,
     .pVulkanInit = macdrv_VulkanInit,
-    .pwine_get_wgl_driver = macdrv_wine_get_wgl_driver,
+    .pOpenGLInit = macdrv_OpenGLInit,
 };
 
 

@@ -23,7 +23,6 @@
 #include <stdio.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "wincon.h"
@@ -272,6 +271,38 @@ BOOL WINAPI QueryIdleProcessorCycleTimeEx( USHORT group_id, ULONG *size, ULONG64
 
 
 /***********************************************************************
+ *           ConvertAuxiliaryCounterToPerformanceCounter  (kernelbase.@)
+ */
+HRESULT WINAPI ConvertAuxiliaryCounterToPerformanceCounter( ULONGLONG from, ULONGLONG *to, ULONGLONG *error )
+{
+    NTSTATUS status;
+
+    TRACE( "%#I64x, %p, %p.\n", from, to, error );
+
+    if ((status = NtConvertBetweenAuxiliaryCounterAndPerformanceCounter( 0, &from, to, error )) == STATUS_NOT_SUPPORTED)
+        return E_NOTIMPL;
+
+    return HRESULT_FROM_NT(status);
+}
+
+
+/***********************************************************************
+ *           ConvertAuxiliaryCounterToPerformanceCounter  (kernelbase.@)
+ */
+HRESULT WINAPI ConvertPerformanceCounterToAuxiliaryCounter( ULONGLONG from, ULONGLONG *to, ULONGLONG *error )
+{
+    NTSTATUS status;
+
+    TRACE( "%#I64x, %p, %p.\n", from, to, error );
+
+    if ((status = NtConvertBetweenAuxiliaryCounterAndPerformanceCounter( 1, &from, to, error )) == STATUS_NOT_SUPPORTED)
+        return E_NOTIMPL;
+
+    return HRESULT_FROM_NT(status);
+}
+
+
+/***********************************************************************
  * Waits
  ***********************************************************************/
 
@@ -363,7 +394,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH UnregisterWaitEx( HANDLE handle, HANDLE event )
  */
 DWORD WINAPI DECLSPEC_HOTPATCH WaitForSingleObject( HANDLE handle, DWORD timeout )
 {
-    return WaitForMultipleObjectsEx( 1, &handle, FALSE, timeout, FALSE );
+    return WaitForSingleObjectEx( handle, timeout, FALSE );
 }
 
 
@@ -372,7 +403,18 @@ DWORD WINAPI DECLSPEC_HOTPATCH WaitForSingleObject( HANDLE handle, DWORD timeout
  */
 DWORD WINAPI DECLSPEC_HOTPATCH WaitForSingleObjectEx( HANDLE handle, DWORD timeout, BOOL alertable )
 {
-    return WaitForMultipleObjectsEx( 1, &handle, FALSE, timeout, alertable );
+    NTSTATUS status;
+    LARGE_INTEGER time;
+
+    status = NtWaitForSingleObject( normalize_std_handle( handle ), alertable,
+                                    get_nt_timeout( &time, timeout ) );
+
+    if (NT_ERROR(status))
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        status = WAIT_FAILED;
+    }
+    return status;
 }
 
 
@@ -404,9 +446,9 @@ DWORD WINAPI DECLSPEC_HOTPATCH WaitForMultipleObjectsEx( DWORD count, const HAND
     }
     for (i = 0; i < count; i++) hloc[i] = normalize_std_handle( handles[i] );
 
-    status = NtWaitForMultipleObjects( count, hloc, !wait_all, alertable,
+    status = NtWaitForMultipleObjects( count, hloc, wait_all ? WaitAll : WaitAny, alertable,
                                        get_nt_timeout( &time, timeout ) );
-    if (HIWORD(status))  /* is it an error code? */
+    if (NT_ERROR(status))
     {
         SetLastError( RtlNtStatusToDosError(status) );
         status = WAIT_FAILED;
@@ -1043,6 +1085,35 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileMappingW( HANDLE file, LPSECURITY_ATTR
     get_create_object_attributes( &attr, &nameW, sa, name );
 
     status = NtCreateSection( &ret, access, &attr, &size, protect, sec_type, file );
+    if (status == STATUS_OBJECT_NAME_EXISTS)
+        SetLastError( ERROR_ALREADY_EXISTS );
+    else
+        SetLastError( RtlNtStatusToDosError(status) );
+    return ret;
+}
+
+
+/***********************************************************************
+ *             CreateFileMapping2   (kernelbase.@)
+ */
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileMapping2( HANDLE file, SECURITY_ATTRIBUTES *sa, ULONG access,
+                                                    ULONG protect, ULONG sec_type, ULONG64 max_size,
+                                                    const WCHAR *name, MEM_EXTENDED_PARAMETER *params,
+                                                    ULONG count )
+{
+    HANDLE ret;
+    NTSTATUS status;
+    LARGE_INTEGER size;
+    UNICODE_STRING nameW;
+    OBJECT_ATTRIBUTES attr;
+
+    if (!sec_type) sec_type = SEC_COMMIT;
+    size.QuadPart = max_size;
+    if (file == INVALID_HANDLE_VALUE) file = 0;
+
+    get_create_object_attributes( &attr, &nameW, sa, name );
+
+    status = NtCreateSectionEx( &ret, access, &attr, &size, protect, sec_type, file, params, count );
     if (status == STATUS_OBJECT_NAME_EXISTS)
         SetLastError( ERROR_ALREADY_EXISTS );
     else
@@ -1763,3 +1834,50 @@ __ASM_STDCALL_FUNC(InterlockedDecrement, 4,
                   "ret $4")
 
 #endif  /* __i386__ */
+
+
+/***********************************************************************
+ * Synchronization barrier functions
+ ***********************************************************************/
+
+
+/***********************************************************************
+ *           InitializeSynchronizationBarrier  (kernelbase.@)
+ */
+BOOL WINAPI InitializeSynchronizationBarrier( SYNCHRONIZATION_BARRIER *barrier, LONG thread_count, LONG spin_count )
+{
+    if (thread_count <= 0 || spin_count < -1)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    return set_ntstatus( RtlInitBarrier( barrier, thread_count, spin_count ));
+}
+
+
+/***********************************************************************
+ *           DeleteSynchronizationBarrier  (kernelbase.@)
+ */
+BOOL WINAPI DeleteSynchronizationBarrier( SYNCHRONIZATION_BARRIER *barrier )
+{
+    RtlDeleteBarrier( barrier );
+    return TRUE;
+}
+
+
+/***********************************************************************
+ *           EnterSynchronizationBarrier  (kernelbase.@)
+ */
+BOOL WINAPI EnterSynchronizationBarrier( SYNCHRONIZATION_BARRIER *barrier, DWORD flags )
+{
+    static const DWORD valid_flags = SYNCHRONIZATION_BARRIER_FLAGS_SPIN_ONLY | SYNCHRONIZATION_BARRIER_FLAGS_BLOCK_ONLY
+                                     | SYNCHRONIZATION_BARRIER_FLAGS_NO_DELETE;
+    static unsigned int once;
+
+    if (flags & ~valid_flags) RtlRaiseStatus( STATUS_INVALID_PARAMETER );
+
+    if (flags & ~SYNCHRONIZATION_BARRIER_FLAGS_NO_DELETE && !once++)
+        FIXME( "flags %#lx are not implemented.\n", flags );
+
+    return RtlBarrier( barrier, flags & SYNCHRONIZATION_BARRIER_FLAGS_NO_DELETE ? 0 : 0x10000 );
+}

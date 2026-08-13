@@ -28,7 +28,6 @@
 #include <stdarg.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
@@ -45,6 +44,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(xim);
 #endif
 
 static WCHAR *ime_comp_buf;
+static DWORD ime_comp_cursor_pos = 0;
 
 static XIMStyle input_style = 0;
 static XIMStyle input_style_req = XIMPreeditCallbacks | XIMStatusCallbacks;
@@ -74,8 +74,49 @@ BOOL xim_in_compose_mode(void)
     return !!ime_comp_buf;
 }
 
+static BOOL is_ime_hkl( HKL hkl )
+{
+    /* See https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-language-pack-default-values#input-method-editors */
+    switch (HIWORD(hkl))
+    {
+    case MAKELANGID(LANG_AMHARIC, SUBLANG_AMHARIC_ETHIOPIA): return TRUE;
+    case MAKELANGID(LANG_BENGALI, SUBLANG_BENGALI_INDIA): return TRUE;
+    case MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED): return TRUE;
+    case MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL): return TRUE;
+    case MAKELANGID(LANG_GUJARATI, SUBLANG_GUJARATI_INDIA): return TRUE;
+    case MAKELANGID(LANG_HINDI, SUBLANG_HINDI_INDIA): return TRUE;
+    case MAKELANGID(LANG_JAPANESE, SUBLANG_JAPANESE_JAPAN): return TRUE;
+    case MAKELANGID(LANG_KANNADA, SUBLANG_KANNADA_INDIA): return TRUE;
+    case MAKELANGID(LANG_KOREAN, SUBLANG_KOREAN): return TRUE;
+    case MAKELANGID(LANG_MALAYALAM, SUBLANG_MALAYALAM_INDIA): return TRUE;
+    case MAKELANGID(LANG_MARATHI, SUBLANG_MARATHI_INDIA): return TRUE;
+    case MAKELANGID(LANG_NEPALI, SUBLANG_NEPALI_NEPAL): return TRUE;
+    case MAKELANGID(LANG_ODIA, SUBLANG_ODIA_INDIA): return TRUE;
+    case MAKELANGID(LANG_PUNJABI, SUBLANG_PUNJABI_INDIA): return TRUE;
+    case MAKELANGID(LANG_TAMIL, SUBLANG_TAMIL_INDIA): return TRUE;
+    case MAKELANGID(LANG_TAMIL, SUBLANG_TAMIL_SRI_LANKA): return TRUE;
+    case MAKELANGID(LANG_TELUGU, SUBLANG_TELUGU_INDIA): return TRUE;
+    case MAKELANGID(LANG_TIGRINYA, SUBLANG_TIGRINYA_ETHIOPIA): return TRUE;
+    case MAKELANGID(LANG_VIETNAMESE, SUBLANG_VIETNAMESE_VIETNAM): return TRUE;
+    case MAKELANGID(LANG_YI, SUBLANG_YI_PRC): return TRUE;
+    default: return (HIWORD(hkl) & 0xe000) == 0xe000;
+    }
+}
+
+static HKL get_ime_hkl( LCID locale )
+{
+    return ULongToHandle( MAKELONG( locale, 0xe001 ) );
+}
+
+static void activate_ime_hkl( HWND hwnd )
+{
+    HKL hkl = NtUserGetKeyboardLayout( 0 );
+    if (!is_ime_hkl( hkl )) NtUserActivateKeyboardLayout( get_ime_hkl( LOWORD(hkl) ), 0 );
+}
+
 static void post_ime_update( HWND hwnd, UINT cursor_pos, WCHAR *comp_str, WCHAR *result_str )
 {
+    activate_ime_hkl( hwnd );
     NtUserMessageCall( hwnd, WINE_IME_POST_UPDATE, cursor_pos, (LPARAM)comp_str,
                        result_str, NtUserImeDriverCall, FALSE );
 }
@@ -128,6 +169,7 @@ static BOOL xic_preedit_state_notify( XIC xic, XPointer user, XPointer arg )
     switch (state)
     {
     case XIMPreeditEnable:
+        activate_ime_hkl( hwnd );
         NtUserPostMessage( hwnd, WM_WINE_IME_NOTIFY, IMN_WINE_SET_OPEN_STATUS, TRUE );
         break;
     case XIMPreeditDisable:
@@ -147,6 +189,7 @@ static int xic_preedit_start( XIC xic, XPointer user, XPointer arg )
     if ((ime_comp_buf = realloc( ime_comp_buf, sizeof(WCHAR) ))) *ime_comp_buf = 0;
     else ERR( "Failed to allocate preedit buffer\n" );
 
+    activate_ime_hkl( hwnd );
     NtUserPostMessage( hwnd, WM_WINE_IME_NOTIFY, IMN_WINE_SET_OPEN_STATUS, TRUE );
     post_ime_update( hwnd, 0, ime_comp_buf, NULL );
 
@@ -166,6 +209,33 @@ static int xic_preedit_done( XIC xic, XPointer user, XPointer arg )
     NtUserPostMessage( hwnd, WM_WINE_IME_NOTIFY, IMN_WINE_SET_OPEN_STATUS, FALSE );
 
     return 0;
+}
+
+static DWORD get_comp_cursor_pos( XIMPreeditDrawCallbackStruct *params )
+{
+    int i, cursor_begin = -1, cursor_end = -1;
+    XIMText *text = params->text;
+
+    if (text && text->feedback)
+    {
+        for (i = 0; i < text->length; i++)
+        {
+            if (text->feedback[i] & XIMReverse)
+            {
+                if (cursor_begin == -1) cursor_begin = i;
+                cursor_end = i + 1;
+            }
+        }
+        if (cursor_begin != -1) cursor_begin += params->chg_first;
+        if (cursor_end   != -1) cursor_end   += params->chg_first;
+    }
+
+    if (cursor_begin == cursor_end)
+        cursor_begin = cursor_end = params->caret; /* ATTR_INPUT */
+
+    TRACE( "caret %d, cursor_begin %d, cursor_end %d\n", params->caret, cursor_begin, cursor_end );
+
+    return MAKELONG( cursor_begin, cursor_end );
 }
 
 static int xic_preedit_draw( XIC xic, XPointer user, XPointer arg )
@@ -202,14 +272,14 @@ static int xic_preedit_draw( XIC xic, XPointer user, XPointer arg )
 
     if (text && str != text->string.multi_byte) free( str );
 
-    post_ime_update( hwnd, params->caret, ime_comp_buf, NULL );
+    ime_comp_cursor_pos = get_comp_cursor_pos( params );
+    post_ime_update( hwnd, ime_comp_cursor_pos, ime_comp_buf, NULL );
 
     return 0;
 }
 
 static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
 {
-    static int xim_caret_pos;
     XIMPreeditCaretCallbackStruct *params = (void *)arg;
     HWND hwnd = (HWND)user;
     int pos;
@@ -218,7 +288,7 @@ static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
 
     if (!params) return 0;
 
-    pos = xim_caret_pos;
+    pos = LOWORD( ime_comp_cursor_pos );
     switch (params->direction)
     {
     case XIMForwardChar:
@@ -246,9 +316,17 @@ static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
         FIXME( "Not implemented\n" );
         break;
     }
-    params->position = xim_caret_pos = pos;
+    params->position = pos;
 
-    post_ime_update( hwnd, pos, ime_comp_buf, NULL );
+    /* uim implements the preedit_caret callback. This callback is only
+       valid when the xim is in non-converted state (ATTR_INPUT).
+     */
+    if (LOWORD( ime_comp_cursor_pos ) == HIWORD( ime_comp_cursor_pos ) &&
+        LOWORD( ime_comp_cursor_pos ) != pos)
+    {
+        ime_comp_cursor_pos = MAKELONG( pos, pos );
+        post_ime_update( hwnd, ime_comp_cursor_pos, ime_comp_buf, NULL );
+    }
 
     return 0;
 }
@@ -294,6 +372,7 @@ void X11DRV_NotifyIMEStatus( HWND hwnd, UINT status )
     }
 
     if (!status) XFree( XmbResetIC( xic ) );
+    XFlush( x11drv_thread_data()->display );
 }
 
 /***********************************************************************
@@ -516,6 +595,7 @@ BOOL X11DRV_SetIMECompositionRect( HWND hwnd, RECT rect )
         XFree( attr );
     }
 
+    XFlush( data->display );
     release_win_data( data );
     return TRUE;
 }

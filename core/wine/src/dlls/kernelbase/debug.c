@@ -23,7 +23,6 @@
 #include <stdlib.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -181,6 +180,7 @@ static LONG WINAPI debug_exception_handler( EXCEPTION_POINTERS *eptr )
  */
 void WINAPI DECLSPEC_HOTPATCH OutputDebugStringA( LPCSTR str )
 {
+    DWORD last_error = GetLastError();
     static HANDLE DBWinMutex = NULL;
     static BOOL mutex_inited = FALSE;
     BOOL caught_by_dbg = TRUE;
@@ -263,6 +263,7 @@ void WINAPI DECLSPEC_HOTPATCH OutputDebugStringA( LPCSTR str )
             CloseHandle( mapping );
         }
     }
+    SetLastError( last_error );
 }
 
 static LONG WINAPI debug_exception_handler_wide( EXCEPTION_POINTERS *eptr )
@@ -280,6 +281,7 @@ void WINAPI DECLSPEC_HOTPATCH OutputDebugStringW( LPCWSTR str )
     STRING strA;
 
     WARN( "%s\n", debugstr_w(str) );
+    if (!str) return;
 
     RtlInitUnicodeString( &strW, str );
     if (!RtlUnicodeStringToAnsiString( &strA, &strW, TRUE ))
@@ -416,8 +418,34 @@ __ASM_GLOBAL_IMPORT(RaiseException)
  */
 void WINAPI DECLSPEC_HOTPATCH RaiseFailFastException( EXCEPTION_RECORD *record, CONTEXT *context, DWORD flags )
 {
-    FIXME( "(%p, %p, %ld) stub\n", record, context, flags );
-    TerminateProcess( GetCurrentProcess(), STATUS_FAIL_FAST_EXCEPTION );
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    WARN( "(%p, %p, %lx)\n", record, context, flags );
+
+    if (flags & FAIL_FAST_NO_HARD_ERROR_DLG)
+        TerminateProcess( GetCurrentProcess(), STATUS_FAIL_FAST_EXCEPTION );
+
+    if (!context)
+    {
+        RtlCaptureContext( &ctx );
+        context = &ctx;
+    }
+    if (!record)
+    {
+        rec.ExceptionCode    = STATUS_FAIL_FAST_EXCEPTION;
+        rec.ExceptionFlags   = EXCEPTION_NONCONTINUABLE;
+        rec.ExceptionRecord  = NULL;
+        rec.ExceptionAddress = __builtin_return_address(0);
+        rec.NumberParameters = 0;
+        record = &rec;
+    }
+    else if (flags & FAIL_FAST_GENERATE_EXCEPTION_ADDRESS)
+    {
+        record->ExceptionAddress = __builtin_return_address(0);
+    }
+
+    for (;;) NtRaiseException( record, context, FALSE );
 }
 
 /***********************************************************************
@@ -518,13 +546,7 @@ static BOOL start_debugger( EXCEPTION_POINTERS *epointers, HANDLE event )
     format_exception_msg( epointers, buffer, sizeof(buffer) );
     MESSAGE( "wine: %s (thread %04lx), starting debugger...\n", buffer, GetCurrentThreadId() );
 
-    attr.Length = sizeof(attr);
-    attr.RootDirectory = 0;
-    attr.ObjectName = &nameW;
-    attr.Attributes = 0;
-    attr.SecurityDescriptor = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &nameW, 0, 0, NULL );
     if (!NtOpenKey( &dbg_key, KEY_READ, &attr ))
     {
         KEY_VALUE_PARTIAL_INFORMATION *info;
@@ -667,12 +689,7 @@ static BOOL start_debugger_atomic( EXCEPTION_POINTERS *epointers )
 	OBJECT_ATTRIBUTES attr;
 	HANDLE event;
 
-	attr.Length                   = sizeof(attr);
-	attr.RootDirectory            = 0;
-	attr.Attributes               = OBJ_INHERIT;
-	attr.ObjectName               = NULL;
-	attr.SecurityDescriptor       = NULL;
-	attr.SecurityQualityOfService = NULL;
+        InitializeObjectAttributes( &attr, NULL, OBJ_INHERIT, 0, NULL );
 
 	/* ask for manual reset, so that once the debugger is started,
 	 * every thread will know it */
@@ -735,6 +752,8 @@ static BOOL check_resource_write( void *addr )
 LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
 {
     const EXCEPTION_RECORD *rec = epointers->ExceptionRecord;
+    ULONG_PTR debug_port;
+    BOOL nested;
 
     if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2)
     {
@@ -747,7 +766,8 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
         }
     }
 
-    if (!NtCurrentTeb()->Peb->BeingDebugged)
+    NtQueryInformationProcess( GetCurrentProcess(), ProcessDebugPort, &debug_port, sizeof(debug_port), NULL );
+    if (!debug_port)
     {
         if (rec->ExceptionCode == CONTROL_C_EXIT)
         {
@@ -755,7 +775,8 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
             TerminateProcess( GetCurrentProcess(), 1 );
         }
 
-        if (top_filter)
+        nested = rec->ExceptionFlags & EXCEPTION_NESTED_CALL;
+        if (top_filter && !nested)
         {
             LONG ret = top_filter( epointers );
             if (ret != EXCEPTION_CONTINUE_SEARCH) return ret;
@@ -763,7 +784,7 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
 
         if ((GetErrorMode() & SEM_NOGPFAULTERRORBOX) ||
             !start_debugger_atomic( epointers ) || !NtCurrentTeb()->Peb->BeingDebugged)
-            return EXCEPTION_EXECUTE_HANDLER;
+            return nested ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -776,6 +797,16 @@ HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerGetFlags( HANDLE process, DWORD *flags
 {
     FIXME( "(%p, %p) stub\n", process, flags );
     return E_NOTIMPL;
+}
+
+
+/***********************************************************************
+ *         WerRegisterCustomMetadata  (kernelbase.@)
+ */
+HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerRegisterCustomMetadata( const WCHAR *key, const WCHAR *value )
+{
+    FIXME( "(%s, %s) stub\n", debugstr_w(key), debugstr_w(value) );
+    return S_OK;
 }
 
 
@@ -816,6 +847,16 @@ HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerRegisterRuntimeExceptionModule( const 
 HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerSetFlags( DWORD flags )
 {
     FIXME("(%ld) stub\n", flags);
+    return S_OK;
+}
+
+
+/***********************************************************************
+ *         WerUnregisterCustomMetadata  (kernelbase.@)
+ */
+HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerUnregisterCustomMetadata( const WCHAR *key )
+{
+    FIXME( "(%s) stub\n", debugstr_w(key));
     return S_OK;
 }
 
@@ -1446,6 +1487,29 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetModuleFileNameExA( HANDLE process, HMODULE mod
 }
 
 
+static NTSTATUS get_process_image_file_name( HANDLE process, BYTE *buffer, size_t buffer_size,
+                                             void **dynamic_buffer, UNICODE_STRING **result )
+{
+    NTSTATUS status;
+    DWORD needed;
+
+    /* FIXME: Use ProcessImageFileName for the PROCESS_NAME_NATIVE case */
+    status = NtQueryInformationProcess( process, ProcessImageFileNameWin32, buffer,
+                                        sizeof(buffer) - sizeof(WCHAR), &needed );
+    if (status == STATUS_INFO_LENGTH_MISMATCH)
+    {
+        *dynamic_buffer = HeapAlloc( GetProcessHeap(), 0, needed + sizeof(WCHAR) );
+        status = NtQueryInformationProcess( process, ProcessImageFileNameWin32, *dynamic_buffer,
+                                            needed, &needed );
+        if (status) HeapFree( GetProcessHeap(), 0, *dynamic_buffer );
+        *result = *dynamic_buffer;
+    }
+    else
+        *result = (UNICODE_STRING *)buffer;
+    return status;
+}
+
+
 /***********************************************************************
  *         GetModuleFileNameExW   (kernelbase.@)
  *         K32GetModuleFileNameExW   (kernelbase.@)
@@ -1458,29 +1522,47 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetModuleFileNameExW( HANDLE process, HMODULE mod
 
     if (!size) return 0;
 
-    if (!IsWow64Process( process, &wow64 )) return 0;
-
-    if (is_win64 && wow64)
+    if (module)
     {
-        LDR_DATA_TABLE_ENTRY32 ldr_module32;
+        if (!IsWow64Process( process, &wow64 )) return 0;
 
-        if (get_ldr_module32( process, module, &ldr_module32 ))
+        if (is_win64 && wow64)
         {
-            len = ldr_module32.FullDllName.Length / sizeof(WCHAR);
-            if (ReadProcessMemory( process, (void *)(DWORD_PTR)ldr_module32.FullDllName.Buffer,
-                                   name, min( len, size ) * sizeof(WCHAR), NULL ))
-                found = TRUE;
+            LDR_DATA_TABLE_ENTRY32 ldr_module32;
+
+            if (get_ldr_module32( process, module, &ldr_module32 ))
+            {
+                len = ldr_module32.FullDllName.Length / sizeof(WCHAR);
+                if (ReadProcessMemory( process, (void *)(DWORD_PTR)ldr_module32.FullDllName.Buffer,
+                                       name, min( len, size ) * sizeof(WCHAR), NULL ))
+                    found = TRUE;
+            }
+        }
+        if (!found)
+        {
+            LDR_DATA_TABLE_ENTRY ldr_module;
+
+            if (!get_ldr_module(process, module, &ldr_module)) return 0;
+            len = ldr_module.FullDllName.Length / sizeof(WCHAR);
+            if (!ReadProcessMemory( process, ldr_module.FullDllName.Buffer,
+                                    name, min( len, size ) * sizeof(WCHAR), NULL ))
+                return 0;
         }
     }
-    if (!found)
+    else
     {
-        LDR_DATA_TABLE_ENTRY ldr_module;
+        BYTE buffer[sizeof(UNICODE_STRING) + MAX_PATH*sizeof(WCHAR)];  /* this buffer should be enough */
+        void *dynamic_buffer = NULL;
+        UNICODE_STRING *result;
+        NTSTATUS status;
 
-        if (!get_ldr_module(process, module, &ldr_module)) return 0;
-        len = ldr_module.FullDllName.Length / sizeof(WCHAR);
-        if (!ReadProcessMemory( process, ldr_module.FullDllName.Buffer,
-                                name, min( len, size ) * sizeof(WCHAR), NULL ))
-            return 0;
+        status = get_process_image_file_name( process, buffer, sizeof(buffer), &dynamic_buffer, &result );
+        if (set_ntstatus( status ))
+        {
+            len = result->Length / sizeof(WCHAR);
+            memcpy( name, result->Buffer, min( len, size - 1 ) * sizeof(WCHAR) );
+            HeapFree( GetProcessHeap(), 0, dynamic_buffer );
+        }
     }
 
     if (len < size)
@@ -1744,25 +1826,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryFullProcessImageNameW( HANDLE process, DWORD 
                                                           WCHAR *name, DWORD *size )
 {
     BYTE buffer[sizeof(UNICODE_STRING) + MAX_PATH*sizeof(WCHAR)];  /* this buffer should be enough */
-    UNICODE_STRING *dynamic_buffer = NULL;
-    UNICODE_STRING *result = NULL;
+    void *dynamic_buffer = NULL;
+    UNICODE_STRING *result;
     NTSTATUS status;
-    DWORD needed;
 
-    /* FIXME: Use ProcessImageFileName for the PROCESS_NAME_NATIVE case */
-    status = NtQueryInformationProcess( process, ProcessImageFileNameWin32, buffer,
-                                        sizeof(buffer) - sizeof(WCHAR), &needed );
-    if (status == STATUS_INFO_LENGTH_MISMATCH)
-    {
-        dynamic_buffer = HeapAlloc( GetProcessHeap(), 0, needed + sizeof(WCHAR) );
-        status = NtQueryInformationProcess( process, ProcessImageFileNameWin32, dynamic_buffer,
-                                            needed, &needed );
-        result = dynamic_buffer;
-    }
-    else
-        result = (UNICODE_STRING *)buffer;
-
-    if (status) goto cleanup;
+    status = get_process_image_file_name( process, buffer, sizeof(buffer), &dynamic_buffer, &result );
+    if (status) return set_ntstatus( status );
 
     if (flags & PROCESS_NAME_NATIVE && result->Length > 2 * sizeof(WCHAR))
     {

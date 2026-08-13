@@ -100,7 +100,7 @@ static void test_stack_walk(void)
     }
     while (!count);
 
-    ctx.ContextFlags = CONTEXT_CONTROL;
+    ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
     ret = GetThreadContext(thread, &ctx);
     ok(ret, "got error %u\n", ret);
 
@@ -1415,7 +1415,6 @@ static void test_live_modules_proc(WCHAR* exename, BOOL with_32)
         ok(aggregation_enum.count_32bit >= MODCOUNT,            "Unexpected enum.count_32bit %u\n",      aggregation_enum.count_32bit);
         ok(aggregation_enum.count_64bit == 0,                   "Unexpected enum.count_64bit %u\n",      aggregation_enum.count_64bit);
         /* yes that's different from event! */
-        todo_wine
         ok(aggregation_enum.count_systemdir >= MODCOUNT - 1,    "Unexpected enum.count_systemdir %u\n",  aggregation_enum.count_systemdir);
         /* .exe */
         todo_wine
@@ -1425,7 +1424,6 @@ static void test_live_modules_proc(WCHAR* exename, BOOL with_32)
         ok(aggregation_sym.count_exe == 1,                      "Unexpected sym.count_exe %u\n",         aggregation_sym.count_exe);
         ok(aggregation_sym.count_32bit >= MODCOUNT,             "Unexpected sym.count_32bit %u\n",       aggregation_sym.count_32bit);
         ok(aggregation_sym.count_64bit == 0,                    "Unexpected sym.count_64bit %u\n",       aggregation_sym.count_64bit);
-        todo_wine
         ok(aggregation_sym.count_systemdir >= MODCOUNT - 1,     "Unexpected sym.count_systemdir %u\n",   aggregation_sym.count_systemdir);
         /* .exe */
         todo_wine
@@ -1480,7 +1478,6 @@ static void test_live_modules_proc(WCHAR* exename, BOOL with_32)
         ok(aggregation_enum.count_exe == 1 + XTRAEXE,           "Unexpected enum.count_exe %u\n",        aggregation_enum.count_exe);
         ok(aggregation_enum.count_32bit >= MODCOUNT,            "Unexpected enum.count_32bit %u\n",      aggregation_enum.count_32bit);
         ok(aggregation_enum.count_64bit == 0,                   "Unexpected enum.count_64bit %u\n",      aggregation_enum.count_64bit);
-        todo_wine
         ok(aggregation_enum.count_systemdir >= MODCOUNT,        "Unexpected enum.count_systemdir %u\n",  aggregation_enum.count_systemdir);
         /* .exe */
         todo_wine
@@ -1490,7 +1487,6 @@ static void test_live_modules_proc(WCHAR* exename, BOOL with_32)
         ok(aggregation_sym.count_exe == 1,                      "Unexpected sym.count_exe %u\n",         aggregation_sym.count_exe);
         ok(aggregation_sym.count_32bit >= MODCOUNT,             "Unexpected sym.count_32bit %u\n",       aggregation_sym.count_32bit);
         ok(aggregation_sym.count_64bit == 0,                    "Unexpected sym.count_64bit %u\n",       aggregation_sym.count_64bit);
-        todo_wine
         ok(aggregation_sym.count_systemdir >= MODCOUNT,         "Unexpected sym.count_systemdir %u\n",   aggregation_sym.count_systemdir);
         /* .exe */
         todo_wine

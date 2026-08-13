@@ -1,8 +1,9 @@
 MODULE    = prntvpt.dll
 IMPORTLIB = prntvpt
-IMPORTS   = winspool ole32 oleaut32
+IMPORTS   = gdi32 winspool ole32 oleaut32
 
-EXTRADLLFLAGS = -Wb,--prefer-native
+VER_FILEDESCRIPTION_STR = "Print Ticket Services Module"
+VER_PRODUCTVERSION      = 10,0,19041,3636
 
 SOURCES = \
 	main.c \

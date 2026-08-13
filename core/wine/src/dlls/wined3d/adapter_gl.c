@@ -138,6 +138,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_texture_env_combine",          ARB_TEXTURE_ENV_COMBINE       },
     {"GL_ARB_texture_env_dot3",             ARB_TEXTURE_ENV_DOT3          },
     {"GL_ARB_texture_filter_anisotropic",   ARB_TEXTURE_FILTER_ANISOTROPIC},
+    {"GL_ARB_texture_filter_minmax",        ARB_TEXTURE_FILTER_MINMAX     },
     {"GL_ARB_texture_float",                ARB_TEXTURE_FLOAT             },
     {"GL_ARB_texture_gather",               ARB_TEXTURE_GATHER            },
     {"GL_ARB_texture_mirrored_repeat",      ARB_TEXTURE_MIRRORED_REPEAT   },
@@ -1297,10 +1298,36 @@ static const struct wined3d_renderer_table
 cards_nvidia_binary[] =
 {
     /* Direct 3D 11 */
+    {"RTX 4090",                    CARD_NVIDIA_GEFORCE_RTX4090},
+    {"RTX 4080 SUPER",              CARD_NVIDIA_GEFORCE_RTX4080SUPER},
+    {"RTX 4080",                    CARD_NVIDIA_GEFORCE_RTX4080},
+    {"RTX 4070 Ti SUPER",           CARD_NVIDIA_GEFORCE_RTX4070TISUPER},
+    {"RTX 4070 Ti",                 CARD_NVIDIA_GEFORCE_RTX4070TI},
+    {"RTX 4070 SUPER",              CARD_NVIDIA_GEFORCE_RTX4070SUPER},
+    {"RTX 4070",                    CARD_NVIDIA_GEFORCE_RTX4070},
+    {"RTX 4060 Ti 16GB",            CARD_NVIDIA_GEFORCE_RTX4060TI16G},
+    {"RTX 4060 Ti 8GB",             CARD_NVIDIA_GEFORCE_RTX4060TI8G},
+    {"RTX 4060M",                   CARD_NVIDIA_GEFORCE_RTX4060M},
+    {"RTX 4060",                    CARD_NVIDIA_GEFORCE_RTX4060},
     {"Tesla T4",                    CARD_NVIDIA_TESLA_T4},
     {"Ampere A10",                  CARD_NVIDIA_AMPERE_A10},
-    {"RTX 3080",                    CARD_NVIDIA_GEFORCE_RTX3080},   /* GeForce 3000 - highend */
-    {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},   /* GeForce 3000 - highend */
+    {"NVIDIA A10G",                 CARD_NVIDIA_AMPERE_A10G},
+    {"RTX 3090 Ti",                 CARD_NVIDIA_GEFORCE_RTX3090TI},
+    {"RTX 3090",                    CARD_NVIDIA_GEFORCE_RTX3090},
+    {"RTX 3080 Ti",                 CARD_NVIDIA_GEFORCE_RTX3080TI},
+    {"RTX 3080 12GB",               CARD_NVIDIA_GEFORCE_RTX3080_12GB},
+    {"RTX 3080 10GB LHR",           CARD_NVIDIA_GEFORCE_RTX3080_10GB_LHR},
+    {"RTX 3080 10GB",               CARD_NVIDIA_GEFORCE_RTX3080_10GB},
+    {"RTX 3070 Ti",                 CARD_NVIDIA_GEFORCE_RTX3070TI},
+    {"RTX 3070 mobile",             CARD_NVIDIA_GEFORCE_RTX3070_MOBILE},
+    {"RTX 3070 LHR",                CARD_NVIDIA_GEFORCE_RTX3070_LHR},
+    {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},
+    {"RTX 3060 Ti GA104 LHR",       CARD_NVIDIA_GEFORCE_RTX3060TI_GA104_LHR},
+    {"RTX 3060 Ti GA104",           CARD_NVIDIA_GEFORCE_RTX3060TI_GA104},
+    {"RTX 3060 Ti GA103",           CARD_NVIDIA_GEFORCE_RTX3060TI_GA103},
+    {"RTX 3060 LHR",                CARD_NVIDIA_GEFORCE_RTX3060_LHR},
+    {"RTX 3060",                    CARD_NVIDIA_GEFORCE_RTX3060},
+    {"RTX 3050",                    CARD_NVIDIA_GEFORCE_RTX3050},
     {"RTX 2080 Ti",                 CARD_NVIDIA_GEFORCE_RTX2080TI}, /* GeForce 2000 - highend */
     {"RTX 2080",                    CARD_NVIDIA_GEFORCE_RTX2080},   /* GeForce 2000 - highend */
     {"RTX 2070",                    CARD_NVIDIA_GEFORCE_RTX2070},   /* GeForce 2000 - highend */
@@ -1639,6 +1666,10 @@ cards_intel[] =
  * drivers: R700, RV790, R680, RV535, RV516, R410, RS485, RV360, RV351. */
 cards_amd_mesa[] =
 {
+    /* Navi 4x */
+    {"gfx1200",                     CARD_AMD_RADEON_RX_NAVI_44},
+    /* Navi 2x */
+    {"rembrandt",                   CARD_AMD_RADEON_680M},
     /* Navi 10/14 */
     {"NAVI10",                      CARD_AMD_RADEON_RX_NAVI_10},
     {"NAVI14",                      CARD_AMD_RADEON_RX_NAVI_14},
@@ -3669,6 +3700,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
     adapter->shader_backend = &glsl_shader_backend;
     adapter->vertex_pipe = &glsl_vertex_pipe;
     adapter->fragment_pipe = &glsl_fragment_pipe;
+    adapter->decoder_ops = &wined3d_null_decoder_ops;
 
     if (gl_info->supported[ARB_FRAMEBUFFER_OBJECT])
     {
@@ -3949,7 +3981,6 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
             if (!GL_EXTCALL(wglGetPixelFormatAttribivARB(dc, format_id, 0, attrib_count, attribs, values)))
                 continue;
 
-            cfg->iPixelFormat = format_id;
             cfg->redSize = values[0];
             cfg->greenSize = values[1];
             cfg->blueSize = values[2];
@@ -3982,7 +4013,7 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
 
             TRACE("iPixelFormat=%d, iPixelType=%#x, doubleBuffer=%d, RGBA=%d/%d/%d/%d, "
                     "depth=%d, stencil=%d, samples=%d, windowDrawable=%d\n",
-                    cfg->iPixelFormat, cfg->iPixelType, cfg->doubleBuffer,
+                    format_id, cfg->iPixelType, cfg->doubleBuffer,
                     cfg->redSize, cfg->greenSize, cfg->blueSize, cfg->alphaSize,
                     cfg->depthSize, cfg->stencilSize, cfg->numSamples, cfg->windowDrawable);
 
@@ -4015,7 +4046,6 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
                 continue;
             }
 
-            cfg->iPixelFormat = format_id;
             cfg->redSize = pfd.cRedBits;
             cfg->greenSize = pfd.cGreenBits;
             cfg->blueSize = pfd.cBlueBits;
@@ -4032,7 +4062,7 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
 
             TRACE("iPixelFormat=%d, iPixelType=%#x, doubleBuffer=%d, RGBA=%d/%d/%d/%d, "
                     "depth=%d, stencil=%d, windowDrawable=%d\n",
-                    cfg->iPixelFormat, cfg->iPixelType, cfg->doubleBuffer,
+                    format_id, cfg->iPixelType, cfg->doubleBuffer,
                     cfg->redSize, cfg->greenSize, cfg->blueSize, cfg->alphaSize,
                     cfg->depthSize, cfg->stencilSize, cfg->windowDrawable);
 
@@ -4703,6 +4733,21 @@ static void adapter_gl_destroy_unordered_access_view(struct wined3d_unordered_ac
     wined3d_view_gl_destroy(resource->device, &view_gl->gl_view, &view_gl->bo_user, &view_gl->counter_bo, view_gl);
 }
 
+static HRESULT adapter_gl_create_video_decoder_output_view(const struct wined3d_view_desc *desc,
+        struct wined3d_texture *texture, void *parent, const struct wined3d_parent_ops *parent_ops,
+        struct wined3d_decoder_output_view **view)
+{
+    TRACE("desc %s, texture %p, parent %p, parent_ops %p, view %p.\n",
+            wined3d_debug_view_desc(desc, &texture->resource), texture, parent, parent_ops, view);
+
+    return E_NOTIMPL;
+}
+
+static void adapter_gl_destroy_video_decoder_output_view(struct wined3d_decoder_output_view *view)
+{
+    TRACE("view %p.\n", view);
+}
+
 static HRESULT adapter_gl_create_sampler(struct wined3d_device *device, const struct wined3d_sampler_desc *desc,
         void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_sampler **sampler)
 {
@@ -4844,6 +4889,8 @@ static const struct wined3d_adapter_ops wined3d_adapter_gl_ops =
     .adapter_destroy_shader_resource_view = adapter_gl_destroy_shader_resource_view,
     .adapter_create_unordered_access_view = adapter_gl_create_unordered_access_view,
     .adapter_destroy_unordered_access_view = adapter_gl_destroy_unordered_access_view,
+    .adapter_create_video_decoder_output_view = adapter_gl_create_video_decoder_output_view,
+    .adapter_destroy_video_decoder_output_view = adapter_gl_destroy_video_decoder_output_view,
     .adapter_create_sampler = adapter_gl_create_sampler,
     .adapter_destroy_sampler = adapter_gl_destroy_sampler,
     .adapter_create_query = adapter_gl_create_query,
@@ -4898,6 +4945,8 @@ static void wined3d_adapter_gl_init_d3d_info(struct wined3d_adapter_gl *adapter_
     d3d_info->shader_output_interpolation = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_OUTPUT_INTERPOLATION);
     d3d_info->viewport_array_index_any_shader = !!gl_info->supported[ARB_SHADER_VIEWPORT_LAYER_ARRAY];
     d3d_info->stencil_export = !!gl_info->supported[ARB_SHADER_STENCIL_EXPORT];
+    d3d_info->simple_instancing = !!gl_info->supported[ARB_INSTANCED_ARRAYS];
+    d3d_info->min_max_filtering = !!gl_info->supported[ARB_TEXTURE_FILTER_MINMAX];
     d3d_info->unconditional_npot = !!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO];
     d3d_info->draw_base_vertex_offset = !!gl_info->supported[ARB_DRAW_ELEMENTS_BASE_VERTEX];
     d3d_info->vertex_bgra = !!gl_info->supported[ARB_VERTEX_ARRAY_BGRA];
@@ -5005,7 +5054,7 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     {
         HMODULE mod_gl = GetModuleHandleA("opengl32.dll");
 #define USE_GL_FUNC(f) gl_info->gl_ops.gl.p_##f = (void *)GetProcAddress(mod_gl, #f);
-        ALL_WGL_FUNCS
+        ALL_GL_FUNCS
 #undef USE_GL_FUNC
         gl_info->gl_ops.wgl.p_wglSwapBuffers = (void *)GetProcAddress(mod_gl, "wglSwapBuffers");
         gl_info->gl_ops.wgl.p_wglGetPixelFormat = (void *)GetProcAddress(mod_gl, "wglGetPixelFormat");

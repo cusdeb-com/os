@@ -28,6 +28,8 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "winnls.h"
+#include "winternl.h"
+#include "ntgdi.h"
 
 #include "wine/test.h"
 
@@ -3330,7 +3332,7 @@ static void test_negative_width(HDC hdc, const LOGFONTA *lf)
 }
 
 /* PANOSE is 10 bytes in size, need to pack the structure properly */
-#include "pshpack2.h"
+#pragma pack(push,2)
 typedef struct
 {
     USHORT version;
@@ -3380,7 +3382,7 @@ typedef struct
     USHORT usLowerOpticalPointSize;
     USHORT usUpperOpticalPointSize;
 } TT_OS2_V4;
-#include "poppack.h"
+#pragma pack(pop)
 
 #define TT_OS2_V0_SIZE (FIELD_OFFSET(TT_OS2_V4, ulCodePageRange1))
 
@@ -4316,17 +4318,6 @@ static void test_nonexistent_font(void)
 
     DeleteDC(hdc);
 }
-
-struct font_realization_info
-{
-    DWORD size;
-    DWORD flags;
-    DWORD cache_num;
-    DWORD instance_id;
-    DWORD file_count;
-    WORD  face_index;
-    WORD  simulations;
-};
 
 struct file_info
 {
@@ -5973,6 +5964,7 @@ static void test_CreateScalableFontResource(void)
     char fot_name[MAX_PATH];
     char *file_part;
     DWORD ret;
+    ULONG (WINAPI *pNtGdiMakeFontDir)( DWORD embed, BYTE *buffer, UINT size, const WCHAR *path, UINT len );
     int i;
 
     if (!write_ttf_file("wine_test.ttf", ttf_name))
@@ -6105,6 +6097,44 @@ static void test_CreateScalableFontResource(void)
     ok(!ret, "RemoveFontResourceEx() should fail\n");
 
     DeleteFileA(fot_name);
+
+    pNtGdiMakeFontDir = (void *)GetProcAddress( GetModuleHandleA("win32u"), "NtGdiMakeFontDir" );
+    if (pNtGdiMakeFontDir)
+    {
+        WCHAR ttf_nameW[MAX_PATH];
+        UNICODE_STRING nt_name;
+        BYTE buffer[256];
+        char *ptr;
+        struct fontdir *fontdir = (struct fontdir *)buffer;
+
+        memset( buffer, 0xcc, sizeof(buffer) );
+        MultiByteToWideChar( CP_ACP, 0, ttf_name, -1, ttf_nameW, ARRAY_SIZE(ttf_nameW) );
+        RtlDosPathNameToNtPathName_U( ttf_nameW, &nt_name, NULL, NULL );
+        SetLastError(0xdeadbeef);
+        ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir) - 1, nt_name.Buffer, nt_name.Length + 2 );
+        ok( !ret, "got %lx\n", ret );
+        ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, nt_name.Length );
+        ok( !ret, "got %lx\n", ret );
+        ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, 0 );
+        ok( !ret, "got %lx\n", ret );
+        ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, nt_name.Length + 2 );
+        ok( ret, "NtGdiMakeFontDir failed\n" );
+        ok( fontdir->dfSize == 0x95, "wrong size %lx\n", fontdir->dfSize );
+        ok( fontdir->dfFace == 0x76, "wrong face %lx\n", fontdir->dfFace );
+        ptr = fontdir->szFaceName;
+        ok( !strcmp( ptr, "wine_test" ), "wrong family name %s\n", debugstr_a(ptr) );
+        ptr += strlen( ptr ) + 1;
+        ok( !strcmp( ptr, "wine_test" ), "wrong face name %s\n", debugstr_a(ptr) );
+        ptr += strlen( ptr ) + 1;
+        ok( !strcmp( ptr, "Medium" ), "wrong style name %s\n", debugstr_a(ptr) );
+        ptr += strlen( ptr ) + 1;
+        ok( ret == ptr - (char *)buffer, "wrong len %lx / %Ix\n", ret, ptr - (char *)buffer );
+        ok( buffer[sizeof(*fontdir) - 1] == 0, "buffer not set %x\n",  buffer[sizeof(*fontdir) - 1] );
+        ok( buffer[sizeof(*fontdir)] == 0xcc, "buffer set %x\n",  buffer[sizeof(*fontdir) ] );
+        RtlFreeUnicodeString( &nt_name );
+    }
+    else win_skip( "NtGdiMakeFontDir not supported\n" );
+
     DeleteFileA(ttf_name);
 }
 
@@ -6293,6 +6323,31 @@ static void test_vertical_font(void)
         }
         check_vertical_metrics(&face[1]);
     }
+
+    ret = RemoveFontResourceExA(ttf_name, FR_PRIVATE, 0);
+    ok(ret, "RemoveFontResourceEx() error %ld\n", GetLastError());
+
+    DeleteFileA(ttf_name);
+
+    if (!write_ttf_file("vertical2.ttf", ttf_name))
+    {
+        skip("Failed to create ttf file for testing\n");
+        return;
+    }
+
+    num = AddFontResourceExA(ttf_name, FR_PRIVATE, 0);
+    ok(num == 2, "AddFontResourceExA should add 2 fonts from vertical2.ttf\n");
+
+    check_vertical_font("WineTestVertical2", &installed, &selected, &gm, &hgi);
+    ok(installed, "WineTestVertical2 is not installed\n");
+    ok(selected, "WineTestVertical2 is not selected\n");
+
+    check_vertical_font("@WineTestVertical2", &installed, &selected, &gm, &vgi);
+    ok(installed, "@WineTestVertical2 is not installed\n");
+    ok(selected, "@WineTestVertical2 is not selected\n");
+
+    /* use the first vertical alternates table that doesn't replace U+2025 */
+    ok(hgi == vgi, "different glyph h:%u v:%u\n", hgi, vgi);
 
     ret = RemoveFontResourceExA(ttf_name, FR_PRIVATE, 0);
     ok(ret, "RemoveFontResourceEx() error %ld\n", GetLastError());
@@ -7835,6 +7890,121 @@ static void test_font_weight(void)
     DeleteObject(hfont2);
     bret = RemoveFontResourceExA(ttf_name, 0, NULL);
     ok(bret, "got error %ld\n", GetLastError());
+
+    bret = DeleteFileA(ttf_name);
+    ok(bret, "got error %ld\n", GetLastError());
+}
+
+static WCHAR *get_font_path( const char *face )
+{
+    DWORD buffer[32];
+    struct font_realization_info *realization_info = (void *)buffer;
+    struct file_info file_info;
+    LOGFONTA lf = {0};
+    HFONT font, prev;
+    SIZE_T size;
+    WCHAR *path;
+    BOOL ret;
+    HDC dc;
+
+    dc = GetDC( 0 );
+
+    strcpy( lf.lfFaceName, face );
+    lf.lfHeight = 90;
+    lf.lfWeight = FW_BOLD;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    font = CreateFontIndirectA( &lf );
+    prev = SelectObject( dc, font );
+
+    buffer[0] = 24;
+    ret = pGetFontRealizationInfo( dc, buffer );
+    ok( ret == TRUE, "got %d\n", ret );
+    ret = pGetFontFileInfo( realization_info->instance_id, 0,  &file_info, sizeof(file_info), &size );
+    ok( ret == TRUE, "got %d\n", ret );
+    path = wcsdup( file_info.path );
+
+    DeleteObject( SelectObject( dc, prev ));
+    ReleaseDC( 0, dc );
+
+    return path;
+}
+
+/* Test the path search order by AddFontResource(). */
+static void test_add_font_path(void)
+{
+    static const char system32_path[] = "C:\\windows\\system32\\winetest_font.ttf";
+    static const char fonts_path[] = "C:\\windows\\fonts\\winetest_font.ttf";
+    WCHAR cwd[MAX_PATH], temp_path[MAX_PATH];
+    const void *rsrc_data;
+    DWORD rsrc_size;
+    WCHAR *path;
+    BOOL wow64;
+    int count;
+    BOOL ret;
+    FILE *f;
+
+    IsWow64Process( GetCurrentProcess(), &wow64 );
+
+    rsrc_data = get_res_data( "wine_heavy.ttf", &rsrc_size );
+    if (!(f = fopen( fonts_path, "wb" )))
+    {
+        skip( "not enough permissions to create fonts in C:\\windows\n" );
+        return;
+    }
+    fwrite( rsrc_data, rsrc_size, 1, f );
+    fclose( f );
+
+    GetCurrentDirectoryW( ARRAY_SIZE(cwd), cwd );
+    GetTempPathW( ARRAY_SIZE(temp_path), temp_path );
+    SetCurrentDirectoryW( temp_path );
+
+    ret = CopyFileA( fonts_path, "winetest_font.ttf", FALSE );
+    ok( ret, "got error %lu\n", GetLastError() );
+    ret = CopyFileA( fonts_path, system32_path, FALSE );
+    ok( ret, "got error %lu\n", GetLastError() );
+
+    count = AddFontResourceExA( "winetest_font.ttf", 0, NULL );
+    ok( count == 1, "got %d\n", count );
+    path = get_font_path( "wine_heavy" );
+    todo_wine ok( !wcscmp( path, L"C:\\WINDOWS\\FONTS\\WINETEST_FONT.TTF" ),
+                  "got %s\n", debugstr_w( path ));
+    ret = RemoveFontResourceExA( "winetest_font.ttf", 0, NULL );
+    ok( ret, "got error %lu\n", GetLastError() );
+
+    ret = DeleteFileA( fonts_path );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
+
+    count = AddFontResourceExA( "winetest_font.ttf", 0, NULL );
+    ok( count == 1, "got %d\n", count );
+    path = get_font_path( "wine_heavy" );
+    wcscat( temp_path, L"winetest_font.ttf" );
+    wcsupr( temp_path );
+    todo_wine ok( !wcscmp( path, temp_path ), "expected %s, got %s\n",
+                  debugstr_w( temp_path ), debugstr_w( path ));
+    ret = RemoveFontResourceExA( "winetest_font.ttf", 0, NULL );
+    ok( ret, "got error %lu\n", GetLastError() );
+
+    ret = DeleteFileA( "winetest_font.ttf" );
+    ok( ret == TRUE, "failed to delete %s, error %lu\n", debugstr_w( temp_path ), GetLastError() );
+
+    /* Windows is broken and doesn't redirect this path.
+     * Stratego (1997) depends on it being redirected,
+     * and fails on 64-bit Windows */
+    count = AddFontResourceExA( "winetest_font.ttf", 0, NULL );
+    ok( count == 1 || broken( wow64 ), "got %d\n", count );
+    if (count == 1)
+    {
+        path = get_font_path( "wine_heavy" );
+        todo_wine ok( !wcscmp( path, L"C:\\WINDOWS\\SYSTEM32\\WINETEST_FONT.TTF" ),
+            "got %s\n", debugstr_w( path ));
+        ret = RemoveFontResourceExA( "winetest_font.ttf", 0, NULL );
+        ok( ret, "got error %lu\n", GetLastError() );
+    }
+
+    ret = DeleteFileA( system32_path );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
+
+    SetCurrentDirectoryW( cwd );
 }
 
 START_TEST(font)
@@ -7927,6 +8097,7 @@ START_TEST(font)
     test_char_width();
     test_select_object();
     test_font_weight();
+    test_add_font_path();
 
     /* These tests should be last test until RemoveFontResource
      * is properly implemented.
@@ -7944,8 +8115,6 @@ START_TEST(font)
         sprintf(path_name, "%s font %s", argv[0], test_names[i]);
         ok(CreateProcessA(NULL, path_name, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info),
             "CreateProcess failed.\n");
-        wait_child_process(info.hProcess);
-        CloseHandle(info.hProcess);
-        CloseHandle(info.hThread);
+        wait_child_process(&info);
     }
 }

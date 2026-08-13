@@ -29,7 +29,6 @@
 #include <sys/types.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winver.h"
@@ -154,7 +153,7 @@ static const struct
     },
     /* Windows 10 */
     {
-        { 10, 0, 19043 },
+        { 10, 0, 19045 },
         {0x8e0f7a12,0xbfb3,0x4fe8,{0xb9,0xa5,0x48,0xfd,0x50,0xa1,0x5a,0x9a}}
     }
 };
@@ -1069,6 +1068,7 @@ static BOOL VersionInfo16_QueryValue( const VS_VERSION_INFO_STRUCT16 *info, LPCS
 static BOOL VersionInfo32_QueryValue( const VS_VERSION_INFO_STRUCT32 *info, LPCWSTR lpSubBlock,
                                       LPVOID *lplpBuffer, UINT *puLen, BOOL *pbText )
 {
+    PVOID ptr;
     TRACE("lpSubBlock : (%s)\n", debugstr_w(lpSubBlock));
 
     while ( *lpSubBlock )
@@ -1100,7 +1100,11 @@ static BOOL VersionInfo32_QueryValue( const VS_VERSION_INFO_STRUCT32 *info, LPCW
     }
 
     /* Return value */
-    *lplpBuffer = VersionInfo32_Value( info );
+    ptr = VersionInfo32_Value(info);
+    if ((PBYTE)ptr >= ((PBYTE)info + info->wLength))  /* empty value */
+        ptr = (WCHAR*)info->szKey + wcslen(info->szKey);
+
+    *lplpBuffer = ptr;
     if (puLen)
         *puLen = info->wValueLength;
     if (pbText)
@@ -1542,6 +1546,14 @@ BOOL WINAPI GetVersionExW( OSVERSIONINFOW *info )
     return TRUE;
 }
 
+/***********************************************************************
+ *         GetCurrentApplicationUserModelId   (kernelbase.@)
+ */
+LONG WINAPI /* DECLSPEC_HOTPATCH */ GetCurrentApplicationUserModelId( UINT32 *length, WCHAR *id )
+{
+    FIXME( "(%p %p): stub\n", length, id );
+    return APPMODEL_ERROR_NO_APPLICATION;
+}
 
 /***********************************************************************
  *         GetCurrentPackageFamilyName   (kernelbase.@)

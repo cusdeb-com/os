@@ -277,10 +277,7 @@ static LONG WINTRUST_DefaultVerify(HWND hwnd, GUID *actionID,
     if (WVT_ISINSTRUCT(WINTRUST_DATA, data->cbStruct, pSignatureSettings))
         provData->pSigSettings = data->pSignatureSettings;
 
-    if (hwnd == INVALID_HANDLE_VALUE)
-        provData->hWndParent = GetDesktopWindow();
-    else
-        provData->hWndParent = hwnd;
+    provData->hWndParent = hwnd;
     provData->pgActionID = actionID;
     WintrustGetRegPolicyFlags(&provData->dwRegPolicySettings);
 
@@ -468,10 +465,7 @@ static LONG WINTRUST_CertVerify(HWND hwnd, GUID *actionID,
 
     data->hWVTStateData = provData;
     provData->pWintrustData = data;
-    if (hwnd == INVALID_HANDLE_VALUE)
-        provData->hWndParent = GetDesktopWindow();
-    else
-        provData->hWndParent = hwnd;
+    provData->hWndParent = hwnd;
     provData->pgActionID = actionID;
     WintrustGetRegPolicyFlags(&provData->dwRegPolicySettings);
 
@@ -1064,6 +1058,7 @@ BOOL WINAPI WINTRUST_AddCert(CRYPT_PROVIDER_DATA *data, DWORD idxSigner,
         CRYPT_PROVIDER_CERT *cert = &data->pasSigners[idxSigner].pasCertChain[
          data->pasSigners[idxSigner].csCertChain];
 
+        memset(cert, 0, sizeof(*cert));
         cert->cbStruct = sizeof(CRYPT_PROVIDER_CERT);
         cert->pCert = CertDuplicateCertificateContext(pCert2Add);
         data->pasSigners[idxSigner].csCertChain++;

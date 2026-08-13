@@ -116,14 +116,9 @@ FONT 8, "MS Shell Dlg"
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
-#define WINE_FILEDESCRIPTION_STR "Wine conhost"
-#define WINE_FILENAME_STR "conhost.exe"
-#define WINE_FILEVERSION 6,1,7601,22045
-#define WINE_FILEVERSION_STR "6.1.7601.22045"
-#define WINE_PRODUCTVERSION 6,1,7601,22045
-#define WINE_PRODUCTVERSION_STR "6.1.7601.22045"
-
-#include "wine/wine_common_ver.rc"
-
 /* @makedep: conhost.manifest */
 1 RT_MANIFEST conhost.manifest
+
+/* ffmpeg -f lavfi -i "sine=frequency=600" -t 0.1 -ar 44100 -f wav -acodec pcm_u8 test.wav */
+/* @makedep: beep.wav */
+console_beep WAVE beep.wav

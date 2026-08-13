@@ -201,7 +201,12 @@ HRESULT WINAPI D3DXLoadVolumeFromFileInMemory(IDirect3DVolume9 *dst_volume, cons
     if (FAILED(hr))
         return D3DXERR_INVALIDDATA;
 
-    d3dximage_info_from_d3dx_image(&image_info, &image);
+    if (!d3dximage_info_from_d3dx_image(&image_info, &image))
+    {
+        hr = D3DXERR_INVALIDDATA;
+        goto exit;
+    }
+
     if (src_box)
     {
         if (src_box->Right > image_info.Width
@@ -277,5 +282,137 @@ HRESULT WINAPI D3DXLoadVolumeFromVolume(IDirect3DVolume9 *dst_volume, const PALE
             src_palette, &box, filter, color_key);
 
     IDirect3DVolume9_UnlockBox(src_volume);
+    return hr;
+}
+
+HRESULT WINAPI D3DXSaveVolumeToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DVolume9 *src_volume, const PALETTEENTRY *src_palette, const D3DBOX *src_box)
+{
+    const struct pixel_format_desc *src_fmt_desc;
+    struct d3dx_pixels src_pixels;
+    D3DLOCKED_BOX locked_box;
+    ID3DXBuffer *buffer;
+    D3DVOLUME_DESC desc;
+    D3DBOX src_box_tmp;
+    HRESULT hr;
+
+    TRACE("dst_buffer %p, file_format %#x, src_volume %p, src_palette %p, src_box %p.\n",
+        dst_buffer, file_format, src_volume, src_palette, src_box);
+
+    if (!dst_buffer || !src_volume || file_format > D3DXIFF_PFM)
+        return D3DERR_INVALIDCALL;
+
+    *dst_buffer = NULL;
+    switch (file_format)
+    {
+        case D3DXIFF_HDR:
+        case D3DXIFF_PFM:
+        case D3DXIFF_PPM:
+            FIXME("File format %s is not supported yet.\n",
+                    debug_d3dx_image_file_format(d3dx_image_file_format_from_d3dximage_fileformat(file_format)));
+            return E_NOTIMPL;
+
+        default:
+            break;
+    }
+
+    IDirect3DVolume9_GetDesc(src_volume, &desc);
+    src_fmt_desc = get_format_info(desc.Format);
+    if (is_unknown_format(src_fmt_desc))
+        return E_NOTIMPL;
+
+    if (!src_palette && is_index_format(src_fmt_desc))
+    {
+        FIXME("Default palette unimplemented.\n");
+        return E_NOTIMPL;
+    }
+
+    if (!src_box)
+    {
+        set_d3dbox(&src_box_tmp, 0, 0, desc.Width, desc.Height, 0, desc.Depth);
+        src_box = &src_box_tmp;
+    }
+    else
+    {
+        if (src_box->Left >= src_box->Right || src_box->Right > desc.Width
+                || src_box->Top >= src_box->Bottom || src_box->Bottom > desc.Height
+                || src_box->Front >= src_box->Back || src_box->Back > desc.Depth)
+        {
+            WARN("Invalid src_box specified.\n");
+            return D3DERR_INVALIDCALL;
+        }
+    }
+
+    hr = IDirect3DVolume9_LockBox(src_volume, &locked_box, NULL, D3DLOCK_READONLY);
+    if (FAILED(hr))
+        return hr;
+
+    hr = d3dx_pixels_init(locked_box.pBits, locked_box.RowPitch, locked_box.SlicePitch, src_palette,
+            src_fmt_desc->format, src_box->Left, src_box->Top, src_box->Right, src_box->Bottom, src_box->Front,
+            src_box->Back, &src_pixels);
+    if (FAILED(hr))
+    {
+        IDirect3DVolume9_UnlockBox(src_volume);
+        return hr;
+    }
+
+    hr = d3dx9_save_pixels_to_memory(&src_pixels, src_fmt_desc, file_format, &buffer);
+    IDirect3DVolume9_UnlockBox(src_volume);
+    if (SUCCEEDED(hr))
+        *dst_buffer = buffer;
+
+    return hr;
+}
+
+HRESULT WINAPI D3DXSaveVolumeToFileA(const char *dst_filename, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DVolume9 *src_volume, const PALETTEENTRY *src_palette, const D3DBOX *src_box)
+{
+    ID3DXBuffer *buffer;
+    WCHAR *filename;
+    HRESULT hr;
+    int len;
+
+    TRACE("dst_filename %s, file_format %#x, src_volume %p, src_palette %p, src_box %p.\n",
+            wine_dbgstr_a(dst_filename), file_format, src_volume, src_palette, src_box);
+
+    if (!dst_filename)
+        return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, dst_filename, -1, NULL, 0);
+    filename = malloc(len * sizeof(WCHAR));
+    if (!filename)
+        return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, dst_filename, -1, filename, len);
+
+    hr = D3DXSaveVolumeToFileInMemory(&buffer, file_format, src_volume, src_palette, src_box);
+    if (SUCCEEDED(hr))
+    {
+        hr = write_buffer_to_file(filename, buffer);
+        ID3DXBuffer_Release(buffer);
+    }
+
+    free(filename);
+    return hr;
+}
+
+HRESULT WINAPI D3DXSaveVolumeToFileW(const WCHAR *dst_filename, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DVolume9 *src_volume, const PALETTEENTRY *src_palette, const D3DBOX *src_box)
+{
+    ID3DXBuffer *buffer;
+    HRESULT hr;
+
+    TRACE("dst_filename %s, file_format %#x, src_volume %p, src_palette %p, src_box %p.\n",
+            wine_dbgstr_w(dst_filename), file_format, src_volume, src_palette, src_box);
+
+    if (!dst_filename)
+        return D3DERR_INVALIDCALL;
+
+    hr = D3DXSaveVolumeToFileInMemory(&buffer, file_format, src_volume, src_palette, src_box);
+    if (SUCCEEDED(hr))
+    {
+        hr = write_buffer_to_file(dst_filename, buffer);
+        ID3DXBuffer_Release(buffer);
+    }
+
     return hr;
 }

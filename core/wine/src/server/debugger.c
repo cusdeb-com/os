@@ -27,7 +27,6 @@
 #include <stdio.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 
@@ -43,6 +42,7 @@ enum debug_event_state { EVENT_QUEUED, EVENT_SENT, EVENT_DELAYED, EVENT_CONTINUE
 struct debug_event
 {
     struct object          obj;       /* object header */
+    struct event_sync     *sync;      /* sync object for wait/signal */
     struct list            entry;     /* entry in event queue */
     struct thread         *sender;    /* thread which sent this event */
     struct file           *file;      /* file object for events that need one */
@@ -69,65 +69,43 @@ struct type_descr debug_obj_type =
 struct debug_obj
 {
     struct object        obj;         /* object header */
+    struct object       *sync;       /* sync object for wait/signal */
     struct list          event_queue; /* pending events queue */
     unsigned int         flags;       /* debug flags */
 };
 
 
 static void debug_event_dump( struct object *obj, int verbose );
-static int debug_event_signaled( struct object *obj, struct wait_queue_entry *entry );
+static struct object *debug_event_get_sync( struct object *obj );
 static void debug_event_destroy( struct object *obj );
 
 static const struct object_ops debug_event_ops =
 {
-    sizeof(struct debug_event),    /* size */
-    &no_type,                      /* type */
-    debug_event_dump,              /* dump */
-    add_queue,                     /* add_queue */
-    remove_queue,                  /* remove_queue */
-    debug_event_signaled,          /* signaled */
-    no_satisfied,                  /* satisfied */
-    no_signal,                     /* signal */
-    no_get_fd,                     /* get_fd */
-    default_map_access,            /* map_access */
-    default_get_sd,                /* get_sd */
-    default_set_sd,                /* set_sd */
-    no_get_full_name,              /* get_full_name */
-    no_lookup_name,                /* lookup_name */
-    no_link_name,                  /* link_name */
-    NULL,                          /* unlink_name */
-    no_open_file,                  /* open_file */
-    no_kernel_obj_list,            /* get_kernel_obj_list */
-    no_close_handle,               /* close_handle */
-    debug_event_destroy            /* destroy */
+    .size     = sizeof(struct debug_event),
+    .type     = &no_type,
+    .dump     = debug_event_dump,
+    .get_sync = debug_event_get_sync,
+    .destroy  = debug_event_destroy,
+};
+
+struct debug_obj_init_data
+{
+    unsigned int flags;
 };
 
 static void debug_obj_dump( struct object *obj, int verbose );
-static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry );
+static bool debug_obj_init( struct object *obj, const void *init_data );
+static struct object *debug_obj_get_sync( struct object *obj );
 static void debug_obj_destroy( struct object *obj );
 
 static const struct object_ops debug_obj_ops =
 {
-    sizeof(struct debug_obj),      /* size */
-    &debug_obj_type,               /* type */
-    debug_obj_dump,                /* dump */
-    add_queue,                     /* add_queue */
-    remove_queue,                  /* remove_queue */
-    debug_obj_signaled,            /* signaled */
-    no_satisfied,                  /* satisfied */
-    no_signal,                     /* signal */
-    no_get_fd,                     /* get_fd */
-    default_map_access,            /* map_access */
-    default_get_sd,                /* get_sd */
-    default_set_sd,                /* set_sd */
-    default_get_full_name,         /* get_full_name */
-    no_lookup_name,                /* lookup_name */
-    directory_link_name,           /* link_name */
-    default_unlink_name,           /* unlink_name */
-    no_open_file,                  /* open_file */
-    no_kernel_obj_list,            /* get_kernel_obj_list */
-    no_close_handle,               /* close_handle */
-    debug_obj_destroy              /* destroy */
+    .size     = sizeof(struct debug_obj),
+    .type     = &debug_obj_type,
+    .dump     = debug_obj_dump,
+    .init     = debug_obj_init,
+    .get_sync = debug_obj_get_sync,
+    .destroy  = debug_obj_destroy,
 };
 
 /* get a pointer to TEB->ArbitraryUserPointer in the client address space */
@@ -252,7 +230,7 @@ static void link_event( struct debug_obj *debug_obj, struct debug_event *event )
     {
         /* grab reference since debugger could be killed while trying to wake up */
         grab_object( debug_obj );
-        wake_up( &debug_obj->obj, 0 );
+        signal_sync( debug_obj->sync );
         release_object( debug_obj );
     }
 }
@@ -261,10 +239,11 @@ static void link_event( struct debug_obj *debug_obj, struct debug_event *event )
 static void resume_event( struct debug_obj *debug_obj, struct debug_event *event )
 {
     event->state = EVENT_QUEUED;
+    reset_sync( (struct object *)event->sync );
     if (!event->sender->process->debug_event)
     {
         grab_object( debug_obj );
-        wake_up( &debug_obj->obj, 0 );
+        signal_sync( debug_obj->sync );
         release_object( debug_obj );
     }
 }
@@ -273,6 +252,7 @@ static void resume_event( struct debug_obj *debug_obj, struct debug_event *event
 static void delay_event( struct debug_obj *debug_obj, struct debug_event *event )
 {
     event->state = EVENT_DELAYED;
+    reset_sync( (struct object *)event->sync );
     if (event->sender->process->debug_event == event) event->sender->process->debug_event = NULL;
 }
 
@@ -299,11 +279,11 @@ static void debug_event_dump( struct object *obj, int verbose )
              debug_event->sender, debug_event->data.code, debug_event->state );
 }
 
-static int debug_event_signaled( struct object *obj, struct wait_queue_entry *entry )
+static struct object *debug_event_get_sync( struct object *obj )
 {
     struct debug_event *debug_event = (struct debug_event *)obj;
     assert( obj->ops == &debug_event_ops );
-    return debug_event->state == EVENT_CONTINUED;
+    return grab_object( debug_event->sync );
 }
 
 static void debug_event_destroy( struct object *obj )
@@ -311,6 +291,7 @@ static void debug_event_destroy( struct object *obj )
     struct debug_event *event = (struct debug_event *)obj;
     assert( obj->ops == &debug_event_ops );
 
+    if (event->sync) release_object( event->sync );
     if (event->file) release_object( event->file );
     release_object( event->sender );
 }
@@ -323,11 +304,21 @@ static void debug_obj_dump( struct object *obj, int verbose )
              debug_obj->event_queue.next, debug_obj->event_queue.prev );
 }
 
-static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry )
+static bool debug_obj_init( struct object *obj, const void *init_data )
+{
+    struct debug_obj *debug_obj = (struct debug_obj *)obj;
+    const struct debug_obj_init_data *data = init_data;
+
+    debug_obj->flags = data->flags;
+    list_init( &debug_obj->event_queue );
+    return !!(debug_obj->sync = create_internal_sync( 1, 0 ));
+}
+
+static struct object *debug_obj_get_sync( struct object *obj )
 {
     struct debug_obj *debug_obj = (struct debug_obj *)obj;
     assert( obj->ops == &debug_obj_ops );
-    return find_event_to_send( debug_obj ) != NULL;
+    return grab_object( debug_obj->sync );
 }
 
 static void debug_obj_destroy( struct object *obj )
@@ -342,28 +333,13 @@ static void debug_obj_destroy( struct object *obj )
     /* free all pending events */
     while ((ptr = list_head( &debug_obj->event_queue )))
         unlink_event( debug_obj, LIST_ENTRY( ptr, struct debug_event, entry ));
+
+    if (debug_obj->sync) release_object( debug_obj->sync );
 }
 
 struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access )
 {
     return (struct debug_obj *)get_handle_obj( process, handle, access, &debug_obj_ops );
-}
-
-static struct debug_obj *create_debug_obj( struct object *root, const struct unicode_str *name,
-                                           unsigned int attr, unsigned int flags,
-                                           const struct security_descriptor *sd )
-{
-    struct debug_obj *debug_obj;
-
-    if ((debug_obj = create_named_object( root, &debug_obj_ops, name, attr, sd )))
-    {
-        if (get_error() != STATUS_OBJECT_NAME_EXISTS)
-        {
-            debug_obj->flags = flags;
-            list_init( &debug_obj->event_queue );
-        }
-    }
-    return debug_obj;
 }
 
 /* continue a debug event */
@@ -406,7 +382,7 @@ static int continue_debug_event( struct debug_obj *debug_obj, struct process *pr
                 assert( event->sender->process->debug_event == event );
                 event->status = status;
                 event->state  = EVENT_CONTINUED;
-                wake_up( &event->obj, 0 );
+                signal_sync( (struct object *)event->sync );
                 unlink_event( debug_obj, event );
                 resume_process( process );
                 return 1;
@@ -427,12 +403,21 @@ static struct debug_event *alloc_debug_event( struct thread *thread, int code, c
 
     /* build the event */
     if (!(event = alloc_object( &debug_event_ops ))) return NULL;
+    event->sync      = NULL;
     event->state     = EVENT_QUEUED;
     event->sender    = (struct thread *)grab_object( thread );
     event->file      = NULL;
     memset( &event->data, 0, sizeof(event->data) );
     fill_debug_event[code - DbgCreateThreadStateChange]( event, arg );
     event->data.code = code;
+
+    /* create a server-side sync here, as send_debug_event still uses server_select to pass contexts around */
+    if (!(event->sync = create_server_internal_sync( 1, 0 )))
+    {
+        release_object( event );
+        return NULL;
+    }
+
     return event;
 }
 
@@ -518,7 +503,7 @@ void debugger_detach( struct process *process, struct debug_obj *debug_obj )
         assert( event->state != EVENT_CONTINUED );
         event->status = DBG_CONTINUE;
         event->state  = EVENT_CONTINUED;
-        wake_up( &event->obj, 0 );
+        signal_sync( (struct object *)event->sync );
         unlink_event( debug_obj, event );
         /* from queued debug event */
         resume_process( process );
@@ -534,23 +519,12 @@ void debugger_detach( struct process *process, struct debug_obj *debug_obj )
 /* create a debug object */
 DECL_HANDLER(create_debug_obj)
 {
-    struct debug_obj *debug_obj;
-    struct unicode_str name;
-    struct object *root;
-    const struct security_descriptor *sd;
-    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
+    struct debug_obj_init_data data =  { .flags = req->flags };
+    struct object_params params = { .ops = &debug_obj_ops, .access = req->access, .init_data = &data };
 
-    if (!objattr) return;
-    if ((debug_obj = create_debug_obj( root, &name, objattr->attributes, req->flags, sd )))
-    {
-        if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, debug_obj, req->access, objattr->attributes );
-        else
-            reply->handle = alloc_handle_no_access_check( current->process, debug_obj,
-                                                          req->access, objattr->attributes );
-        release_object( debug_obj );
-    }
-    if (root) release_object( root );
+    if (!get_req_object_attributes( &params )) return;
+    reply->handle = create_named_obj_handle( current->process, &params );
+    if (params.root) release_object( params.root );
 }
 
 /* Wait for a debug event */
@@ -564,11 +538,13 @@ DECL_HANDLER(wait_debug_event)
     if ((event = find_event_to_send( debug_obj )))
     {
         event->state = EVENT_SENT;
+        reset_sync( (struct object *)event->sync );
         event->sender->process->debug_event = event;
         reply->pid = get_process_id( event->sender->process );
         reply->tid = get_thread_id( event->sender );
         alloc_event_handles( event, current->process );
         set_reply_data( &event->data, min( get_reply_max_size(), sizeof(event->data) ));
+        if (!find_event_to_send( debug_obj )) reset_sync( debug_obj->sync );
     }
     else
     {

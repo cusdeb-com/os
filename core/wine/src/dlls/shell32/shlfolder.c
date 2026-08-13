@@ -344,10 +344,8 @@ HRESULT SHELL32_GetDisplayNameOfChild (IShellFolder2 * psf,
 	    LPITEMIDLIST pidlNext = ILGetNext (pidl);
 
 	    hr = IShellFolder2_GetDisplayNameOf (psfChild, pidlNext, dwFlags, &strTemp);
-	    if (SUCCEEDED (hr)) {
-		if(!StrRetToStrNW (szOut, dwOutLen, &strTemp, pidlNext))
-                    hr = E_FAIL;
-	    }
+	    if (SUCCEEDED (hr))
+		hr = StrRetToBufW (&strTemp, pidlNext, szOut, dwOutLen);
 	    IShellFolder2_Release (psfChild);
 	}
 	ILFree (pidlFirst);
@@ -439,7 +437,26 @@ HRESULT SHELL32_GetItemAttributes (IShellFolder2 *psf, LPCITEMIDLIST pidl, LPDWO
                           SFGAO_CANRENAME | SFGAO_CANLINK | SFGAO_CANMOVE | SFGAO_CANCOPY;
 
 	if (file_attr & FILE_ATTRIBUTE_DIRECTORY)
-	    *pdwAttributes |=  (SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_STORAGE);
+        {
+            IEnumIDList *enum_ids;
+            IShellFolder *child;
+
+            *pdwAttributes |= (SFGAO_FOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_STORAGE);
+
+            if (dwAttributes & SFGAO_HASSUBFOLDER)
+            {
+                if (SUCCEEDED(IShellFolder2_BindToObject(psf, pidl, NULL, &IID_IShellFolder, (void **)&child)))
+                {
+                    if (IShellFolder_EnumObjects(child, NULL, SHCONTF_FOLDERS|SHCONTF_INCLUDEHIDDEN, &enum_ids) == S_OK)
+                    {
+                        if (IEnumIDList_Skip(enum_ids, 1) != S_OK)
+                            *pdwAttributes &= ~SFGAO_HASSUBFOLDER;
+                        IEnumIDList_Release(enum_ids);
+                    }
+                    IShellFolder_Release(child);
+                }
+            }
+        }
 	else
         {
 	    *pdwAttributes &= ~(SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_STORAGE);

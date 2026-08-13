@@ -503,7 +503,7 @@ static void range_to_string(HTMLTxtRange *This, wstrbuf_t *buf)
     if(buf->len) {
         WCHAR *p;
 
-        for(p = buf->buf+buf->len-1; p >= buf->buf && iswspace(*p); p--);
+        for(p = buf->buf+buf->len-1; p > buf->buf && iswspace(*p); p--);
 
         p = wcschr(p, '\r');
         if(p)
@@ -1685,7 +1685,7 @@ static const tid_t TextRange_iface_tids[] = {
     0
 };
 dispex_static_data_t TextRange_dispex = {
-    .id         = PROT_TextRange,
+    .id         = OBJID_TextRange,
     .vtbl       = &HTMLTxtRange_dispex_vtbl,
     .disp_tid   = IHTMLTxtRange_tid,
     .iface_tids = TextRange_iface_tids,
@@ -1991,7 +1991,7 @@ static const tid_t Range_iface_tids[] = {
 };
 
 dispex_static_data_t Range_dispex = {
-    .id         = PROT_Range,
+    .id         = OBJID_Range,
     .vtbl       = &HTMLDOMRange_dispex_vtbl,
     .disp_tid   = DispHTMLDOMRange_tid,
     .iface_tids = Range_iface_tids,
