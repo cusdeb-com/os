@@ -52,6 +52,11 @@ static BOOL compare(FLOAT u, FLOAT v)
     return (fabs(u-v) < admitted_error);
 }
 
+static BOOL compare_vec2(D3DXVECTOR2 u, D3DXVECTOR2 v)
+{
+    return compare(u.x, v.x) && compare(u.y, v.y);
+}
+
 static BOOL compare_vec3(D3DXVECTOR3 u, D3DXVECTOR3 v)
 {
     return ( compare(u.x, v.x) && compare(u.y, v.y) && compare(u.z, v.z) );
@@ -5221,6 +5226,8 @@ static void test_create_skin_info(void)
         D3DXMATRIX *transform;
         D3DXMATRIX identity_matrix;
 
+        D3DXMatrixIdentity(&identity_matrix);
+
         /* test initial values */
         hr = skininfo->lpVtbl->GetDeclaration(skininfo, declaration_out);
         ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
@@ -5260,7 +5267,6 @@ static void test_create_skin_info(void)
             hr = skininfo->lpVtbl->SetBoneOffsetMatrix(skininfo, 0, NULL);
             ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, got %#lx\n", hr);
 
-            D3DXMatrixIdentity(&identity_matrix);
             hr = skininfo->lpVtbl->SetBoneOffsetMatrix(skininfo, 0, &identity_matrix);
             ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
 
@@ -5457,6 +5463,137 @@ static void test_create_skin_info(void)
 
     hr = D3DXCreateSkinInfo(1, NULL, 1, &skininfo);
     ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, got %#lx\n", hr);
+}
+
+struct vertex_texcoord
+{
+    D3DXVECTOR3 position;
+    D3DXVECTOR3 normal;
+    D3DXVECTOR2 texcoord;
+};
+
+static void test_transformed_mesh(const struct vertex_texcoord vertices[4], const struct vertex_texcoord expected[4])
+{
+    for (unsigned int i = 0; i < 4; ++i)
+    {
+        winetest_push_context("vertex %u", i);
+        ok(compare_vec3(vertices[i].position, expected[i].position),
+                "Expected position (%.8e, %.8e, %.8e), got (%.8e, %.8e, %.8e).\n",
+                expected[i].position.x, expected[i].position.y, expected[i].position.z,
+                vertices[i].position.x, vertices[i].position.y, vertices[i].position.z);
+        ok(compare_vec3(vertices[i].normal, expected[i].normal),
+                "Expected normal (%.8e, %.8e, %.8e), got (%.8e, %.8e, %.8e).\n",
+                expected[i].normal.x, expected[i].normal.y, expected[i].normal.z,
+                vertices[i].normal.x, vertices[i].normal.y, vertices[i].normal.z);
+        ok(compare_vec2(vertices[i].texcoord, expected[i].texcoord),
+                "Expected texcoord (%.8e, %.8e), got (%.8e, %.8e).\n",
+                expected[i].texcoord.x, expected[i].texcoord.y,
+                vertices[i].texcoord.x, vertices[i].texcoord.y);
+        winetest_pop_context();
+    }
+}
+
+static void test_update_skinned_mesh(void)
+{
+    static const float bone0_weights[2] = {1.0f, 0.5f}, bone1_weights[2] = {1.0f, 0.5f};
+    static const DWORD bone0_vertices[2] = {1, 3}, bone1_vertices[2] = {2, 3};
+    static const D3DXMATRIX bone_matrices[2] =
+    {
+        {{{
+             2.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+             0.1f,  0.2f,  0.3f,  1.0f,
+        }}},
+        {{{
+             1.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  2.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+            -0.5f,  0.4f,  0.5f,  1.0f,
+        }}},
+    };
+    static const D3DXMATRIX update_matrices[2] =
+    {
+        {{{
+             1.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+             2.0f,  2.0f,  4.0f,  1.0f,
+        }}},
+        {{{
+             2.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+            -4.0f, -4.0f,  4.0f,  1.0f,
+        }}},
+    };
+
+    static const struct vertex_texcoord src_vertices[4] =
+    {
+        {{ 1.0f,  1.0f,  1.0f}, { 1.0f, 0.0f, 0.0f}, { 0.2f, 0.2f}},
+        {{ 1.0f,  1.0f, -1.0f}, { 0.0f, 1.0f, 0.0f}, { 0.2f, 0.4f}},
+        {{-1.0f, -1.0f,  1.0f}, { 0.0f, 0.0f, 1.0f}, { 0.4f, 0.2f}},
+        {{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, { 0.4f, 0.4f}},
+    },
+    expect_vertices[4] =
+    {
+        {{ 0.0f,  0.0f,  0.0f}, { 0.0f, 0.0f, 0.0f}, { 0.2f, 0.2f}},
+        {{ 3.0f,  3.0f,  3.0f}, { 0.0f, 1.0f, 0.0f}, { 0.2f, 0.4f}},
+        {{-6.0f, -5.0f,  5.0f}, { 0.0f, 0.0f, 1.0f}, { 0.4f, 0.2f}},
+        {{-2.5f, -2.0f,  3.0f}, {-1.5f, 0.0f, 0.0f}, { 0.4f, 0.4f}},
+    },
+    expect_vertices2[4] =
+    {
+        {{ 0.0f,  0.0f,  0.0f}, {  0.0f, 0.0f, 0.0f}, { 0.2f, 0.2f}},
+        {{ 3.0f,  3.0f,  3.0f}, {  0.0f, 1.0f, 0.0f}, { 0.2f, 0.4f}},
+        {{-6.0f, -5.0f,  5.0f}, {  0.0f, 0.0f, 1.0f}, { 0.4f, 0.2f}},
+        {{-2.5f, -2.0f,  3.0f}, {-0.75f, 0.0f, 0.0f}, { 0.4f, 0.4f}},
+    };
+
+    struct vertex_texcoord dst_vertices[4];
+    ID3DXSkinInfo *skin_info;
+    D3DMATRIX inv_transp_mat[2];
+    unsigned int i;
+    HRESULT hr;
+
+    static const D3DVERTEXELEMENT9 decl_elements[] =
+    {
+        {0,  0, D3DDECLTYPE_FLOAT3, 0, D3DDECLUSAGE_POSITION, 0},
+        {0, 12, D3DDECLTYPE_FLOAT3, 0, D3DDECLUSAGE_NORMAL, 0},
+        {0, 24, D3DDECLTYPE_FLOAT2, 0, D3DDECLUSAGE_TEXCOORD, 0},
+        D3DDECL_END()
+    };
+
+    memset(dst_vertices, 0xcc, sizeof(dst_vertices));
+
+    hr = D3DXCreateSkinInfo(4, decl_elements, 2, &skin_info);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+
+    skin_info->lpVtbl->SetBoneInfluence(skin_info, 0, 2, bone0_vertices, bone0_weights);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 0, &bone_matrices[0]);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->SetBoneInfluence(skin_info, 1, 2, bone1_vertices, bone1_weights);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 1, &bone_matrices[1]);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    for (i = 0; i < ARRAY_SIZE(update_matrices); ++i)
+    {
+        D3DXMatrixTranspose(&inv_transp_mat[i], &update_matrices[i]);
+        D3DXMatrixInverse(&inv_transp_mat[i], NULL, &inv_transp_mat[i]);
+    }
+    winetest_push_context("NULL inverse transposed matrix");
+    hr = skin_info->lpVtbl->UpdateSkinnedMesh(skin_info, update_matrices, NULL, src_vertices, dst_vertices);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    test_transformed_mesh(dst_vertices, expect_vertices);
+    winetest_pop_context();
+    winetest_push_context("valid inverse transposed matrix");
+    hr = skin_info->lpVtbl->UpdateSkinnedMesh(skin_info, update_matrices, inv_transp_mat, src_vertices, dst_vertices);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    test_transformed_mesh(dst_vertices, expect_vertices2);
+    winetest_pop_context();
+
+    skin_info->lpVtbl->Release(skin_info);
 }
 
 static void test_convert_adjacency_to_point_reps(void)
@@ -6900,6 +7037,11 @@ static void test_weld_vertices(void)
         D3DXVECTOR3 position;
         BYTE color[4];
     };
+    struct vertex_color_float
+    {
+        D3DXVECTOR3 position;
+        float color[4];
+    };
     struct vertex_texcoord_short2
     {
         D3DXVECTOR3 position;
@@ -6940,6 +7082,7 @@ static void test_weld_vertices(void)
     UINT vertex_size_texcoord = sizeof(struct vertex_texcoord);
     UINT vertex_size_color = sizeof(struct vertex_color);
     UINT vertex_size_color_ubyte4 = sizeof(struct vertex_color_ubyte4);
+    UINT vertex_size_color_float = sizeof(struct vertex_color_float);
     UINT vertex_size_texcoord_short2 = sizeof(struct vertex_texcoord_short2);
     UINT vertex_size_normal_short4 = sizeof(struct vertex_normal_short4);
     UINT vertex_size_texcoord_float16_2 = sizeof(struct vertex_texcoord_float16_2);
@@ -7030,10 +7173,10 @@ static void test_weld_vertices(void)
         {0, 12, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 10},
         D3DDECL_END()
     };
-    D3DVERTEXELEMENT9 declaration_color2[] =
+    D3DVERTEXELEMENT9 declaration_color_float[] =
     {
         {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
-        {0, 12, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 2},
+        {0, 12, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
         D3DDECL_END()
     };
     D3DVERTEXELEMENT9 declaration_color1[] =
@@ -7870,17 +8013,19 @@ static void test_weld_vertices(void)
     const DWORD exp_face_remap25[] = {0, 1};
     const DWORD exp_vertex_remap25[] = {0, 1, 2, 4, 5, -1};
     const DWORD exp_new_num_vertices25 = ARRAY_SIZE(exp_vertices25);
-    /* Test 26. Weld color with usage index larger than 1. Shows that none of
-     * the epsilon values are used. */
-    const struct vertex_color vertices26[] =
+    /* Test 26. Weld float color. */
+    /* Previously this test used index > 1 but that case appears to be
+     * effectively unhandled in native so the test gave inconsistent
+     * results. */
+    const struct vertex_color_float vertices26[] =
     {
-        {{ 0.0f,  3.0f,  0.f}, 0xFFFFFFFF},
-        {{ 2.0f,  3.0f,  0.f}, 0xFFFFFFFF},
-        {{ 0.0f,  0.0f,  0.f}, 0xFFFFFFFF},
+        {{ 0.0f,  3.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+        {{ 2.0f,  3.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+        {{ 0.0f,  0.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
 
-        {{ 3.0f,  3.0f,  0.f}, 0x00000000},
-        {{ 3.0f,  0.0f,  0.f}, 0xFFFFFFFF},
-        {{ 1.0f,  0.0f,  0.f}, 0x01010101},
+        {{ 2.5f,  3.0f,  0.f}, {0.0f, 0.0f, 0.0f, 0.0f}},
+        {{ 3.0f,  0.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+        {{ 0.5f,  0.0f,  0.f}, {0.1f, 0.1f, 0.1f, 0.1f}},
     };
     const DWORD indices26[] = {0, 1, 2, 3, 4, 5};
     const DWORD attributes26[] = {0, 0};
@@ -7889,24 +8034,19 @@ static void test_weld_vertices(void)
     DWORD flags26 = D3DXWELDEPSILONS_WELDPARTIALMATCHES;
     const D3DXWELDEPSILONS epsilons26 = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f, 1.0f};
     const DWORD adjacency26[] = {-1, 1, -1, -1, -1, 0};
-    const struct vertex_color exp_vertices26[] =
+    const struct vertex_color_float exp_vertices26[] =
     {
-        {{ 0.0f,  3.0f,  0.f}, 0xFFFFFFFF},
-        {{ 2.0f,  3.0f,  0.f}, 0xFFFFFFFF},
-        {{ 0.0f,  0.0f,  0.f}, 0xFFFFFFFF},
+        {{ 0.0f,  3.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+        {{ 2.0f,  3.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+        {{ 0.0f,  0.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
 
-        {{ 2.0f,  3.0f,  0.f}, 0x00000000},
-        {{ 3.0f,  0.0f,  0.f}, 0xFFFFFFFF},
-        {{ 0.0f,  0.0f,  0.f}, 0x01010101},
+        {{ 3.0f,  0.0f,  0.f}, {1.0f, 1.0f, 1.0f, 1.0f}},
     };
-    const DWORD exp_indices26[] = {0, 1, 2, 3, 4, 5};
+    const DWORD exp_indices26[] = {0, 1, 2, 1, 3, 2};
     const DWORD exp_face_remap26[] = {0, 1};
-    const DWORD exp_vertex_remap26[] = {0, 1, 2, 3, 4, 5};
+    const DWORD exp_vertex_remap26[] = {0, 1, 2, 4, -1, -1};
     const DWORD exp_new_num_vertices26 = ARRAY_SIZE(exp_vertices26);
     /* Test 27. Weld color with usage index 1 (specular). */
-    /* Previously this test used float color values and index > 1 but that case
-     * appears to be effectively unhandled in native so the test gave
-     * inconsistent results. */
     const struct vertex_color vertices27[] =
     {
         {{ 0.0f,  3.0f,  0.0f}, 0x00000000},
@@ -8510,8 +8650,8 @@ static void test_weld_vertices(void)
             num_vertices26,
             num_faces26,
             options,
-            declaration_color2,
-            vertex_size_color,
+            declaration_color_float,
+            vertex_size_color_float,
             flags26,
             &epsilons26,
             adjacency26,
@@ -11829,6 +11969,297 @@ static void test_mesh_optimize(void)
     free_test_context(test_context);
 }
 
+static void test_intersect(void)
+{
+    /* Two quads facing the ray: faces 0 and 1 at z = 1.0 (attribute group 0),
+     * faces 2 and 3 at z = 2.0 (attribute group 1). */
+    static const D3DXVECTOR3 vertices[] =
+    {
+        {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f},
+        {0.0f, 0.0f, 2.0f}, {1.0f, 0.0f, 2.0f}, {0.0f, 1.0f, 2.0f}, {1.0f, 1.0f, 2.0f},
+    };
+    static const DWORD indices[] = {0, 1, 2, 3, 2, 1, 4, 5, 6, 7, 6, 5};
+    static const DWORD attributes[] = {0, 0, 1, 1};
+    static const DWORD options[] = {D3DXMESH_MANAGED, D3DXMESH_MANAGED | D3DXMESH_32BIT};
+    static const D3DVERTEXELEMENT9 decl_no_position[] =
+    {
+        {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 0},
+        D3DDECL_END()
+    };
+    static const D3DVERTEXELEMENT9 decl_position4[] =
+    {
+        {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+        D3DDECL_END()
+    };
+    static const D3DVERTEXELEMENT9 *position_decls[] = {decl_no_position, decl_position4};
+    static const D3DXVECTOR3 ray_dir = {0.0f, 0.0f, 1.0f};
+    static const D3DXVECTOR3 ray_pos = {0.25f, 0.25f, 0.0f};
+    static const D3DXVECTOR3 ray_pos_second = {0.75f, 0.75f, 0.0f};
+    static const D3DXVECTOR3 ray_pos_miss = {2.0f, 2.0f, 0.0f};
+    const D3DXINTERSECTINFO *hit_info;
+    struct test_context *test_context;
+    IDirect3DDevice9 *device;
+    DWORD face_index, count, attrib_table_size;
+    D3DXATTRIBUTERANGE attrib_ranges[3];
+    ID3DXBuffer *all_hits;
+    DWORD *attribute_data;
+    float u, v, dist;
+    void *vertex_data;
+    void *index_data;
+    unsigned int i, j;
+    ID3DXMesh *mesh;
+    HRESULT hr;
+    BOOL hit;
+
+    if (!(test_context = new_test_context()))
+    {
+        skip("Couldn't create test context.\n");
+        return;
+    }
+    device = test_context->device;
+
+    for (i = 0; i < ARRAY_SIZE(options); i++)
+    {
+        winetest_push_context("options %#lx", options[i]);
+
+        hr = D3DXCreateMeshFVF(ARRAY_SIZE(attributes), ARRAY_SIZE(vertices), options[i],
+                D3DFVF_XYZ, device, &mesh);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = mesh->lpVtbl->LockVertexBuffer(mesh, 0, &vertex_data);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        memcpy(vertex_data, vertices, sizeof(vertices));
+        hr = mesh->lpVtbl->UnlockVertexBuffer(mesh);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = mesh->lpVtbl->LockIndexBuffer(mesh, 0, &index_data);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        if (options[i] & D3DXMESH_32BIT)
+        {
+            memcpy(index_data, indices, sizeof(indices));
+        }
+        else
+        {
+            WORD *indices_16bit = index_data;
+
+            for (j = 0; j < ARRAY_SIZE(indices); j++)
+                indices_16bit[j] = indices[j];
+        }
+        hr = mesh->lpVtbl->UnlockIndexBuffer(mesh);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = mesh->lpVtbl->LockAttributeBuffer(mesh, 0, &attribute_data);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        memcpy(attribute_data, attributes, sizeof(attributes));
+        hr = mesh->lpVtbl->UnlockAttributeBuffer(mesh);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = D3DXIntersect(NULL, &ray_pos, &ray_dir, &hit, &face_index, &u, &v, &dist, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, NULL, &ray_dir, &hit, &face_index, &u, &v, &dist, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, NULL, &hit, &face_index, &u, &v, &dist, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, NULL, &face_index, NULL, NULL, NULL, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, NULL, NULL, NULL, NULL, NULL, NULL, &count);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, NULL, NULL, NULL, NULL, NULL, &all_hits, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, &hit, NULL, NULL, NULL, NULL, NULL, NULL);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hit = FALSE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        u = v = dist = -1.0f;
+        all_hits = NULL;
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, &all_hits, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hit, "Expected a hit.\n");
+        ok(!face_index, "Got unexpected face index %lu.\n", face_index);
+        ok(compare(u, 0.25f), "Got unexpected u %.8e.\n", u);
+        ok(compare(v, 0.25f), "Got unexpected v %.8e.\n", v);
+        ok(compare(dist, 1.0f), "Got unexpected distance %.8e.\n", dist);
+        ok(count == 2, "Got unexpected hit count %lu.\n", count);
+        ok(!!all_hits, "Expected a hit buffer.\n");
+        if (all_hits)
+        {
+            ok(ID3DXBuffer_GetBufferSize(all_hits) == 2 * sizeof(*hit_info),
+                    "Got unexpected buffer size %lu.\n", ID3DXBuffer_GetBufferSize(all_hits));
+            hit_info = ID3DXBuffer_GetBufferPointer(all_hits);
+            ok(!hit_info[0].FaceIndex, "Got unexpected face index %lu.\n", hit_info[0].FaceIndex);
+            ok(compare(hit_info[0].U, 0.25f), "Got unexpected u %.8e.\n", hit_info[0].U);
+            ok(compare(hit_info[0].V, 0.25f), "Got unexpected v %.8e.\n", hit_info[0].V);
+            ok(compare(hit_info[0].Dist, 1.0f), "Got unexpected distance %.8e.\n", hit_info[0].Dist);
+            ok(hit_info[1].FaceIndex == 2, "Got unexpected face index %lu.\n", hit_info[1].FaceIndex);
+            ok(compare(hit_info[1].U, 0.25f), "Got unexpected u %.8e.\n", hit_info[1].U);
+            ok(compare(hit_info[1].V, 0.25f), "Got unexpected v %.8e.\n", hit_info[1].V);
+            ok(compare(hit_info[1].Dist, 2.0f), "Got unexpected distance %.8e.\n", hit_info[1].Dist);
+            ID3DXBuffer_Release(all_hits);
+        }
+
+        hit = FALSE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        dist = -1.0f;
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos_second, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, NULL, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hit, "Expected a hit.\n");
+        ok(face_index == 1, "Got unexpected face index %lu.\n", face_index);
+        ok(compare(dist, 1.0f), "Got unexpected distance %.8e.\n", dist);
+        ok(count == 2, "Got unexpected hit count %lu.\n", count);
+
+        hit = TRUE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        u = v = dist = -1.0f;
+        all_hits = NULL;
+        hr = D3DXIntersect((ID3DXBaseMesh *)mesh, &ray_pos_miss, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, &all_hits, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(!hit, "Expected no hit.\n");
+        ok(!count, "Got unexpected hit count %lu.\n", count);
+        ok(!all_hits, "Expected no hit buffer.\n");
+        ok(face_index == 0xdeadbeef, "Got unexpected face index %lu.\n", face_index);
+        ok(u == -1.0f, "Got unexpected u %.8e.\n", u);
+        ok(v == -1.0f, "Got unexpected v %.8e.\n", v);
+        ok(dist == -1.0f, "Got unexpected distance %.8e.\n", dist);
+
+        hr = D3DXIntersectSubset(NULL, 0, &ray_pos, &ray_dir, &hit, NULL, NULL, NULL, NULL, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = D3DXIntersectSubset((ID3DXBaseMesh *)mesh, 0, &ray_pos, &ray_dir, &hit, NULL,
+                NULL, NULL, NULL, NULL, NULL);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+
+        hr = mesh->lpVtbl->OptimizeInplace(mesh, D3DXMESHOPT_ATTRSORT, NULL, NULL, NULL, NULL);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        attrib_table_size = 0;
+        hr = mesh->lpVtbl->GetAttributeTable(mesh, NULL, &attrib_table_size);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(attrib_table_size == 2, "Got unexpected attribute table size %lu.\n", attrib_table_size);
+
+        hit = FALSE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        u = v = dist = -1.0f;
+        all_hits = NULL;
+        hr = D3DXIntersectSubset((ID3DXBaseMesh *)mesh, 0, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, &all_hits, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hit, "Expected a hit.\n");
+        ok(!face_index, "Got unexpected face index %lu.\n", face_index);
+        ok(compare(u, 0.25f), "Got unexpected u %.8e.\n", u);
+        ok(compare(v, 0.25f), "Got unexpected v %.8e.\n", v);
+        ok(compare(dist, 1.0f), "Got unexpected distance %.8e.\n", dist);
+        ok(count == 1, "Got unexpected hit count %lu.\n", count);
+        ok(!!all_hits, "Expected a hit buffer.\n");
+        if (all_hits)
+        {
+            ok(ID3DXBuffer_GetBufferSize(all_hits) == sizeof(*hit_info),
+                    "Got unexpected buffer size %lu.\n", ID3DXBuffer_GetBufferSize(all_hits));
+            hit_info = ID3DXBuffer_GetBufferPointer(all_hits);
+            ok(!hit_info[0].FaceIndex, "Got unexpected face index %lu.\n", hit_info[0].FaceIndex);
+            ok(compare(hit_info[0].U, 0.25f), "Got unexpected u %.8e.\n", hit_info[0].U);
+            ok(compare(hit_info[0].V, 0.25f), "Got unexpected v %.8e.\n", hit_info[0].V);
+            ok(compare(hit_info[0].Dist, 1.0f), "Got unexpected distance %.8e.\n", hit_info[0].Dist);
+            ID3DXBuffer_Release(all_hits);
+        }
+
+        hit = FALSE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        dist = -1.0f;
+        u = v = -1.0f;
+        hr = D3DXIntersectSubset((ID3DXBaseMesh *)mesh, 1, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, NULL, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hit, "Expected a hit.\n");
+        ok(face_index == 2, "Got unexpected face index %lu.\n", face_index);
+        ok(compare(u, 0.25f), "Got unexpected u %.8e.\n", u);
+        ok(compare(v, 0.25f), "Got unexpected v %.8e.\n", v);
+        ok(compare(dist, 2.0f), "Got unexpected distance %.8e.\n", dist);
+        ok(count == 1, "Got unexpected hit count %lu.\n", count);
+
+        hit = TRUE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        u = v = dist = -1.0f;
+        all_hits = NULL;
+        hr = D3DXIntersectSubset((ID3DXBaseMesh *)mesh, 2, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, &all_hits, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(!hit, "Expected no hit.\n");
+        ok(face_index == 0xdeadbeef, "Got unexpected face index %lu.\n", face_index);
+        ok(u == -1.0f, "Got unexpected u %.8e.\n", u);
+        ok(v == -1.0f, "Got unexpected v %.8e.\n", v);
+        ok(dist == -1.0f, "Got unexpected distance %.8e.\n", dist);
+        ok(count == 0xdeadbeef, "Got unexpected hit count %lu.\n", count);
+        ok(!all_hits, "Expected no hit buffer.\n");
+
+        attrib_ranges[0].AttribId = 0;
+        attrib_ranges[0].FaceStart = 0;
+        attrib_ranges[0].FaceCount = 1;
+        attrib_ranges[0].VertexStart = 0;
+        attrib_ranges[0].VertexCount = ARRAY_SIZE(vertices);
+        attrib_ranges[1].AttribId = 1;
+        attrib_ranges[1].FaceStart = 1;
+        attrib_ranges[1].FaceCount = 1;
+        attrib_ranges[1].VertexStart = 0;
+        attrib_ranges[1].VertexCount = ARRAY_SIZE(vertices);
+        attrib_ranges[2].AttribId = 0;
+        attrib_ranges[2].FaceStart = 2;
+        attrib_ranges[2].FaceCount = 1;
+        attrib_ranges[2].VertexStart = 0;
+        attrib_ranges[2].VertexCount = ARRAY_SIZE(vertices);
+        hr = mesh->lpVtbl->SetAttributeTable(mesh, attrib_ranges, ARRAY_SIZE(attrib_ranges));
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hit = FALSE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        dist = -1.0f;
+        hr = D3DXIntersectSubset((ID3DXBaseMesh *)mesh, 0, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, NULL, &count);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hit, "Expected a hit.\n");
+        ok(!face_index, "Got unexpected face index %lu.\n", face_index);
+        ok(compare(dist, 1.0f), "Got unexpected distance %.8e.\n", dist);
+        ok(count == 1, "Got unexpected hit count %lu.\n", count);
+
+        mesh->lpVtbl->Release(mesh);
+        winetest_pop_context();
+    }
+
+    for (i = 0; i < ARRAY_SIZE(position_decls); i++)
+    {
+        ID3DXMesh *decl_mesh;
+
+        winetest_push_context("decl %u", i);
+
+        hr = D3DXCreateMesh(ARRAY_SIZE(attributes), ARRAY_SIZE(vertices), D3DXMESH_MANAGED,
+                position_decls[i], device, &decl_mesh);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hit = TRUE;
+        face_index = 0xdeadbeef;
+        count = 0xdeadbeef;
+        hr = D3DXIntersect((ID3DXBaseMesh *)decl_mesh, &ray_pos, &ray_dir, &hit, &face_index,
+                &u, &v, &dist, NULL, &count);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+
+        decl_mesh->lpVtbl->Release(decl_mesh);
+        winetest_pop_context();
+    }
+
+    free_test_context(test_context);
+}
+
 START_TEST(mesh)
 {
     D3DXBoundProbeTest();
@@ -11836,6 +12267,7 @@ START_TEST(mesh)
     D3DXComputeBoundingSphereTest();
     D3DXGetFVFVertexSizeTest();
     D3DXIntersectTriTest();
+    test_intersect();
     D3DXCreateMeshTest();
     D3DXCreateMeshFVFTest();
     D3DXLoadMeshTest();
@@ -11853,6 +12285,7 @@ START_TEST(mesh)
     D3DXGenerateAdjacencyTest();
     test_update_semantics();
     test_create_skin_info();
+    test_update_skinned_mesh();
     test_convert_adjacency_to_point_reps();
     test_convert_point_reps_to_adjacency();
     test_weld_vertices();

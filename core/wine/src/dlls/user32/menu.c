@@ -99,7 +99,7 @@ static LPCSTR MENU_ParseResource( LPCSTR res, HMENU hMenu )
         res += (lstrlenW(str) + 1) * sizeof(WCHAR);
         if (flags & MF_POPUP)
         {
-            HMENU hSubMenu = CreatePopupMenu();
+            HMENU hSubMenu = NtUserCreatePopupMenu();
             if (!hSubMenu) return NULL;
             if (!(res = MENU_ParseResource( res, hSubMenu ))) return NULL;
             AppendMenuW( hMenu, flags, (UINT_PTR)hSubMenu, str );
@@ -148,7 +148,7 @@ static LPCSTR MENUEX_ParseResource( LPCSTR res, HMENU hMenu)
 	if (resinfo & 1) {	/* Pop-up? */
 	    /* DWORD helpid = GET_DWORD(res); FIXME: use this.  */
 	    res += sizeof(DWORD);
-	    mii.hSubMenu = CreatePopupMenu();
+	    mii.hSubMenu = NtUserCreatePopupMenu();
 	    if (!mii.hSubMenu)
 		return NULL;
 	    if (!(res = MENUEX_ParseResource(res, mii.hSubMenu))) {
@@ -198,6 +198,7 @@ LRESULT WINAPI PopupMenuWndProcA( HWND hwnd, UINT message, WPARAM wParam, LPARAM
     case WM_ERASEBKGND:
     case WM_SHOWWINDOW:
     case MN_GETHMENU:
+    case WM_NCCREATE:
         return NtUserMessageCall( hwnd, message, wParam, lParam,
                                   NULL, NtUserPopupMenuWndProc, TRUE );
 
@@ -223,6 +224,7 @@ LRESULT WINAPI PopupMenuWndProcW( HWND hwnd, UINT message, WPARAM wParam, LPARAM
     case WM_ERASEBKGND:
     case WM_SHOWWINDOW:
     case MN_GETHMENU:
+    case WM_NCCREATE:
         return NtUserMessageCall( hwnd, message, wParam, lParam,
                                   NULL, NtUserPopupMenuWndProc, FALSE );
 
@@ -494,15 +496,6 @@ BOOL WINAPI ModifyMenuA( HMENU hMenu, UINT pos, UINT flags,
 
 
 /**********************************************************************
- *         CreatePopupMenu    (USER32.@)
- */
-HMENU WINAPI CreatePopupMenu(void)
-{
-    return NtUserCreateMenu( TRUE );
-}
-
-
-/**********************************************************************
  *         GetMenuCheckMarkDimensions    (USER.417)
  *         GetMenuCheckMarkDimensions    (USER32.@)
  */
@@ -534,15 +527,6 @@ BOOL WINAPI SetMenuItemBitmaps( HMENU menu, UINT pos, UINT flags, HBITMAP unchec
 
 
 /**********************************************************************
- *         CreateMenu    (USER32.@)
- */
-HMENU WINAPI CreateMenu(void)
-{
-    return NtUserCreateMenu( FALSE );
-}
-
-
-/**********************************************************************
  *         GetMenu    (USER32.@)
  */
 HMENU WINAPI GetMenu( HWND hWnd )
@@ -560,15 +544,6 @@ HMENU WINAPI GetSubMenu( HMENU menu, INT pos )
 {
     UINT ret = NtUserThunkedMenuItemInfo( menu, pos, MF_BYPOSITION, NtUserGetSubMenu, NULL, NULL );
     return UlongToHandle( ret );
-}
-
-
-/**********************************************************************
- *         DrawMenuBar    (USER32.@)
- */
-BOOL WINAPI DrawMenuBar( HWND hwnd )
-{
-    return NtUserDrawMenuBar( hwnd );
 }
 
 
@@ -611,7 +586,7 @@ HMENU WINAPI LoadMenuIndirectW( LPCVOID template )
       case 0: /* standard format is version of 0 */
 	offset = GET_WORD(p);
 	p += sizeof(WORD) + offset;
-	if (!(hMenu = CreateMenu())) return 0;
+	if (!(hMenu = NtUserCreateMenu())) return 0;
 	if (!MENU_ParseResource( p, hMenu ))
 	  {
             NtUserDestroyMenu( hMenu );
@@ -621,7 +596,7 @@ HMENU WINAPI LoadMenuIndirectW( LPCVOID template )
       case 1: /* extended format is version of 1 */
 	offset = GET_WORD(p);
 	p += sizeof(WORD) + offset;
-	if (!(hMenu = CreateMenu())) return 0;
+	if (!(hMenu = NtUserCreateMenu())) return 0;
 	if (!MENUEX_ParseResource( p, hMenu))
 	  {
 	    NtUserDestroyMenu( hMenu );

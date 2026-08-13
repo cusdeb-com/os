@@ -458,7 +458,7 @@ static void ShellView_InitList(IShellViewImpl *This)
 
         lvColumn.fmt = sd.fmt;
         lvColumn.cx = MulDiv(sd.cxChar, tm.tmAveCharWidth * 3, 2); /* chars->pixel */
-        StrRetToStrNW(nameW, ARRAY_SIZE(nameW), &sd.str, NULL);
+        StrRetToBufW(&sd.str, NULL, nameW, ARRAY_SIZE(nameW));
         SendMessageW(This->hWndList, LVM_INSERTCOLUMNW, This->columns, (LPARAM)&lvColumn);
     }
 
@@ -1424,14 +1424,14 @@ static LRESULT ShellView_OnNotify(IShellViewImpl * This, UINT CtlID, LPNMHDR lpn
 
               if (lpnmh->code == LVN_GETDISPINFOW)
               {
-                  StrRetToStrNW( lpdi->item.pszText, lpdi->item.cchTextMax, &sd.str, NULL);
+                  StrRetToBufW(&sd.str, NULL, lpdi->item.pszText, lpdi->item.cchTextMax);
                   TRACE("-- text=%s\n", debugstr_w(lpdi->item.pszText));
               }
               else
               {
                   /* LVN_GETDISPINFOA - shouldn't happen */
                   NMLVDISPINFOA *lpdiA = (NMLVDISPINFOA *)lpnmh;
-                  StrRetToStrNA( lpdiA->item.pszText, lpdiA->item.cchTextMax, &sd.str, NULL);
+                  StrRetToBufA(&sd.str, NULL, lpdiA->item.pszText, lpdiA->item.cchTextMax);
                   TRACE("-- text=%s\n", lpdiA->item.pszText);
               }
 	    }
@@ -1696,8 +1696,8 @@ static LRESULT CALLBACK ShellView_WndProc(HWND hWnd, UINT uMessage, WPARAM wPara
           case WM_GETFONT:      return SendMessageW(pThis->hWndList, WM_GETFONT, wParam, lParam);
 
 	  case WM_DESTROY:	
-	  			RevokeDragDrop(pThis->hWnd);
 				SHChangeNotifyDeregister(pThis->hNotify);
+				RevokeDragDrop(pThis->hWnd);
 	                        break;
 
 	  case WM_ERASEBKGND:

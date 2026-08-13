@@ -42,8 +42,14 @@ static NTSTATUS (WINAPI *pRtlQueryTimeZoneInformation)( RTL_TIME_ZONE_INFORMATIO
 static NTSTATUS (WINAPI *pRtlQueryDynamicTimeZoneInformation)( RTL_DYNAMIC_TIME_ZONE_INFORMATION *);
 static BOOL     (WINAPI *pRtlQueryUnbiasedInterruptTime)( ULONGLONG *time );
 
+#if (defined(__i386__) || defined(__x86_64__)) && !defined(__arm64ec__)
 static BOOL     (WINAPI *pRtlQueryPerformanceCounter)(LARGE_INTEGER*);
 static BOOL     (WINAPI *pRtlQueryPerformanceFrequency)(LARGE_INTEGER*);
+#endif
+
+static NTSTATUS (WINAPI *pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter)(ULONG, ULONGLONG *, ULONGLONG *, ULONGLONG *);
+static HRESULT (WINAPI *pConvertAuxiliaryCounterToPerformanceCounter)(ULONGLONG, ULONGLONG *, ULONGLONG *);
+static HRESULT (WINAPI *pConvertPerformanceCounterToAuxiliaryCounter)(ULONGLONG, ULONGLONG *, ULONGLONG *);
 
 static const int MonthLengths[2][12] =
 {
@@ -152,7 +158,7 @@ static UINT64 multiply_tsc(UINT64 a, UINT64 b)
 static void test_RtlQueryPerformanceCounter(void)
 {
     struct hypervisor_shared_data *hsd;
-    KSHARED_USER_DATA *usd = (void *)0x7ffe0000;
+    KUSER_SHARED_DATA *usd = (void *)0x7ffe0000;
     LARGE_INTEGER frequency, counter;
     NTSTATUS status;
     UINT64 tsc0, tsc1;
@@ -414,7 +420,7 @@ static ULONGLONG read_ksystem_time(volatile KSYSTEM_TIME *time)
 
 static void test_user_shared_data_time(void)
 {
-    KSHARED_USER_DATA *user_shared_data = (void *)0x7ffe0000;
+    KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
     SYSTEM_TIMEOFDAY_INFORMATION timeofday;
     ULONGLONG t1, t2, t3;
     NTSTATUS status;
@@ -479,9 +485,53 @@ static void test_user_shared_data_time(void)
             t1, timeofday.TimeZoneBias.QuadPart);
 }
 
+static void test_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(void)
+{
+    ULONGLONG qpc, error, value;
+    NTSTATUS status;
+    HRESULT hr;
+
+    if (!pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter)
+    {
+        win_skip("NtConvertBetweenAuxiliaryCounterAndPerformanceCounter not found.\n");
+        return;
+    }
+
+    status = pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter(0, NULL, NULL, NULL);
+    ok(status == STATUS_ACCESS_VIOLATION, "got %#lx.\n", status);
+    qpc = error = value = 0xdeadbeef;
+    status = pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter(0, &value, &qpc, NULL);
+    ok(status == STATUS_NOT_SUPPORTED, "got %#lx.\n", status);
+    ok(value == 0xdeadbeef, "got %#I64x.\n", value);
+    ok(qpc == 0xdeadbeef, "got %#I64x.\n", qpc);
+    ok(error == 0xdeadbeef, "got %#I64x.\n", error);
+    status = pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter(1, &value, &qpc, &error);
+    ok(status == STATUS_NOT_SUPPORTED, "got %#lx.\n", status);
+    ok(value == 0xdeadbeef, "got %#I64x.\n", value);
+    ok(qpc == 0xdeadbeef, "got %#I64x.\n", qpc);
+    ok(error == 0xdeadbeef, "got %#I64x.\n", error);
+    status = pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter(2, &value, &qpc, &error);
+    ok(status == STATUS_NOT_SUPPORTED, "got %#lx.\n", status);
+    ok(value == 0xdeadbeef, "got %#I64x.\n", value);
+    ok(qpc == 0xdeadbeef, "got %#I64x.\n", qpc);
+    ok(error == 0xdeadbeef, "got %#I64x.\n", error);
+
+    hr = pConvertAuxiliaryCounterToPerformanceCounter(1, &qpc, &error);
+    ok(hr == E_NOTIMPL, "got %#lx.\n", hr);
+    ok(value == 0xdeadbeef, "got %#I64x.\n", value);
+    ok(qpc == 0xdeadbeef, "got %#I64x.\n", qpc);
+    ok(error == 0xdeadbeef, "got %#I64x.\n", error);
+    QueryPerformanceCounter((LARGE_INTEGER *)&qpc);
+    hr = pConvertPerformanceCounterToAuxiliaryCounter(qpc, &value, &error);
+    ok(hr == E_NOTIMPL, "got %#lx.\n", hr);
+    ok(value == 0xdeadbeef, "got %#I64x.\n", value);
+    ok(error == 0xdeadbeef, "got %#I64x.\n", error);
+}
+
 START_TEST(time)
 {
     HMODULE mod = GetModuleHandleA("ntdll.dll");
+    HMODULE hkernelbase = GetModuleHandleA("kernelbase.dll");
     pRtlTimeToTimeFields = (void *)GetProcAddress(mod,"RtlTimeToTimeFields");
     pRtlTimeFieldsToTime = (void *)GetProcAddress(mod,"RtlTimeFieldsToTime");
     pNtQueryPerformanceCounter = (void *)GetProcAddress(mod, "NtQueryPerformanceCounter");
@@ -491,8 +541,15 @@ START_TEST(time)
     pRtlQueryDynamicTimeZoneInformation =
         (void *)GetProcAddress(mod, "RtlQueryDynamicTimeZoneInformation");
     pRtlQueryUnbiasedInterruptTime = (void *)GetProcAddress(mod, "RtlQueryUnbiasedInterruptTime");
+#if (defined(__i386__) || defined(__x86_64__)) && !defined(__arm64ec__)
     pRtlQueryPerformanceCounter = (void *)GetProcAddress(mod, "RtlQueryPerformanceCounter");
     pRtlQueryPerformanceFrequency = (void *)GetProcAddress(mod, "RtlQueryPerformanceFrequency");
+#endif
+    pNtConvertBetweenAuxiliaryCounterAndPerformanceCounter =
+        (void *)GetProcAddress(mod, "NtConvertBetweenAuxiliaryCounterAndPerformanceCounter");
+
+    pConvertAuxiliaryCounterToPerformanceCounter = (void *)GetProcAddress(hkernelbase, "ConvertAuxiliaryCounterToPerformanceCounter");
+    pConvertPerformanceCounterToAuxiliaryCounter = (void *)GetProcAddress(hkernelbase, "ConvertPerformanceCounterToAuxiliaryCounter");
 
     if (pRtlTimeToTimeFields && pRtlTimeFieldsToTime)
         test_pRtlTimeToTimeFields();
@@ -505,4 +562,5 @@ START_TEST(time)
     test_RtlQueryPerformanceCounter();
 #endif
     test_TimerResolution();
+    test_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter();
 }

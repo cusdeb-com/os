@@ -145,11 +145,9 @@ DWORD get_config_key( HKEY defkey, HKEY appkey, const WCHAR *name, WCHAR *buffer
     return ERROR_FILE_NOT_FOUND;
 }
 
-BOOL device_instance_is_disabled( DIDEVICEINSTANCEW *instance, BOOL *override )
+BOOL device_instance_is_disabled( const WCHAR *instance, BOOL *override )
 {
-    static const WCHAR disabled_str[] = {'d', 'i', 's', 'a', 'b', 'l', 'e', 'd', 0};
-    static const WCHAR override_str[] = {'o', 'v', 'e', 'r', 'r', 'i', 'd', 'e', 0};
-    static const WCHAR joystick_key[] = {'J', 'o', 'y', 's', 't', 'i', 'c', 'k', 's', 0};
+    static const WCHAR *joystick_key = L"Joysticks";
     WCHAR buffer[MAX_PATH];
     HKEY hkey, appkey, temp;
     BOOL disable = FALSE;
@@ -173,16 +171,16 @@ BOOL device_instance_is_disabled( DIDEVICEINSTANCEW *instance, BOOL *override )
     }
 
     /* Look for the "controllername"="disabled" key */
-    if (!get_config_key( hkey, appkey, instance->tszInstanceName, buffer, sizeof(buffer) ))
+    if (!get_config_key( hkey, appkey, instance, buffer, sizeof(buffer) ))
     {
-        if (!wcscmp( disabled_str, buffer ))
+        if (!wcscmp( L"disabled", buffer ))
         {
-            TRACE( "Disabling joystick '%s' based on registry key.\n", debugstr_w(instance->tszInstanceName) );
+            TRACE( "Disabling joystick '%s' based on registry key.\n", debugstr_w(instance) );
             disable = TRUE;
         }
-        else if (override && !wcscmp( override_str, buffer ))
+        else if (override && !wcscmp( L"override", buffer ))
         {
-            TRACE( "Force enabling joystick '%s' based on registry key.\n", debugstr_w(instance->tszInstanceName) );
+            TRACE( "Force enabling joystick '%s' based on registry key.\n", debugstr_w(instance) );
             *override = TRUE;
         }
     }
@@ -415,16 +413,17 @@ static BOOL load_mapping_settings( struct dinput_device *This, LPDIACTIONFORMATW
     /* Try to read each action in the DIACTIONFORMAT from registry */
     for (i = 0; i < lpdiaf->dwNumActions; i++)
     {
+        DIACTIONW *action = lpdiaf->rgoAction + i;
         DWORD id, size = sizeof(DWORD);
         WCHAR label[9];
 
         swprintf( label, 9, L"%x", lpdiaf->rgoAction[i].dwSemantic );
 
-        if (!RegQueryValueExW(hkey, label, 0, NULL, (LPBYTE) &id, &size))
+        if (!action->dwHow && !RegQueryValueExW( hkey, label, 0, NULL, (BYTE *)&id, &size ))
         {
-            lpdiaf->rgoAction[i].dwObjID = id;
-            lpdiaf->rgoAction[i].guidInstance = didev.guidInstance;
-            lpdiaf->rgoAction[i].dwHow = DIAH_DEFAULT;
+            action->dwObjID = id;
+            action->guidInstance = didev.guidInstance;
+            action->dwHow = DIAH_DEFAULT;
             mapped += 1;
         }
     }
@@ -1757,7 +1756,7 @@ static HRESULT WINAPI dinput_device_EnumCreatedEffectObjects( IDirectInputDevice
 static HRESULT WINAPI dinput_device_Escape( IDirectInputDevice8W *iface, DIEFFESCAPE *escape )
 {
     FIXME( "iface %p, escape %p stub!\n", iface, escape );
-    return DI_OK;
+    return DIERR_UNSUPPORTED;
 }
 
 static HRESULT WINAPI dinput_device_Poll( IDirectInputDevice8W *iface )
@@ -1802,7 +1801,7 @@ static HRESULT WINAPI dinput_device_WriteEffectToFile( IDirectInputDevice8W *ifa
 BOOL device_object_matches_semantic( const DIDEVICEINSTANCEW *instance, const DIOBJECTDATAFORMAT *object,
                                      DWORD semantic, BOOL exact )
 {
-    DWORD value = semantic & 0xff, axis = (semantic >> 15) & 3, type;
+    DWORD value = semantic & 0xff, axis = (semantic >> 15) & 15, type;
 
     switch (semantic & 0x700)
     {
@@ -1814,17 +1813,20 @@ BOOL device_object_matches_semantic( const DIDEVICEINSTANCEW *instance, const DI
     }
 
     if (!(DIDFT_GETTYPE( object->dwType ) & type)) return FALSE;
-    if ((semantic & 0xf0000000) == 0x80000000)
+    switch (semantic & 0xff000000)
     {
-        switch (semantic & 0x0f000000)
-        {
-        case 0x01000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_KEYBOARD && object->dwOfs == value;
-        case 0x02000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_MOUSE && object->dwOfs == value;
-        default: return FALSE;
-        }
+    case 0x81000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_KEYBOARD && object->dwOfs == value;
+    case 0x82000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_MOUSE && object->dwOfs == value;
+    case 0x83000000: return FALSE;
+
+    default:
+        if ((instance->dwDevType & 0xf) == DIDEVTYPE_KEYBOARD) return FALSE;
+        if ((instance->dwDevType & 0xf) == DIDEVTYPE_MOUSE) return FALSE;
+        /* fallthrough */
+    case 0xff000000:
+        if (axis && (axis - 1) != DIDFT_GETINSTANCE( object->dwType )) return FALSE;
+        return !exact || !value || value == DIDFT_GETINSTANCE( object->dwType ) + 1;
     }
-    if (axis && (axis - 1) != DIDFT_GETINSTANCE( object->dwType )) return FALSE;
-    return !exact || !value || value == DIDFT_GETINSTANCE( object->dwType ) + 1;
 }
 
 static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface, DIACTIONFORMATW *format,
@@ -1863,11 +1865,14 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         if (!action->dwSemantic) return DIERR_INVALIDPARAM;
         if (flags == DIDBAM_PRESERVE && !IsEqualCLSID( &action->guidInstance, &GUID_NULL ) &&
             !IsEqualCLSID( &action->guidInstance, &impl->guid )) continue;
-        if (action->dwFlags & DIA_APPMAPPED) action->dwHow = DIAH_APPREQUESTED;
-        else action->dwHow = 0;
-        if (action->dwHow == DIAH_APPREQUESTED || action->dwHow == DIAH_USERCONFIG) continue;
+        if (action->dwFlags & DIA_APPMAPPED)
+        {
+            action->dwHow = DIAH_APPREQUESTED;
+            continue;
+        }
         if ((action->dwSemantic & 0xf0000000) == 0x80000000) action->dwFlags &= ~DIA_APPNOMAP;
         if (!(action->dwFlags & DIA_APPNOMAP)) action->guidInstance = GUID_NULL;
+        action->dwHow = 0;
     }
 
     /* Unless asked the contrary by these flags, try to load a previous mapping */

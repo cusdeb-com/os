@@ -138,8 +138,6 @@
 #include "winnls.h"
 #include "commctrl.h"
 #include "comctl32.h"
-#include "uxtheme.h"
-#include "vsstyle.h"
 #include "shlwapi.h"
 
 #include "wine/debug.h"
@@ -327,7 +325,7 @@ typedef struct tagLISTVIEW_INFO
   BOOL redraw;             /* WM_SETREDRAW switch */
 
   /* misc */
-  DWORD iVersion;          /* CCM_[G,S]ETVERSION */
+  INT iVersion;            /* CCM_[G,S]ETVERSION */
 } LISTVIEW_INFO;
 
 /*
@@ -420,7 +418,12 @@ typedef struct tagLISTVIEW_INFO
   TRACE("hwndSelf=%p, rcList=%s\n", iP->hwndSelf, wine_dbgstr_rect(&iP->rcList)); \
 } while(0)
 
-static const WCHAR themeClass[] = L"ListView";
+enum key_state
+{
+    SHIFT_KEY = 0x1,
+    CTRL_KEY = 0x2,
+    SPACE_KEY = 0x4,
+};
 
 /*
  * forward declarations
@@ -435,7 +438,7 @@ static BOOL LISTVIEW_GetViewRect(const LISTVIEW_INFO *, LPRECT);
 static void LISTVIEW_UpdateSize(LISTVIEW_INFO *);
 static LRESULT LISTVIEW_Command(LISTVIEW_INFO *, WPARAM, LPARAM);
 static INT LISTVIEW_GetStringWidthT(const LISTVIEW_INFO *, LPCWSTR, BOOL);
-static BOOL LISTVIEW_KeySelection(LISTVIEW_INFO *, INT, BOOL);
+static BOOL LISTVIEW_KeySelection(LISTVIEW_INFO *, INT, DWORD);
 static UINT LISTVIEW_GetItemState(const LISTVIEW_INFO *, INT, UINT);
 static BOOL LISTVIEW_SetItemState(LISTVIEW_INFO *, INT, const LVITEMW *);
 static VOID LISTVIEW_SetOwnerDataState(LISTVIEW_INFO *, INT, INT, const LVITEMW *);
@@ -1023,6 +1026,34 @@ static BOOL notify_dispinfoT(const LISTVIEW_INFO *infoPtr, UINT code, LPNMLVDISP
     return ret;
 }
 
+static int notify_odfinditem(const LISTVIEW_INFO *infoPtr, NMLVFINDITEMW *nmlv)
+{
+    NMLVFINDITEMA nmlva;
+    char *str = NULL;
+    int len, ret;
+
+    if (infoPtr->notifyFormat == NFR_UNICODE)
+        return notify_hdr(infoPtr, LVN_ODFINDITEMW, &nmlv->hdr);
+
+    /* A/W layout is the same, the only difference is string encoding. */
+    memcpy(&nmlva, nmlv, sizeof(nmlva));
+    nmlva.lvfi.psz = NULL;
+
+    if (nmlv->lvfi.psz)
+    {
+        len = WideCharToMultiByte(CP_ACP, 0, nmlv->lvfi.psz, -1, NULL, 0, NULL, NULL);
+        str = Alloc(len);
+        if (!str) return 0;
+        WideCharToMultiByte(CP_ACP, 0, nmlv->lvfi.psz, -1, str, len, NULL, NULL);
+        nmlva.lvfi.psz = str;
+    }
+
+    ret = notify_hdr(infoPtr, LVN_ODFINDITEMA, &nmlva.hdr);
+    Free(str);
+
+    return ret;
+}
+
 static void customdraw_fill(NMLVCUSTOMDRAW *lpnmlvcd, const LISTVIEW_INFO *infoPtr, HDC hdc,
 			    const RECT *rcBounds, const LVITEMW *lplvItem)
 {
@@ -1085,13 +1116,7 @@ static void prepaint_setup (const LISTVIEW_INFO *infoPtr, HDC hdc, const NMLVCUS
         textcolor = comctl32_color.clrWindowText;
 
     /* Set the text attributes */
-    if (backcolor != CLR_NONE)
-    {
-	SetBkMode(hdc, OPAQUE);
-	SetBkColor(hdc, backcolor);
-    }
-    else
-	SetBkMode(hdc, TRANSPARENT);
+    SetBkColor(hdc, backcolor);
     SetTextColor(hdc, textcolor);
 }
 
@@ -1917,7 +1942,7 @@ static INT LISTVIEW_ProcessLetterKeys(LISTVIEW_INFO *infoPtr, WPARAM charCode, L
 
         infoPtr->szSearchParam[infoPtr->nSearchParamLength] = 0;
 
-        nItem = notify_hdr(infoPtr, LVN_ODFINDITEMW, (LPNMHDR)&nmlv.hdr);
+        nItem = notify_odfinditem(infoPtr, &nmlv);
     }
     else
     {
@@ -1970,7 +1995,7 @@ static INT LISTVIEW_ProcessLetterKeys(LISTVIEW_INFO *infoPtr, WPARAM charCode, L
     }
 
     if (nItem != -1)
-        LISTVIEW_KeySelection(infoPtr, nItem, FALSE);
+        LISTVIEW_KeySelection(infoPtr, nItem, 0);
 
     return 0;
 }
@@ -3714,24 +3739,11 @@ static void LISTVIEW_SetSelection(LISTVIEW_INFO *infoPtr, INT nItem)
     infoPtr->nSelectionMark = nItem;
 }
 
-/***
- * DESCRIPTION:
- * Set selection(s) with keyboard.
- *
- * PARAMETER(S):
- * [I] infoPtr : valid pointer to the listview structure
- * [I] nItem : item index
- * [I] space : VK_SPACE code sent
- *
- * RETURN:
- *   SUCCESS : TRUE (needs to be repainted)
- *   FAILURE : FALSE (nothing has changed)
- */
-static BOOL LISTVIEW_KeySelection(LISTVIEW_INFO *infoPtr, INT nItem, BOOL space)
+/* Change item selection with key input. */
+static BOOL LISTVIEW_KeySelection(LISTVIEW_INFO *infoPtr, INT nItem, DWORD keys)
 {
-  /* FIXME: pass in the state */
-  WORD wShift = GetKeyState(VK_SHIFT) & 0x8000;
-  WORD wCtrl = GetKeyState(VK_CONTROL) & 0x8000;
+  WORD wShift = !!(keys & SHIFT_KEY);
+  WORD wCtrl = !!(keys & CTRL_KEY);
   BOOL bResult = FALSE;
 
   TRACE("nItem=%d, wShift=%d, wCtrl=%d\n", nItem, wShift, wCtrl);
@@ -3750,7 +3762,7 @@ static BOOL LISTVIEW_KeySelection(LISTVIEW_INFO *infoPtr, INT nItem, BOOL space)
         LVITEMW lvItem;
         lvItem.state = ~LISTVIEW_GetItemState(infoPtr, nItem, LVIS_SELECTED);
         lvItem.stateMask = LVIS_SELECTED;
-        if (space)
+        if (keys & SPACE_KEY)
         {
             LISTVIEW_SetItemState(infoPtr, nItem, &lvItem);
             if (lvItem.state & LVIS_SELECTED)
@@ -5247,6 +5259,7 @@ static void LISTVIEW_Refresh(LISTVIEW_INFO *infoPtr, HDC hdc, const RECT *prcEra
                hdcOrig, infoPtr->rcList.left, infoPtr->rcList.top, SRCCOPY);
     }
 
+    SetBkMode(hdc, TRANSPARENT);
     GetClientRect(infoPtr->hwndSelf, &rcClient);
     customdraw_fill(&nmlvcd, infoPtr, hdc, &rcClient, 0);
     cdmode = notify_customdraw(infoPtr, CDDS_PREPAINT, &nmlvcd);
@@ -5601,6 +5614,13 @@ static BOOL LISTVIEW_DeleteAllItems(LISTVIEW_INFO *infoPtr, BOOL destroy)
     }
     LISTVIEW_InvalidateList(infoPtr);
     infoPtr->bNoItemMetrics = TRUE;
+
+    if (!destroy)
+    {
+        NotifyWinEvent( EVENT_OBJECT_REORDER, infoPtr->hwndSelf, OBJID_CLIENT, 0 );
+        NotifyWinEvent( EVENT_OBJECT_DESTROY, infoPtr->hwndSelf, OBJID_CLIENT, 0 );
+        NotifyWinEvent( EVENT_OBJECT_CREATE, infoPtr->hwndSelf, OBJID_CLIENT, 0 );
+    }
     
     return TRUE;
 }
@@ -5892,6 +5912,9 @@ static BOOL LISTVIEW_DeleteItem(LISTVIEW_INFO *infoPtr, INT nItem)
     /* now is the invalidation fun */
     if (!is_icon)
         LISTVIEW_ScrollOnInsert(infoPtr, nItem, -1);
+
+    NotifyWinEvent( EVENT_OBJECT_DESTROY, infoPtr->hwndSelf, OBJID_CLIENT, nItem + 1 );
+
     return TRUE;
 }
 
@@ -5921,18 +5944,15 @@ static BOOL LISTVIEW_EndEditLabelT(LISTVIEW_INFO *infoPtr, BOOL storeText, BOOL 
 
     if (storeText)
     {
-        DWORD len = isW ? GetWindowTextLengthW(infoPtr->hwndEdit) : GetWindowTextLengthA(infoPtr->hwndEdit);
+        DWORD len = (isW ? GetWindowTextLengthW(infoPtr->hwndEdit) : GetWindowTextLengthA(infoPtr->hwndEdit)) + 1;
 
-        if (len++)
-        {
-            if (!(pszText = Alloc(len * (isW ? sizeof(WCHAR) : sizeof(CHAR)))))
-                return FALSE;
+        if (!(pszText = Alloc(len * (isW ? sizeof(WCHAR) : sizeof(CHAR)))))
+            return FALSE;
 
-            if (isW)
-                GetWindowTextW(infoPtr->hwndEdit, pszText, len);
-            else
-                GetWindowTextA(infoPtr->hwndEdit, (CHAR*)pszText, len);
-        }
+        if (isW)
+            GetWindowTextW(infoPtr->hwndEdit, pszText, len);
+        else
+            GetWindowTextA(infoPtr->hwndEdit, (CHAR*)pszText, len);
     }
 
     TRACE("(pszText=%s, isW=%d)\n", debugtext_t(pszText, isW), isW);
@@ -6301,7 +6321,7 @@ static INT LISTVIEW_FindItemW(const LISTVIEW_INFO *infoPtr, INT nStart,
 
         nmlv.iStart = nStart;
         nmlv.lvfi = *lpFindInfo;
-        return notify_hdr(infoPtr, LVN_ODFINDITEMW, (LPNMHDR)&nmlv.hdr);
+        return notify_odfinditem(infoPtr, &nmlv);
     }
 
     if (!lpFindInfo || nItem < 0) return -1;
@@ -6682,7 +6702,8 @@ static BOOL LISTVIEW_GetItemT(const LISTVIEW_INFO *infoPtr, LPLVITEMW lpLVItem, 
     /* if the app stores all the data, handle it separately */
     if (infoPtr->dwStyle & LVS_OWNERDATA)
     {
-	dispInfo.item.state = 0;
+        if (lpLVItem->mask & LVIF_STATE) lpLVItem->state = 0;
+        dispInfo.item.state = lpLVItem->state;
 
 	/* apparently, we should not callback for lParam in LVS_OWNERDATA */
 	if ((lpLVItem->mask & ~(LVIF_STATE | LVIF_PARAM)) ||
@@ -6838,8 +6859,6 @@ static BOOL LISTVIEW_GetItemT(const LISTVIEW_INFO *infoPtr, LPLVITEMW lpLVItem, 
     {
         if (!lpLVItem->iSubItem || (infoPtr->dwLvExStyle & LVS_EX_SUBITEMIMAGES))
             lpLVItem->iImage = pItemHdr->iImage;
-        else
-            lpLVItem->iImage = 0;
     }
 
     /* The pszText field */
@@ -7792,7 +7811,11 @@ static INT LISTVIEW_InsertItemT(LISTVIEW_INFO *infoPtr, const LVITEMW *lpLVItem,
 
     TRACE("(item=%s, isW=%d)\n", debuglvitem_t(lpLVItem, isW), isW);
 
-    if (infoPtr->dwStyle & LVS_OWNERDATA) return infoPtr->nItemCount++;
+    if (infoPtr->dwStyle & LVS_OWNERDATA)
+    {
+        NotifyWinEvent( EVENT_OBJECT_CREATE, hwndSelf, OBJID_CLIENT, infoPtr->nItemCount + 1 );
+        return infoPtr->nItemCount++;
+    }
 
     /* make sure it's an item, and not a subitem; cannot insert a subitem */
     if (!lpLVItem || lpLVItem->iSubItem) return -1;
@@ -7924,6 +7947,9 @@ static INT LISTVIEW_InsertItemT(LISTVIEW_INFO *infoPtr, const LVITEMW *lpLVItem,
 
     /* now is the invalidation fun */
     LISTVIEW_ScrollOnInsert(infoPtr, nItem, 1);
+
+    NotifyWinEvent( EVENT_OBJECT_CREATE, hwndSelf, OBJID_CLIENT, nItem + 1 );
+
     return nItem;
 
 undo:
@@ -8447,8 +8473,8 @@ static BOOL LISTVIEW_SetColumnWidth(LISTVIEW_INFO *infoPtr, INT nColumn, INT cx)
 	if (infoPtr->himlSmall && (nColumn == 0 || (LISTVIEW_GetColumnInfo(infoPtr, nColumn)->fmt & LVCFMT_IMAGE)))
 	    max_cx += infoPtr->iconSize.cx;
 	max_cx += TRAILING_LABEL_PADDING;
-        if (nColumn == 0 && (infoPtr->dwLvExStyle & LVS_EX_CHECKBOXES))
-            max_cx += GetSystemMetrics(SM_CXSMICON);
+        if (nColumn == 0 && infoPtr->himlState)
+            max_cx += infoPtr->iconStateSize.cx;
     }
 
     /* autosize based on listview items width */
@@ -8529,6 +8555,7 @@ static BOOL LISTVIEW_SetColumnWidth(LISTVIEW_INFO *infoPtr, INT nColumn, INT cx)
  * Creates the checkbox imagelist.  Helper for LISTVIEW_SetExtendedListViewStyle
  *
  */
+#if __WINE_COMCTL32_VERSION == 6
 static HIMAGELIST LISTVIEW_CreateThemedCheckBoxImageList(const LISTVIEW_INFO *info)
 {
     HBITMAP bitmap, old_bitmap;
@@ -8570,6 +8597,7 @@ static HIMAGELIST LISTVIEW_CreateThemedCheckBoxImageList(const LISTVIEW_INFO *in
     CloseThemeData(theme);
     return image_list;
 }
+#endif /* __WINE_COMCTL32_VERSION == 6 */
 
 static HIMAGELIST LISTVIEW_CreateCheckBoxIL(const LISTVIEW_INFO *infoPtr)
 {
@@ -8579,9 +8607,11 @@ static HIMAGELIST LISTVIEW_CreateCheckBoxIL(const LISTVIEW_INFO *infoPtr)
     HBRUSH hbr_white, hbr_black;
     HIMAGELIST himl;
 
+#if __WINE_COMCTL32_VERSION == 6
     himl = LISTVIEW_CreateThemedCheckBoxImageList(infoPtr);
     if (himl)
         return himl;
+#endif
 
     hbr_white = GetStockObject(WHITE_BRUSH);
     hbr_black = GetStockObject(BLACK_BRUSH);
@@ -9328,6 +9358,8 @@ static INT LISTVIEW_SetView(LISTVIEW_INFO *infoPtr, DWORD nView)
   LISTVIEW_UpdateScroll(infoPtr);
   LISTVIEW_InvalidateList(infoPtr);
 
+  NotifyWinEvent( EVENT_OBJECT_REORDER, infoPtr->hwndSelf, OBJID_CLIENT, 0 );
+
   TRACE("nView %ld\n", nView);
 
   return 1;
@@ -9434,26 +9466,6 @@ static BOOL LISTVIEW_SortItems(LISTVIEW_INFO *infoPtr, PFNLVCOMPARE pfnCompare,
     /* refresh the display */
     LISTVIEW_InvalidateList(infoPtr);
     return TRUE;
-}
-
-/***
- * DESCRIPTION:
- * Update theme handle after a theme change.
- *
- * PARAMETER(S):
- * [I] infoPtr : valid pointer to the listview structure
- *
- * RETURN:
- *   SUCCESS : 0
- *   FAILURE : something else
- */
-static LRESULT LISTVIEW_ThemeChanged(const LISTVIEW_INFO *infoPtr)
-{
-    HTHEME theme = GetWindowTheme(infoPtr->hwndSelf);
-    CloseThemeData(theme);
-    OpenThemeData(infoPtr->hwndSelf, themeClass);
-    InvalidateRect(infoPtr->hwndSelf, NULL, TRUE);
-    return 0;
 }
 
 /***
@@ -9592,7 +9604,11 @@ static LRESULT LISTVIEW_NCCreate(HWND hwnd, WPARAM wParam, const CREATESTRUCTW *
   infoPtr->nMeasureItemHeight = 0;
   infoPtr->xTrackLine = -1;  /* no track line */
   infoPtr->itemEdit.fEnabled = FALSE;
-  infoPtr->iVersion = COMCTL32_VERSION;
+#if __WINE_COMCTL32_VERSION == 6
+  infoPtr->iVersion = 6;
+#else
+  infoPtr->iVersion = 0;
+#endif
   infoPtr->colRectsDirty = FALSE;
   infoPtr->selected_column = -1;
   infoPtr->hHotCursor = LoadCursorW(NULL, (LPWSTR)IDC_HAND);
@@ -9675,7 +9691,7 @@ static LRESULT LISTVIEW_Create(HWND hwnd, const CREATESTRUCTW *lpcs)
     if (infoPtr->dwStyle & LVS_OWNERDRAWFIXED) notify_measureitem(infoPtr);
   }
 
-  OpenThemeData(hwnd, themeClass);
+  COMCTL32_OpenThemeForWindow(hwnd, L"ListView");
 
   /* initialize the icon sizes */
   set_icon_size(&infoPtr->iconSize, infoPtr->himlNormal, infoPtr->uView != LV_VIEW_ICON);
@@ -9696,8 +9712,7 @@ static LRESULT LISTVIEW_Create(HWND hwnd, const CREATESTRUCTW *lpcs)
  */
 static LRESULT LISTVIEW_Destroy(LISTVIEW_INFO *infoPtr)
 {
-    HTHEME theme = GetWindowTheme(infoPtr->hwndSelf);
-    CloseThemeData(theme);
+    COMCTL32_CloseThemeForWindow(infoPtr->hwndSelf);
 
     /* delete all items */
     LISTVIEW_DeleteAllItems(infoPtr, TRUE);
@@ -9840,6 +9855,14 @@ static LRESULT LISTVIEW_VScroll(LISTVIEW_INFO *infoPtr, INT nScrollCode,
 
     case SB_PAGEDOWN:
 	nScrollDiff = scrollInfo.nPage;
+        break;
+
+    case SB_TOP:
+        nScrollDiff = -nOldScrollPos;
+        break;
+
+    case SB_BOTTOM:
+        nScrollDiff = scrollInfo.nMax - nOldScrollPos;
         break;
 
     case SB_THUMBPOSITION:
@@ -10137,7 +10160,18 @@ static LRESULT LISTVIEW_KeyDown(LISTVIEW_INFO *infoPtr, INT nVirtualKey, LONG lK
   }
 
   if ((nItem != -1) && (nItem != infoPtr->nFocusedItem || nVirtualKey == VK_SPACE))
-      LISTVIEW_KeySelection(infoPtr, nItem, nVirtualKey == VK_SPACE);
+  {
+      DWORD keys = 0;
+
+      if (GetKeyState(VK_SHIFT) & 0x8000)
+          keys |= SHIFT_KEY;
+      if (GetKeyState(VK_CONTROL) & 0x8000)
+          keys |= CTRL_KEY;
+      if (nVirtualKey == VK_SPACE)
+          keys |= SPACE_KEY;
+
+      LISTVIEW_KeySelection(infoPtr, nItem, keys);
+  }
 
   return 0;
 }
@@ -10293,7 +10327,6 @@ static LRESULT LISTVIEW_TrackMouse(const LISTVIEW_INFO *infoPtr, POINT pt)
 static LRESULT LISTVIEW_LButtonDown(LISTVIEW_INFO *infoPtr, WORD wKey, INT x, INT y)
 {
   LVHITTESTINFO lvHitTestInfo;
-  static BOOL bGroupSelect = TRUE;
   POINT pt = { x, y };
   INT nItem;
 
@@ -10335,30 +10368,17 @@ static LRESULT LISTVIEW_LButtonDown(LISTVIEW_INFO *infoPtr, WORD wKey, INT x, IN
     {
       if ((wKey & MK_CONTROL) && (wKey & MK_SHIFT))
       {
-        if (bGroupSelect)
-	{
-          if (!LISTVIEW_AddGroupSelection(infoPtr, nItem)) return 0;
-    	  LISTVIEW_SetItemFocus(infoPtr, nItem);
-          infoPtr->nSelectionMark = nItem;
-	}
-        else
-	{
-          LVITEMW item;
-
-	  item.state = LVIS_SELECTED | LVIS_FOCUSED;
-	  item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
-
-	  LISTVIEW_SetItemState(infoPtr,nItem,&item);
-	  infoPtr->nSelectionMark = nItem;
-	}
+        if (!LISTVIEW_AddGroupSelection(infoPtr, nItem)) return 0;
+        LISTVIEW_SetItemFocus(infoPtr, nItem);
       }
       else if (wKey & MK_CONTROL)
       {
         LVITEMW item;
+        BOOL select;
 
-	bGroupSelect = (LISTVIEW_GetItemState(infoPtr, nItem, LVIS_SELECTED) == 0);
+        select = (LISTVIEW_GetItemState(infoPtr, nItem, LVIS_SELECTED) == 0);
 	
-	item.state = (bGroupSelect ? LVIS_SELECTED : 0) | LVIS_FOCUSED;
+	item.state = (select ? LVIS_SELECTED : 0) | LVIS_FOCUSED;
         item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
 	LISTVIEW_SetItemState(infoPtr, nItem, &item);
         infoPtr->nSelectionMark = nItem;
@@ -10706,6 +10726,7 @@ static LRESULT LISTVIEW_Notify(LISTVIEW_INFO *infoPtr, NMHDR *lpnmhdr)
  */
 static LRESULT LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
 {
+#if __WINE_COMCTL32_VERSION == 6
     LONG exstyle = GetWindowLongW (infoPtr->hwndSelf, GWL_EXSTYLE);
     HTHEME theme = GetWindowTheme (infoPtr->hwndSelf);
     RECT r, window_rect;
@@ -10743,6 +10764,9 @@ static LRESULT LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
     DeleteObject(cliprgn);
 
     return 0;
+#else /* __WINE_COMCTL32_VERSION == 6 */
+    return DefWindowProcW(infoPtr->hwndSelf, WM_NCPAINT, (WPARAM)region, 0);
+#endif
 }
 
 /***
@@ -10791,7 +10815,15 @@ static LRESULT LISTVIEW_Paint(LISTVIEW_INFO *infoPtr, HDC hdc)
 	LISTVIEW_UpdateScroll(infoPtr);
     }
 
-    if (infoPtr->hwndHeader)  UpdateWindow(infoPtr->hwndHeader);
+    if (infoPtr->hwndHeader)
+    {
+        RECT rect;
+
+        UpdateWindow(infoPtr->hwndHeader);
+        GetClientRect(infoPtr->hwndHeader, &rect);
+        MapWindowPoints(infoPtr->hwndHeader, infoPtr->hwndSelf, (POINT *)&rect, 2);
+        ValidateRect(infoPtr->hwndSelf, &rect);
+    }
 
     if (hdc) 
         LISTVIEW_Refresh(infoPtr, hdc, NULL);
@@ -11392,18 +11424,9 @@ static inline LRESULT LISTVIEW_GetVersion(const LISTVIEW_INFO *infoPtr)
  * -1 when requested version is greater than DLL version;
  * previous version otherwise
  */
-static LRESULT LISTVIEW_SetVersion(LISTVIEW_INFO *infoPtr, DWORD iVersion)
+static LRESULT LISTVIEW_SetVersion(LISTVIEW_INFO *infoPtr, INT iVersion)
 {
-  INT iOldVersion = infoPtr->iVersion;
-
-  if (iVersion > COMCTL32_VERSION)
-    return -1;
-
-  infoPtr->iVersion = iVersion;
-
-  TRACE("new version %ld\n", iVersion);
-
-  return iOldVersion;
+    return COMCTL32_SetVersion(&infoPtr->iVersion, iVersion);
 }
 
 /***
@@ -11552,11 +11575,17 @@ LISTVIEW_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     return 1;
 
   case LVM_GETORIGIN:
-    if (!lParam) return FALSE;
+  {
+    POINT *point = (POINT *)lParam;
+
+    if (!point) return FALSE;
     if (infoPtr->uView == LV_VIEW_DETAILS ||
         infoPtr->uView == LV_VIEW_LIST) return FALSE;
-    LISTVIEW_GetOrigin(infoPtr, (LPPOINT)lParam);
+    LISTVIEW_GetOrigin(infoPtr, point);
+    point->x = -point->x;
+    point->y = -point->y;
     return TRUE;
+  }
 
   /* case LVM_GETOUTLINECOLOR: */
 
@@ -11811,6 +11840,11 @@ LISTVIEW_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
   case WM_GETFONT:
     return (LRESULT)infoPtr->hFont;
 
+  case WM_GETOBJECT:
+    if ((LONG)lParam == OBJID_QUERYCLASSNAMEIDX)
+      return 0x10013;
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+
   case WM_HSCROLL:
     return LISTVIEW_HScroll(infoPtr, (INT)LOWORD(wParam), 0);
 
@@ -11886,7 +11920,7 @@ LISTVIEW_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 /*	case WM_TIMER: */
   case WM_THEMECHANGED:
-    return LISTVIEW_ThemeChanged(infoPtr);
+    return COMCTL32_ThemeChanged(infoPtr->hwndSelf, L"ListView", TRUE, TRUE);
 
   case WM_VSCROLL:
     return LISTVIEW_VScroll(infoPtr, (INT)LOWORD(wParam), 0);
@@ -11944,21 +11978,6 @@ void LISTVIEW_Register(void)
     wndClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wndClass.lpszClassName = WC_LISTVIEWW;
     RegisterClassW(&wndClass);
-}
-
-/***
- * DESCRIPTION:
- * Unregisters the window class.
- *
- * PARAMETER(S):
- * None
- *
- * RETURN:
- * None
- */
-void LISTVIEW_Unregister(void)
-{
-    UnregisterClassW(WC_LISTVIEWW, NULL);
 }
 
 /***

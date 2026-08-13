@@ -446,7 +446,7 @@ static void set_document_mode(HTMLDocumentNode *doc, compat_mode_t document_mode
 
     TRACE("%p: %d\n", doc, document_mode);
 
-    max_compat_mode = doc->window && doc->window->base.outer_window
+    max_compat_mode = doc->window && !is_detached_window(doc->window)
         ? get_max_compat_mode(doc->window->base.outer_window->uri)
         : COMPAT_MODE_IE11;
     if(max_compat_mode < document_mode) {
@@ -785,8 +785,27 @@ static void NSAPI nsDocumentObserver_AttributeWillChange(nsIDocumentObserver *if
 }
 
 static void NSAPI nsDocumentObserver_AttributeChanged(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        void *aElement, LONG aNameSpaceID, nsIAtom *aAttribute, LONG aModType, const nsAttrValue *aOldValue)
+        /*mozilla::dom::Element*/ void *aElement, LONG aNameSpaceID, nsIAtom *aAttribute, LONG aModType, const nsAttrValue *aOldValue)
 {
+    HTMLDocumentNode *This = impl_from_nsIDocumentObserver(iface);
+    nsIDOMElement *elem;
+    nsAString name_str;
+    const WCHAR *name;
+    nsresult nsres;
+
+    nsAString_Init(&name_str, NULL);
+    nsres = nsIAtom_ScriptableToString(aAttribute, &name_str);
+    assert(nsres == NS_OK);
+    nsAString_GetData(&name_str, &name);
+
+    TRACE("(%p)->(%p, %s)\n", This, aElement, debugstr_w(name));
+
+    nsres = nsISupports_QueryInterface(aElement, &IID_nsIDOMElement, (void **)&elem);
+    assert(nsres == NS_OK);
+
+    event_attr_changed(This, elem, name);
+    nsAString_Finish(&name_str);
+    nsIDOMElement_Release(elem);
 }
 
 static void NSAPI nsDocumentObserver_NativeAnonymousChildListChange(nsIDocumentObserver *iface, nsIDocument *aDocument,
@@ -1198,7 +1217,7 @@ static void mutation_observer_destructor(DispatchEx *dispex)
     free(This);
 }
 
-static HRESULT create_mutation_observer_ctor(HTMLInnerWindow *script_global, DispatchEx **ret);
+static HRESULT init_mutation_observer_ctor(struct constructor*);
 
 static const dispex_static_data_vtbl_t mutation_observer_dispex_vtbl = {
     .query_interface  = mutation_observer_query_interface,
@@ -1212,8 +1231,8 @@ static const tid_t mutation_observer_iface_tids[] = {
     0
 };
 dispex_static_data_t MutationObserver_dispex = {
-    .id               = PROT_MutationObserver,
-    .init_constructor = create_mutation_observer_ctor,
+    .id               = OBJID_MutationObserver,
+    .init_constructor = init_mutation_observer_ctor,
     .vtbl             = &mutation_observer_dispex_vtbl,
     .disp_tid         = IWineMSHTMLMutationObserver_tid,
     .iface_tids       = mutation_observer_iface_tids,
@@ -1243,26 +1262,11 @@ static HRESULT create_mutation_observer(DispatchEx *owner, IDispatch *callback,
     return S_OK;
 }
 
-struct mutation_observer_ctor {
-    DispatchEx dispex;
-};
-
-static inline struct mutation_observer_ctor *mutation_observer_ctor_from_DispatchEx(DispatchEx *iface)
-{
-    return CONTAINING_RECORD(iface, struct mutation_observer_ctor, dispex);
-}
-
-static void mutation_observer_ctor_destructor(DispatchEx *dispex)
-{
-    struct mutation_observer_ctor *This = mutation_observer_ctor_from_DispatchEx(dispex);
-    free(This);
-}
-
 static HRESULT mutation_observer_ctor_value(DispatchEx *dispex, LCID lcid,
         WORD flags, DISPPARAMS *params, VARIANT *res, EXCEPINFO *ei,
         IServiceProvider *caller)
 {
-    struct mutation_observer_ctor *This = mutation_observer_ctor_from_DispatchEx(dispex);
+    struct constructor *This = constructor_from_DispatchEx(dispex);
     VARIANT *callback;
     IWineMSHTMLMutationObserver *mutation_observer;
     HRESULT hres;
@@ -1305,30 +1309,21 @@ static HRESULT mutation_observer_ctor_value(DispatchEx *dispex, LCID lcid,
 }
 
 static const dispex_static_data_vtbl_t mutation_observer_ctor_dispex_vtbl = {
-    .destructor       = mutation_observer_ctor_destructor,
+    .destructor       = constructor_destructor,
+    .traverse         = constructor_traverse,
+    .unlink           = constructor_unlink,
     .value            = mutation_observer_ctor_value
 };
 
 static dispex_static_data_t mutation_observer_ctor_dispex = {
-    .name           = "Function",
-    .constructor_id = PROT_MutationObserver,
+    .name           = "MutationObserver",
+    .constructor_id = OBJID_MutationObserver,
     .vtbl           = &mutation_observer_ctor_dispex_vtbl,
 };
 
-static HRESULT create_mutation_observer_ctor(HTMLInnerWindow *script_global, DispatchEx **ret)
+static HRESULT init_mutation_observer_ctor(struct constructor *constr)
 {
-    struct mutation_observer_ctor *obj;
-
-    obj = calloc(1, sizeof(*obj));
-    if(!obj)
-    {
-        ERR("No memory.\n");
-        return E_OUTOFMEMORY;
-    }
-
-    init_dispatch(&obj->dispex, &mutation_observer_ctor_dispex, script_global,
-                  dispex_compat_mode(&script_global->event_target.dispex));
-
-    *ret = &obj->dispex;
+    init_dispatch(&constr->dispex, &mutation_observer_ctor_dispex, constr->window,
+                  dispex_compat_mode(&constr->window->event_target.dispex));
     return S_OK;
 }

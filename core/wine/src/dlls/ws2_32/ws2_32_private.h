@@ -27,7 +27,6 @@
 #include <limits.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -36,6 +35,9 @@
 #include "winnls.h"
 #include "winsock2.h"
 #include "mswsock.h"
+#include "bthsdpdef.h"
+#include "bluetoothapis.h"
+#include "ws2bth.h"
 #include "ws2tcpip.h"
 #include "ws2spi.h"
 #include "wsipx.h"

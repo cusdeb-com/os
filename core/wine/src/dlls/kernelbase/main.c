@@ -20,16 +20,15 @@
 #define COBJMACROS
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windows.h"
 #include "appmodel.h"
 #include "shlwapi.h"
 #include "perflib.h"
 #include "winternl.h"
+#include "winperf.h"
 
 #include "wine/debug.h"
 #include "kernelbase.h"
-#include "wine/heap.h"
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(kernelbase);
@@ -139,7 +138,10 @@ LONG WINAPI AppPolicyGetShowDeveloperDiagnostic(HANDLE token, AppPolicyShowDevel
  */
 LONG WINAPI AppPolicyGetWindowingModel(HANDLE token, AppPolicyWindowingModel *policy)
 {
-    FIXME("%p, %p\n", token, policy);
+    static int once;
+
+    if(!once++)
+        FIXME("%p, %p\n", token, policy);
 
     if(policy)
         *policy = AppPolicyWindowingModel_ClassicDesktop;
@@ -217,7 +219,8 @@ PERF_COUNTERSET_INSTANCE WINAPI *PerfCreateInstance( HANDLE handle, const GUID *
 
     size = (sizeof(PERF_COUNTERSET_INSTANCE) + template->counterset.NumCounters * sizeof(UINT64)
             + (lstrlenW( name ) + 1) * sizeof(WCHAR) + 7) & ~7;
-    inst = heap_alloc_zero( offsetof(struct counterset_instance, instance) + size );
+    inst = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
+                      offsetof(struct counterset_instance, instance) + size );
     if (!inst)
     {
         SetLastError( ERROR_OUTOFMEMORY );
@@ -251,7 +254,7 @@ ULONG WINAPI PerfDeleteInstance(HANDLE provider, PERF_COUNTERSET_INSTANCE *block
 
     inst = CONTAINING_RECORD(block, struct counterset_instance, instance);
     list_remove( &inst->entry );
-    heap_free( inst );
+    HeapFree( GetProcessHeap(), 0, inst );
 
     return ERROR_SUCCESS;
 }
@@ -280,16 +283,17 @@ ULONG WINAPI PerfSetCounterSetInfo( HANDLE handle, PERF_COUNTERSET_INFO *templat
     }
 
     size = offsetof( struct counterset_template, counter[template->NumCounters] );
-    if (!(new = heap_alloc( size ))) return ERROR_OUTOFMEMORY;
+    if (!(new = HeapAlloc( GetProcessHeap(), 0, size ))) return ERROR_OUTOFMEMORY;
 
     if (prov->counterset_count)
-        new_array = heap_realloc( prov->countersets, sizeof(*prov->countersets) * (prov->counterset_count + 1) );
+        new_array = HeapReAlloc( GetProcessHeap(), 0, prov->countersets,
+                                 sizeof(*prov->countersets) * (prov->counterset_count + 1) );
     else
-        new_array = heap_alloc( sizeof(*prov->countersets) );
+        new_array = HeapAlloc( GetProcessHeap(), 0, sizeof(*prov->countersets) );
 
     if (!new_array)
     {
-        heap_free( new );
+        HeapFree( GetProcessHeap(), 0, new );
         return ERROR_OUTOFMEMORY;
     }
     memcpy( new, template, size );
@@ -301,6 +305,21 @@ ULONG WINAPI PerfSetCounterSetInfo( HANDLE handle, PERF_COUNTERSET_INFO *templat
     return STATUS_SUCCESS;
 }
 
+static PERF_COUNTER_INFO* get_performance_counter_info(PERF_COUNTERSET_INSTANCE *instance, ULONG counter_id)
+{
+    unsigned int i;
+    struct counterset_template *template;
+    struct counterset_instance *inst;
+
+    inst = CONTAINING_RECORD(instance, struct counterset_instance, instance);
+    template = inst->template;
+
+    for (i = 0; i < template->counterset.NumCounters; ++i)
+        if (template->counter[i].CounterId == counter_id) return  &template->counter[i];
+
+    return NULL;
+}
+
 /***********************************************************************
  *           PerfSetCounterRefValue   (KERNELBASE.@)
  */
@@ -308,23 +327,69 @@ ULONG WINAPI PerfSetCounterRefValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *i
                                     ULONG counterid, void *address)
 {
     struct perf_provider *prov = perf_provider_from_handle( provider );
-    struct counterset_template *template;
-    struct counterset_instance *inst;
-    unsigned int i;
+    PERF_COUNTER_INFO* counter;
 
     FIXME( "provider %p, instance %p, counterid %lu, address %p semi-stub.\n",
            provider, instance, counterid, address );
 
     if (!prov || !instance || !address) return ERROR_INVALID_PARAMETER;
 
-    inst = CONTAINING_RECORD(instance, struct counterset_instance, instance);
-    template = inst->template;
+    counter = get_performance_counter_info(instance, counterid);
 
-    for (i = 0; i < template->counterset.NumCounters; ++i)
-        if (template->counter[i].CounterId == counterid) break;
+    if (counter == NULL) return ERROR_NOT_FOUND;
+    if (!(counter->Attrib & PERF_ATTRIB_BY_REFERENCE)) return ERROR_INVALID_PARAMETER;
 
-    if (i == template->counterset.NumCounters) return ERROR_NOT_FOUND;
-    *(void **)((BYTE *)&inst->instance + sizeof(PERF_COUNTERSET_INSTANCE) + template->counter[i].Offset) = address;
+    *(void **)((BYTE *)(instance + 1) + counter->Offset) = address;
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *           PerfSetULongCounterValue   (KERNELBASE.@)
+ */
+ULONG WINAPI PerfSetULongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance,
+                                      ULONG counterid, ULONG value)
+{
+    struct perf_provider *prov = perf_provider_from_handle( provider );
+    PERF_COUNTER_INFO* counter;
+
+    TRACE( "provider %p, instance %p, counterid %lu, address %lu semi-stub.\n",
+           provider, instance, counterid, value );
+
+    if (!prov || !instance) return ERROR_INVALID_PARAMETER;
+
+    counter = get_performance_counter_info(instance, counterid);
+
+    if (counter == NULL) return ERROR_NOT_FOUND;
+    if (counter->Attrib & PERF_ATTRIB_BY_REFERENCE) return ERROR_INVALID_PARAMETER;
+    if (counter->Type & PERF_SIZE_LARGE) return ERROR_INVALID_PARAMETER;
+
+    *(ULONG*)((BYTE *)(instance + 1) + counter->Offset) = value;
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *           PerfSetULongLongCounterValue   (KERNELBASE.@)
+ */
+ULONG WINAPI PerfSetULongLongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance,
+                                          ULONG counterid, ULONGLONG value)
+{
+    struct perf_provider *prov = perf_provider_from_handle( provider );
+    PERF_COUNTER_INFO* counter;
+
+    TRACE( "provider %p, instance %p, counterid %lu, address %I64u semi-stub.\n",
+           provider, instance, counterid, value );
+
+    if (!prov || !instance) return ERROR_INVALID_PARAMETER;
+
+    counter = get_performance_counter_info(instance, counterid);
+
+    if (counter == NULL) return ERROR_NOT_FOUND;
+    if (counter->Attrib & PERF_ATTRIB_BY_REFERENCE) return ERROR_INVALID_PARAMETER;
+    if (!(counter->Type & PERF_SIZE_LARGE)) return ERROR_INVALID_PARAMETER;
+
+    *(ULONGLONG*)((BYTE *)(instance + 1) + counter->Offset) = value;
 
     return STATUS_SUCCESS;
 }
@@ -360,7 +425,7 @@ ULONG WINAPI PerfStartProviderEx( GUID *guid, PERF_PROVIDER_CONTEXT *context, HA
     if (context->MemAllocRoutine || context->MemFreeRoutine)
         FIXME("Memory allocation routine is not supported.\n");
 
-    if (!(prov = heap_alloc_zero( sizeof(*prov) ))) return ERROR_OUTOFMEMORY;
+    if (!(prov = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*prov) ))) return ERROR_OUTOFMEMORY;
     list_init( &prov->instance_list );
     memcpy( &prov->guid, guid, sizeof(prov->guid) );
     prov->callback = context->ControlCallback;
@@ -386,13 +451,13 @@ ULONG WINAPI PerfStopProvider(HANDLE handle)
     LIST_FOR_EACH_ENTRY_SAFE(inst, next, &prov->instance_list, struct counterset_instance, entry)
     {
         list_remove( &inst->entry );
-        heap_free( inst );
+        HeapFree( GetProcessHeap(), 0, inst );
     }
 
     for (i = 0; i < prov->counterset_count; ++i)
-        heap_free( prov->countersets[i] );
-    heap_free( prov->countersets );
-    heap_free( prov );
+        HeapFree( GetProcessHeap(), 0, prov->countersets[i] );
+    HeapFree( GetProcessHeap(), 0, prov->countersets );
+    HeapFree( GetProcessHeap(), 0, prov );
     return STATUS_SUCCESS;
 }
 
@@ -467,7 +532,7 @@ HRESULT WINAPI GetAcceptLanguagesA(LPSTR langbuf, DWORD *buflen)
         return E_FAIL;
 
     buflenW = *buflen;
-    langbufW = heap_alloc(sizeof(WCHAR) * buflenW);
+    langbufW = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR) * buflenW);
     hr = GetAcceptLanguagesW(langbufW, &buflenW);
 
     if (hr == S_OK)
@@ -490,7 +555,7 @@ HRESULT WINAPI GetAcceptLanguagesA(LPSTR langbuf, DWORD *buflen)
     }
     *buflen = buflenW ? convlen : 0;
 
-    heap_free(langbufW);
+    HeapFree(GetProcessHeap(), 0, langbufW);
     return hr;
 }
 
@@ -537,7 +602,7 @@ HRESULT WINAPI GetAcceptLanguagesW(WCHAR *langbuf, DWORD *buflen)
 
     mystrlen = (*buflen > 20) ? *buflen : 20 ;
     len = mystrlen * sizeof(WCHAR);
-    mystr = heap_alloc(len);
+    mystr = HeapAlloc(GetProcessHeap(), 0, len);
     mystr[0] = 0;
     RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Internet Explorer\\International",
                   0, KEY_QUERY_VALUE, &mykey);
@@ -549,7 +614,7 @@ HRESULT WINAPI GetAcceptLanguagesW(WCHAR *langbuf, DWORD *buflen)
     {
         lstrcpyW(langbuf, mystr);
         *buflen = len;
-        heap_free(mystr);
+        HeapFree(GetProcessHeap(), 0, mystr);
         return S_OK;
     }
 
@@ -559,7 +624,7 @@ HRESULT WINAPI GetAcceptLanguagesW(WCHAR *langbuf, DWORD *buflen)
     len = lstrlenW(mystr);
 
     memcpy(langbuf, mystr, min(*buflen, len + 1)*sizeof(WCHAR));
-    heap_free(mystr);
+    HeapFree(GetProcessHeap(), 0, mystr);
 
     if (*buflen > len)
     {
@@ -569,4 +634,10 @@ HRESULT WINAPI GetAcceptLanguagesW(WCHAR *langbuf, DWORD *buflen)
 
     *buflen = 0;
     return E_NOT_SUFFICIENT_BUFFER;
+}
+
+HRESULT WINAPI GetIntegratedDisplaySize( double *sz_inches )
+{
+    FIXME( "%p stub.\n", sz_inches );
+    return E_NOTIMPL;
 }

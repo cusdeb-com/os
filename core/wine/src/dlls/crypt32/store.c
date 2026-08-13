@@ -37,6 +37,29 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(crypt);
 
+static const void *cert_find_context_by_context(HCERTSTORE store, const void *context)
+{
+    BYTE hash[20];
+    DWORD size = sizeof(hash);
+    CRYPT_HASH_BLOB blob = { sizeof(hash), hash };
+    const CERT_CONTEXT *cert = context;
+
+    if (!CertGetCertificateContextProperty(cert, CERT_HASH_PROP_ID, hash, &size))
+        return NULL;
+
+    return CertFindCertificateInStore(store, cert->dwCertEncodingType, 0, CERT_FIND_SHA1_HASH, &blob, NULL);
+}
+
+static const void *crl_find_context_by_context(HCERTSTORE store, const void *context)
+{
+    return CertFindCRLInStore(store, 0, 0, CRL_FIND_EXISTING, context, NULL);
+}
+
+static const void *ctl_find_context_by_context(HCERTSTORE store, const void *context)
+{
+    return CertFindCTLInStore(store, 0, 0, CTL_FIND_EXISTING, context, NULL);
+}
+
 static const WINE_CONTEXT_INTERFACE gCertInterface = {
     (CreateContextFunc)CertCreateCertificateContext,
     (AddContextToStoreFunc)CertAddCertificateContextToStore,
@@ -46,7 +69,10 @@ static const WINE_CONTEXT_INTERFACE gCertInterface = {
     (GetContextPropertyFunc)CertGetCertificateContextProperty,
     (SetContextPropertyFunc)CertSetCertificateContextProperty,
     (SerializeElementFunc)CertSerializeCertificateStoreElement,
-    (DeleteContextFunc)CertDeleteCertificateFromStore,
+    (DeleteContextFromStoreFunc)CertDeleteCertificateFromStore,
+    cert_find_context_by_context,
+    (DuplicateContextFunc)CertDuplicateCertificateContext,
+    (FreeContextFunc)CertFreeCertificateContext,
 };
 const WINE_CONTEXT_INTERFACE *pCertInterface = &gCertInterface;
 
@@ -59,7 +85,10 @@ static const WINE_CONTEXT_INTERFACE gCRLInterface = {
     (GetContextPropertyFunc)CertGetCRLContextProperty,
     (SetContextPropertyFunc)CertSetCRLContextProperty,
     (SerializeElementFunc)CertSerializeCRLStoreElement,
-    (DeleteContextFunc)CertDeleteCRLFromStore,
+    (DeleteContextFromStoreFunc)CertDeleteCRLFromStore,
+    crl_find_context_by_context,
+    (DuplicateContextFunc)CertDuplicateCRLContext,
+    (FreeContextFunc)CertFreeCRLContext,
 };
 const WINE_CONTEXT_INTERFACE *pCRLInterface = &gCRLInterface;
 
@@ -72,7 +101,10 @@ static const WINE_CONTEXT_INTERFACE gCTLInterface = {
     (GetContextPropertyFunc)CertGetCTLContextProperty,
     (SetContextPropertyFunc)CertSetCTLContextProperty,
     (SerializeElementFunc)CertSerializeCTLStoreElement,
-    (DeleteContextFunc)CertDeleteCTLFromStore,
+    (DeleteContextFromStoreFunc)CertDeleteCTLFromStore,
+    ctl_find_context_by_context,
+    (DuplicateContextFunc)CertDuplicateCTLContext,
+    (FreeContextFunc)CertFreeCTLContext,
 };
 const WINE_CONTEXT_INTERFACE *pCTLInterface = &gCTLInterface;
 
@@ -118,26 +150,39 @@ BOOL WINAPI I_CertUpdateStore(HCERTSTORE store1, HCERTSTORE store2, DWORD unk0,
         warned = TRUE;
     }
 
-    /* Poor-man's resync:  empty first store, then add everything from second
-     * store to it.
-     */
     for (i = 0; i < ARRAY_SIZE(interfaces); i++)
     {
-        const void *context;
+        const void *context, *context2;
 
-        do {
-            context = interfaces[i]->enumContextsInStore(store1, NULL);
-            if (context)
-                interfaces[i]->deleteFromStore(context);
-        } while (context);
-        do {
-            context = interfaces[i]->enumContextsInStore(store2, context);
-            if (context)
-                interfaces[i]->addContextToStore(store1, context,
-                 CERT_STORE_ADD_ALWAYS, NULL);
-        } while (context);
+        context = NULL;
+        while ((context = interfaces[i]->enumContextsInStore(store1, context)))
+        {
+            if ((context2 = interfaces[i]->findContextByContext(store2, context)))
+            {
+                interfaces[i]->freeContext(context2);
+                continue;
+            }
+            context2 = interfaces[i]->duplicateContext(context);
+            interfaces[i]->deleteFromStore(context2);
+        }
+        context = NULL;
+        while ((context = interfaces[i]->enumContextsInStore(store2, context)))
+            interfaces[i]->addContextToStore(store1, context, CERT_STORE_ADD_REPLACE_EXISTING, NULL);
     }
     return TRUE;
+}
+
+static void memstore_free_context(context_t *context)
+{
+    WINE_MEMSTORE *store = (WINE_MEMSTORE *)context->store;
+
+    TRACE(".\n");
+
+    EnterCriticalSection(&store->cs);
+    list_remove(&context->u.entry);
+    LeaveCriticalSection(&store->cs);
+
+    Context_Free(context);
 }
 
 static BOOL MemStore_addContext(WINE_MEMSTORE *store, struct list *list, context_t *orig_context,
@@ -152,13 +197,8 @@ static BOOL MemStore_addContext(WINE_MEMSTORE *store, struct list *list, context
     TRACE("adding %p\n", context);
     EnterCriticalSection(&store->cs);
     if (existing) {
-        context->u.entry.prev = existing->u.entry.prev;
-        context->u.entry.next = existing->u.entry.next;
-        context->u.entry.prev->next = &context->u.entry;
-        context->u.entry.next->prev = &context->u.entry;
-        list_init(&existing->u.entry);
-        if(!existing->ref)
-            Context_Release(existing);
+        list_add_before(&existing->u.entry, &context->u.entry);
+        existing->deleted_from_store = TRUE;
     }else {
         list_add_head(list, &context->u.entry);
     }
@@ -181,34 +221,39 @@ static context_t *MemStore_enumContext(WINE_MEMSTORE *store, struct list *list, 
         next = list_next(list, &prev->u.entry);
         Context_Release(prev);
     }else {
-        next = list_next(list, list);
+        next = list_head(list);
     }
+
+    while (next)
+    {
+        ret = LIST_ENTRY(next, context_t, u.entry);
+        if (!ret->deleted_from_store)
+            break;
+        next = list_next(list, next);
+    }
+    if (!next)
+        ret = NULL;
     LeaveCriticalSection(&store->cs);
 
-    if (!next) {
+    if (!ret) {
         SetLastError(CRYPT_E_NOT_FOUND);
         return NULL;
     }
 
-    ret = LIST_ENTRY(next, context_t, u.entry);
     Context_AddRef(ret);
     return ret;
 }
 
 static BOOL MemStore_deleteContext(WINE_MEMSTORE *store, context_t *context)
 {
-    BOOL in_list = FALSE;
-
     EnterCriticalSection(&store->cs);
-    if (!list_empty(&context->u.entry)) {
-        list_remove(&context->u.entry);
-        list_init(&context->u.entry);
-        in_list = TRUE;
+    if (!context->deleted_from_store)
+    {
+        context->deleted_from_store = TRUE;
+        if (!context->ref)
+            memstore_free_context(context);
     }
     LeaveCriticalSection(&store->cs);
-
-    if(in_list && !context->ref)
-        Context_Free(context);
     return TRUE;
 }
 
@@ -219,16 +264,15 @@ static void free_contexts(struct list *list)
     LIST_FOR_EACH_ENTRY_SAFE(context, next, list, context_t, u.entry)
     {
         TRACE("freeing %p\n", context);
-        list_remove(&context->u.entry);
-        Context_Free(context);
+        memstore_free_context(context);
     }
 }
 
 static void MemStore_releaseContext(WINECRYPT_CERTSTORE *store, context_t *context)
 {
-    /* Free the context only if it's not in a list. Otherwise it may be reused later. */
-    if(list_empty(&context->u.entry))
-        Context_Free(context);
+    /* Free the context only if it is deleted from store. Otherwise it may be reused later. */
+    if (context->deleted_from_store)
+        memstore_free_context(context);
 }
 
 static BOOL MemStore_addCert(WINECRYPT_CERTSTORE *store, context_t *cert,
@@ -325,12 +369,12 @@ static DWORD MemStore_release(WINECRYPT_CERTSTORE *cert_store, DWORD flags)
     WINE_MEMSTORE *store = (WINE_MEMSTORE*)cert_store;
     LONG ref;
 
-    if(flags & ~CERT_CLOSE_STORE_CHECK_FLAG)
+    if(flags & ~(CERT_CLOSE_STORE_CHECK_FLAG | CERT_CLOSE_STORE_FORCE_FLAG))
         FIXME("Unimplemented flags %lx\n", flags);
 
     ref = InterlockedDecrement(&store->hdr.ref);
     TRACE("(%p) ref=%ld\n", store, ref);
-    if(ref)
+    if(ref && !(flags & CERT_CLOSE_STORE_FORCE_FLAG))
         return (flags & CERT_CLOSE_STORE_CHECK_FLAG) ? CRYPT_E_PENDING_CLOSE : ERROR_SUCCESS;
 
     free_contexts(&store->certs);
@@ -904,7 +948,7 @@ HCERTSTORE WINAPI CertOpenSystemStoreA(HCRYPTPROV_LEGACY hProv,
         return 0;
     }
     return CertOpenStore(CERT_STORE_PROV_SYSTEM_A, 0, hProv,
-     CERT_SYSTEM_STORE_CURRENT_USER, szSubSystemProtocol);
+     CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_NO_CRYPT_RELEASE_FLAG, szSubSystemProtocol);
 }
 
 HCERTSTORE WINAPI CertOpenSystemStoreW(HCRYPTPROV_LEGACY hProv,
@@ -916,7 +960,7 @@ HCERTSTORE WINAPI CertOpenSystemStoreW(HCRYPTPROV_LEGACY hProv,
         return 0;
     }
     return CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, hProv,
-     CERT_SYSTEM_STORE_CURRENT_USER, szSubSystemProtocol);
+     CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_NO_CRYPT_RELEASE_FLAG, szSubSystemProtocol);
 }
 
 PCCERT_CONTEXT WINAPI CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrev)
@@ -934,9 +978,10 @@ PCCERT_CONTEXT WINAPI CertEnumCertificatesInStore(HCERTSTORE hCertStore, PCCERT_
     return ret ? &ret->ctx : NULL;
 }
 
-BOOL WINAPI CertDeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
+BOOL CRYPT_DeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
 {
     WINECRYPT_CERTSTORE *hcs;
+    BOOL ret;
 
     TRACE("(%p)\n", pCertContext);
 
@@ -948,7 +993,20 @@ BOOL WINAPI CertDeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
     if (hcs->dwMagic != WINE_CRYPTCERTSTORE_MAGIC)
         return FALSE;
 
-    return hcs->vtbl->certs.delete(hcs, &cert_from_ptr(pCertContext)->base);
+    ret = hcs->vtbl->certs.delete(hcs, &cert_from_ptr(pCertContext)->base);
+    if (ret) CertControlStore(hcs, CERT_STORE_CTRL_COMMIT_FORCE_FLAG, CERT_STORE_CTRL_COMMIT, NULL);
+    return ret;
+}
+
+BOOL WINAPI CertDeleteCertificateFromStore(PCCERT_CONTEXT pCertContext)
+{
+    BOOL ret;
+
+    TRACE("(%p)\n", pCertContext);
+
+    ret = CRYPT_DeleteCertificateFromStore(pCertContext);
+    CertFreeCertificateContext(pCertContext);
+    return ret;
 }
 
 BOOL WINAPI CertAddCRLContextToStore(HCERTSTORE hCertStore,
@@ -1057,8 +1115,12 @@ BOOL WINAPI CertAddCRLContextToStore(HCERTSTORE hCertStore,
             context_t *ret_context;
             ret = store->vtbl->crls.addContext(store, context_from_ptr(toAdd),
              existing ? context_from_ptr(existing) : NULL, ppStoreContext ? &ret_context : NULL, FALSE);
-            if (ret && ppStoreContext)
-                *ppStoreContext = context_ptr(ret_context);
+            if (ret)
+            {
+                CertControlStore(store, CERT_STORE_CTRL_COMMIT_FORCE_FLAG, CERT_STORE_CTRL_COMMIT, NULL);
+                if (ppStoreContext)
+                    *ppStoreContext = context_ptr(ret_context);
+            }
         }else if (ppStoreContext) {
             *ppStoreContext = CertDuplicateCRLContext(toAdd);
         }
@@ -1088,7 +1150,10 @@ BOOL WINAPI CertDeleteCRLFromStore(PCCRL_CONTEXT pCrlContext)
 
     ret = hcs->vtbl->crls.delete(hcs, &crl_from_ptr(pCrlContext)->base);
     if (ret)
+    {
+        CertControlStore(hcs, CERT_STORE_CTRL_COMMIT_FORCE_FLAG, CERT_STORE_CTRL_COMMIT, NULL);
         ret = CertFreeCRLContext(pCrlContext);
+    }
     return ret;
 }
 

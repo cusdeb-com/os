@@ -679,11 +679,6 @@ BOOL WINAPI PathQualifyAW(LPCVOID pszPath)
 	return PathQualifyA(pszPath);
 }
 
-BOOL WINAPI PathFindOnPathExA(LPSTR,LPCSTR *,DWORD);
-BOOL WINAPI PathFindOnPathExW(LPWSTR,LPCWSTR *,DWORD);
-BOOL WINAPI PathFileExistsDefExtA(LPSTR,DWORD);
-BOOL WINAPI PathFileExistsDefExtW(LPWSTR,DWORD);
-
 static BOOL PathResolveA(char *path, const char **dirs, DWORD flags)
 {
     BOOL is_file_spec = PathIsFileSpecA(path);
@@ -2044,7 +2039,7 @@ static const CSIDL_DATA CSIDL_Data[] =
     },
     { /* 0x6e */
         .id         = &FOLDERID_UserProgramFiles,
-        .type       = CSIDL_Type_Disallowed, /* FIXME */
+        .type       = CSIDL_Type_User,
         .category   = KF_CATEGORY_PERUSER,
         .name       = L"UserProgramFiles",
         .parent     = &FOLDERID_LocalAppData,
@@ -2079,7 +2074,35 @@ static const CSIDL_DATA CSIDL_Data[] =
         .name       = L"VideosLibrary",
         .path       = L"Videos.library-ms",
         .parsing    = L"::{031E4825-7B94-4dc3-B131-E946B44C8DD5}\\{491E922F-5643-4af4-A7EB-4E7A138D8174}",
-    }
+    },
+    { /* 0x73 */
+        .id         = &FOLDERID_AccountPictures,
+        .type       = CSIDL_Type_User,
+        .category   = KF_CATEGORY_PERUSER,
+        .name       = L"AccountPictures",
+        .parent     = &FOLDERID_RoamingAppData,
+        .path       = L"Microsoft\\Windows\\AccountPictures",
+        .attributes = FILE_ATTRIBUTE_READONLY,
+        .flags      = KFDF_PRECREATE | KFDF_ROAMABLE,
+    },
+    { /* 0x74 */
+        .id         = &FOLDERID_Screenshots,
+        .type       = CSIDL_Type_User,
+        .category   = KF_CATEGORY_PERUSER,
+        .name       = L"Screenshots",
+        .parent     = &FOLDERID_Pictures,
+        .path       = L"Screenshots",
+        .flags      = KFDF_PRECREATE | KFDF_ROAMABLE,
+    },
+    { /* 0x75 */
+        .id         = &FOLDERID_AppDataDocuments,
+        .type       = CSIDL_Type_User,
+        .category   = KF_CATEGORY_PERUSER,
+        .name       = L"AppDataDocuments",
+        .parent     = &FOLDERID_LocalAppData,
+        .path       = L"Documents",
+        .flags      = KFDF_PRECREATE | KFDF_ROAMABLE,
+    },
 };
 
 static int csidl_from_id( const KNOWNFOLDERID *id )
@@ -2662,7 +2685,7 @@ static BOOL WINAPI init_xdg_dirs( INIT_ONCE *once, void *param, void **context )
     HANDLE file;
     DWORD len;
 
-    if (!(var = _wgetenv( L"XDG_CONFIG_HOME" )) || var[0] != '/')
+    if (!(var = _wgetenv( L"WINE_HOST_XDG_CONFIG_HOME" )) || var[0] != '/')
     {
         if (!(var = _wgetenv( L"WINEHOMEDIR" ))) return TRUE;
         fmt = L"%s/.config/user-dirs.dirs";
@@ -3015,7 +3038,8 @@ HRESULT WINAPI SHGetFolderPathAndSubDirW(
 
     /* create symbolic links rather than directories for specific
      * user shell folders */
-    _SHCreateSymbolicLink(folder, szBuildPath);
+    if (!pszSubPath)
+        _SHCreateSymbolicLink(folder, szBuildPath);
 
     /* create directory/directories */
     ret = SHCreateDirectoryExW(hwndOwner, szBuildPath, NULL);
@@ -3286,6 +3310,16 @@ static HRESULT create_extra_folders(void)
         hr = SHGetFolderPathAndSubDirW(0, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL,
                                        SHGFP_TYPE_DEFAULT, L"Microsoft\\Windows\\Themes", path);
     }
+    if (SUCCEEDED(hr))
+    {
+        hr = SHGetFolderPathAndSubDirW(0, CSIDL_APPDATA | CSIDL_FLAG_CREATE, NULL,
+                                       SHGFP_TYPE_DEFAULT, L"Microsoft\\Windows\\AccountPictures", path);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = SHGetFolderPathAndSubDirW(0, CSIDL_MYPICTURES | CSIDL_FLAG_CREATE, NULL,
+                                       SHGFP_TYPE_DEFAULT, L"Screenshots", path);
+    }
     return hr;
 }
 
@@ -3318,7 +3352,9 @@ static HRESULT set_folder_attributes(void)
         { &CLSID_RecycleBin, FALSE, FALSE, FALSE,
           SFGAO_FOLDER|SFGAO_DROPTARGET|SFGAO_HASPROPSHEET },
         { &CLSID_ControlPanel, FALSE, TRUE, TRUE,
-          SFGAO_FOLDER|SFGAO_HASSUBFOLDER }
+          SFGAO_FOLDER|SFGAO_HASSUBFOLDER },
+        { &CLSID_Printers, FALSE, FALSE, FALSE,
+          SFGAO_FOLDER|SFGAO_CANLINK }
     };
 
     unsigned int i;
@@ -3881,7 +3917,7 @@ static HRESULT knownfolder_set_id(
     /* check is it registry-registered folder */
     hr = get_known_folder_registry_path(kfid, NULL, &knownfolder->registryPath);
     if(SUCCEEDED(hr))
-        hr = HRESULT_FROM_WIN32(RegOpenKeyExW(HKEY_LOCAL_MACHINE, knownfolder->registryPath, 0, 0, &hKey));
+        hr = HRESULT_FROM_WIN32(RegOpenKeyExW(HKEY_LOCAL_MACHINE, knownfolder->registryPath, 0, KEY_ENUMERATE_SUB_KEYS, &hKey));
 
     if(SUCCEEDED(hr))
     {
@@ -4327,7 +4363,7 @@ static BOOL is_knownfolder( struct foldermanager *fm, const KNOWNFOLDERID *id )
     hr = get_known_folder_registry_path(id, NULL, &registryPath);
     if(SUCCEEDED(hr))
     {
-        hr = HRESULT_FROM_WIN32(RegOpenKeyExW(HKEY_LOCAL_MACHINE, registryPath, 0, 0, &hKey));
+        hr = HRESULT_FROM_WIN32(RegOpenKeyExW(HKEY_LOCAL_MACHINE, registryPath, 0, KEY_ENUMERATE_SUB_KEYS, &hKey));
         free(registryPath);
     }
 

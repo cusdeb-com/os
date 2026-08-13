@@ -20,7 +20,6 @@
  */
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "user_private.h"
 #include "controls.h"
 #include "dbt.h"
@@ -771,7 +770,10 @@ void unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam, vo
     case WM_COPYDATA:
     {
         COPYDATASTRUCT *cds = buffer;
-        if (cds->lpData) cds->lpData = cds + 1;
+        /* If cbData <= 2048 bytes, the data is packed at the end of message buffer. Otherwise,
+         * cds->lpData points to an extra user buffer. See pack_user_message() for WM_COPYDATA */
+        if (cds->lpData && cds->cbData <= 2048)
+            cds->lpData = cds + 1;
         break;
     }
     case EM_GETSEL:
@@ -804,7 +806,7 @@ void unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam, vo
     *lparam = (LPARAM)buffer;
 }
 
-NTSTATUS WINAPI User32CallWindowProc( void *args, ULONG size )
+NTSTATUS WINAPI User32CallWinProc( void *args, ULONG size )
 {
     struct win_proc_params *params = args;
     size_t packed_size = 0;

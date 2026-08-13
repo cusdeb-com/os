@@ -1314,6 +1314,33 @@ static const struct knownFolderDef known_folders[] = {
                  NULL,
                  0,
                  0),
+    KNOWN_FOLDER(FOLDERID_AccountPictures,
+                 NO_CSIDL,
+                 "AccountPictures",
+                 KF_CATEGORY_PERUSER,
+                 FOLDERID_RoamingAppData, GUID_NULL,
+                 "Microsoft\\Windows\\AccountPictures",
+                 NULL,
+                 FILE_ATTRIBUTE_READONLY,
+                 KFDF_PRECREATE | KFDF_ROAMABLE),
+    KNOWN_FOLDER(FOLDERID_Screenshots,
+                 NO_CSIDL,
+                 "Screenshots",
+                 KF_CATEGORY_PERUSER,
+                 FOLDERID_Pictures, GUID_NULL,
+                 "Screenshots",
+                 NULL,
+                 0,
+                 KFDF_PRECREATE | KFDF_ROAMABLE),
+    KNOWN_FOLDER(FOLDERID_AppDataDocuments,
+                 NO_CSIDL,
+                 "AppDataDocuments",
+                 KF_CATEGORY_PERUSER,
+                 FOLDERID_LocalAppData, GUID_NULL,
+                 "Documents",
+                 NULL,
+                 0,
+                 KFDF_PRECREATE | KFDF_ROAMABLE),
 };
 #undef KNOWN_FOLDER
 BOOL known_folder_found[ARRAY_SIZE(known_folders)];
@@ -1820,7 +1847,7 @@ static void test_NonExistentPath(void)
                 startup.wShowWindow = SW_SHOWNORMAL;
                 CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0L, NULL, NULL,
                  &startup, &info);
-                wait_child_process( info.hProcess );
+                wait_child_process( &info );
 
                 /* restore original values: */
                 trace("Restoring CSIDL_FAVORITES to %s\n", originalPath);
@@ -1974,6 +2001,19 @@ if (0) { /* crashes */
     todo_wine ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "got 0x%08lx\n", hr);
     ok(path == NULL, "path set\n");
 #endif
+
+    /* check UserProgramFiles */
+    path = NULL;
+    hr = pSHGetKnownFolderPath(&FOLDERID_UserProgramFiles, KF_FLAG_CREATE, NULL, &path);
+    ok(hr == S_OK, "expected S_OK, got 0x%08lx\n", hr);
+    ok(path != NULL, "path not set\n");
+    path2 = NULL;
+    len = ExpandEnvironmentStringsW(L"%LOCALAPPDATA%\\Programs", NULL, -1);
+    path2 = CoTaskMemAlloc(sizeof(WCHAR) * (len + 1));
+    ExpandEnvironmentStringsW(L"%LOCALAPPDATA%\\Programs", path2, len);
+    ok(!wcsicmp(path, path2), "expected equal paths got %s\n", debugstr_w(path));
+    CoTaskMemFree(path);
+    CoTaskMemFree(path2);
 }
 
 static BOOL is_in_strarray(const WCHAR *needle, const char *hay)
@@ -2165,13 +2205,6 @@ static void check_known_folder(IKnownFolderManager *mgr, KNOWNFOLDERID *folderId
 
 static void test_knownFolders(void)
 {
-    static const WCHAR sWindows[] = {'W','i','n','d','o','w','s',0};
-    static const WCHAR sWindows2[] = {'w','i','n','d','o','w','s',0};
-    static const WCHAR sExample[] = {'E','x','a','m','p','l','e',0};
-    static const WCHAR sExample2[] = {'E','x','a','m','p','l','e','2',0};
-    static const WCHAR sSubFolder[] = {'S','u','b','F','o','l','d','e','r',0};
-    static const WCHAR sNoSuch[] = {'N','o','S','u','c','h',0};
-    static const WCHAR sBackslash[] = {'\\',0};
     static const KNOWNFOLDERID newFolderId = {0x01234567, 0x89AB, 0xCDEF, {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x01} };
     static const KNOWNFOLDERID subFolderId = {0xFEDCBA98, 0x7654, 0x3210, {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF} };
     HRESULT hr;
@@ -2191,18 +2224,16 @@ static void test_knownFolders(void)
     GetWindowsDirectoryW( sWinDir, MAX_PATH );
 
     GetTempPathW(ARRAY_SIZE(sExamplePath), sExamplePath);
-    lstrcatW(sExamplePath, sExample);
+    lstrcatW(sExamplePath, L"Example");
 
     GetTempPathW(ARRAY_SIZE(sExample2Path), sExample2Path);
-    lstrcatW(sExample2Path, sExample2);
+    lstrcatW(sExample2Path, L"Example2");
 
     lstrcpyW(sSubFolderPath, sExamplePath);
-    lstrcatW(sSubFolderPath, sBackslash);
-    lstrcatW(sSubFolderPath, sSubFolder);
+    lstrcatW(sSubFolderPath, L"\\SubFolder");
 
     lstrcpyW(sSubFolder2Path, sExample2Path);
-    lstrcatW(sSubFolder2Path, sBackslash);
-    lstrcatW(sSubFolder2Path, sSubFolder);
+    lstrcatW(sSubFolder2Path, L"\\SubFolder");
 
     CoInitialize(NULL);
 
@@ -2261,7 +2292,7 @@ static void test_knownFolders(void)
             if(SUCCEEDED(hr))
             {
                 ok(kfDefinition.category==KF_CATEGORY_FIXED, "invalid folder category: 0x%08x\n", kfDefinition.category);
-                ok(lstrcmpW(kfDefinition.pszName, sWindows)==0, "invalid folder name: %s\n", wine_dbgstr_w(kfDefinition.pszName));
+                ok(lstrcmpW(kfDefinition.pszName, L"Windows")==0, "invalid folder name: %s\n", wine_dbgstr_w(kfDefinition.pszName));
                 ok(kfDefinition.dwAttributes==0, "invalid folder attributes: %ld\n", kfDefinition.dwAttributes);
                 FreeKnownFolderDefinitionFields(&kfDefinition);
             }
@@ -2270,7 +2301,7 @@ static void test_knownFolders(void)
             ok(hr == S_OK, "failed to release KnownFolder instance: 0x%08lx\n", hr);
         }
 
-        hr = IKnownFolderManager_GetFolderByName(mgr, sWindows, &folder);
+        hr = IKnownFolderManager_GetFolderByName(mgr, L"Windows", &folder);
         ok(hr == S_OK, "failed to get known folder: 0x%08lx\n", hr);
         if(SUCCEEDED(hr))
         {
@@ -2282,7 +2313,7 @@ static void test_knownFolders(void)
             ok(hr == S_OK, "failed to release KnownFolder instance: 0x%08lx\n", hr);
         }
 
-        hr = IKnownFolderManager_GetFolderByName(mgr, sWindows2, &folder);
+        hr = IKnownFolderManager_GetFolderByName(mgr, L"windows", &folder);
         ok(hr == S_OK, "failed to get known folder: 0x%08lx\n", hr);
         if(SUCCEEDED(hr))
         {
@@ -2295,7 +2326,7 @@ static void test_knownFolders(void)
         }
 
         folder = (IKnownFolder *)0xdeadbeef;
-        hr = IKnownFolderManager_GetFolderByName(mgr, sNoSuch, &folder);
+        hr = IKnownFolderManager_GetFolderByName(mgr, L"NoSuch", &folder);
         ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "got 0x%08lx\n", hr);
         ok(folder == NULL, "got %p\n", folder);
 
@@ -2323,10 +2354,10 @@ static void test_knownFolders(void)
 
         ZeroMemory(&kfDefinition, sizeof(kfDefinition));
         kfDefinition.category = KF_CATEGORY_PERUSER;
-        kfDefinition.pszName = CoTaskMemAlloc(sizeof(sExample));
-        lstrcpyW(kfDefinition.pszName, sExample);
-        kfDefinition.pszDescription = CoTaskMemAlloc(sizeof(sExample));
-        lstrcpyW(kfDefinition.pszDescription, sExample);
+        kfDefinition.pszName = CoTaskMemAlloc(sizeof(L"Example"));
+        lstrcpyW(kfDefinition.pszName, L"Example");
+        kfDefinition.pszDescription = CoTaskMemAlloc(sizeof(L"Example"));
+        lstrcpyW(kfDefinition.pszDescription, L"Example");
         kfDefinition.pszRelativePath = CoTaskMemAlloc(sizeof(sExamplePath));
         lstrcpyW(kfDefinition.pszRelativePath, sExamplePath);
 
@@ -2359,12 +2390,12 @@ static void test_knownFolders(void)
                     /* register sub-folder and mark it as child of Example folder */
                     ZeroMemory(&kfSubDefinition, sizeof(kfSubDefinition));
                     kfSubDefinition.category = KF_CATEGORY_PERUSER;
-                    kfSubDefinition.pszName = CoTaskMemAlloc(sizeof(sSubFolder));
-                    lstrcpyW(kfSubDefinition.pszName, sSubFolder);
-                    kfSubDefinition.pszDescription = CoTaskMemAlloc(sizeof(sSubFolder));
-                    lstrcpyW(kfSubDefinition.pszDescription, sSubFolder);
-                    kfSubDefinition.pszRelativePath = CoTaskMemAlloc(sizeof(sSubFolder));
-                    lstrcpyW(kfSubDefinition.pszRelativePath, sSubFolder);
+                    kfSubDefinition.pszName = CoTaskMemAlloc(sizeof(L"SubFolder"));
+                    lstrcpyW(kfSubDefinition.pszName, L"SubFolder");
+                    kfSubDefinition.pszDescription = CoTaskMemAlloc(sizeof(L"SubFolder"));
+                    lstrcpyW(kfSubDefinition.pszDescription, L"SubFolder");
+                    kfSubDefinition.pszRelativePath = CoTaskMemAlloc(sizeof(L"SubFolder"));
+                    lstrcpyW(kfSubDefinition.pszRelativePath, L"SubFolder");
                     kfSubDefinition.fidParent = newFolderId;
 
                     hr = IKnownFolderManager_RegisterFolder(mgr, &subFolderId, &kfSubDefinition);
@@ -2614,8 +2645,8 @@ static void test_knownFolders(void)
 
                     /* update the folder */
                     CoTaskMemFree(kfDefinition.pszName);
-                    kfDefinition.pszName = CoTaskMemAlloc(sizeof(sExample2));
-                    lstrcpyW(kfDefinition.pszName, sExample2);
+                    kfDefinition.pszName = CoTaskMemAlloc(sizeof(L"Example2"));
+                    lstrcpyW(kfDefinition.pszName, L"Example2");
                     hr = IKnownFolderManager_RegisterFolder(mgr, &newFolderId, &kfDefinition);
                     ok(hr == S_OK, "failed to re-register known folder: 0x%08lx\n", hr);
 
@@ -2624,7 +2655,7 @@ static void test_knownFolders(void)
 
                     hr = IKnownFolder_GetFolderDefinition(folder, &kfSubDefinition);
                     ok(hr == S_OK, "failed to get folder definition: 0x%08lx\n", hr);
-                    ok(!memcmp(kfDefinition.pszName, kfSubDefinition.pszName, sizeof(sExample2)),
+                    ok(!memcmp(kfDefinition.pszName, kfSubDefinition.pszName, sizeof(L"Example2")),
                             "Got wrong updated name: %s\n", wine_dbgstr_w(kfSubDefinition.pszName));
 
                     FreeKnownFolderDefinitionFields(&kfSubDefinition);
@@ -2661,8 +2692,6 @@ static void test_DoEnvironmentSubst(void)
     DWORD res2;
     DWORD len;
     INT   i;
-    static const WCHAR does_not_existW[] = {'%','D','O','E','S','_','N','O','T','_','E','X','I','S','T','%',0};
-    static const CHAR  does_not_existA[] = "%DOES_NOT_EXIST%";
     static const CHAR  *names[] = {
                             /* interactive apps and services (works on all windows versions) */
                             "%ALLUSERSPROFILE%", "%APPDATA%", "%LOCALAPPDATA%",
@@ -2779,21 +2808,21 @@ static void test_DoEnvironmentSubst(void)
     /* result: TRUE / string length including terminating 0 / the buffer is untouched */
     memset(bufferA, '#', MAX_PATH - 1);
     bufferA[MAX_PATH - 1] = 0;
-    lstrcpyA(bufferA, does_not_existA);
+    lstrcpyA(bufferA, "%DOES_NOT_EXIST%");
     MultiByteToWideChar(CP_ACP, 0, bufferA, MAX_PATH, bufferW, ARRAY_SIZE(bufferW));
 
-    res2 = lstrlenA(does_not_existA) + 1;
+    res2 = sizeof("%DOES_NOT_EXIST%");
     res = DoEnvironmentSubstA(bufferA, MAX_PATH);
     ok(HIWORD(res) && (LOWORD(res) == res2),
             "%d: got %d/%d (expected TRUE/%ld)\n", i, HIWORD(res), LOWORD(res), res2);
-    ok(!lstrcmpA(bufferA, does_not_existA),
-        "%d: got %s (expected %s)\n", i, bufferA, does_not_existA);
+    ok(!lstrcmpA(bufferA, "%DOES_NOT_EXIST%"),
+        "%d: got %s (expected %s)\n", i, bufferA, "%DOES_NOT_EXIST%");
 
     res = DoEnvironmentSubstW(bufferW, MAX_PATH);
     ok(HIWORD(res) && (LOWORD(res) == res2),
         "%d: got %d/%d (expected TRUE/%ld)\n", i, HIWORD(res), LOWORD(res), res2);
-    ok(!lstrcmpW(bufferW, does_not_existW),
-        "%d: got %s (expected %s)\n", i, wine_dbgstr_w(bufferW), wine_dbgstr_w(does_not_existW));
+    ok(!lstrcmpW(bufferW, L"%DOES_NOT_EXIST%"),
+        "%d: got %s (expected %s)\n", i, wine_dbgstr_w(bufferW), wine_dbgstr_w(L"%DOES_NOT_EXIST%"));
 
 
     if (0)
@@ -2806,11 +2835,6 @@ static void test_DoEnvironmentSubst(void)
 
 static void test_PathYetAnotherMakeUniqueName(void)
 {
-    static const WCHAR shortW[] = {'f','i','l','e','.','t','s','t',0};
-    static const WCHAR short2W[] = {'f','i','l','e',' ','(','2',')','.','t','s','t',0};
-    static const WCHAR tmpW[] = {'t','m','p',0};
-    static const WCHAR longW[] = {'n','a','m','e',0};
-    static const WCHAR long2W[] = {'n','a','m','e',' ','(','2',')',0};
     WCHAR nameW[MAX_PATH], buffW[MAX_PATH], pathW[MAX_PATH];
     HANDLE file;
     BOOL ret;
@@ -2835,10 +2859,10 @@ if (0)
 
     /* Using short name only first */
     nameW[0] = 0;
-    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, shortW, NULL);
+    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, L"file.tst", NULL);
     ok(ret, "got %d\n", ret);
     lstrcpyW(buffW, pathW);
-    lstrcatW(buffW, shortW);
+    lstrcatW(buffW, L"file.tst");
     ok(!lstrcmpW(nameW, buffW), "got %s, expected %s\n", wine_dbgstr_w(nameW), wine_dbgstr_w(buffW));
 
     /* now create a file with this name and get next name */
@@ -2846,40 +2870,40 @@ if (0)
     ok(file != NULL, "got %p\n", file);
 
     nameW[0] = 0;
-    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, shortW, NULL);
+    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, L"file.tst", NULL);
     ok(ret, "got %d\n", ret);
     lstrcpyW(buffW, pathW);
-    lstrcatW(buffW, short2W);
+    lstrcatW(buffW, L"file (2).tst");
     ok(!lstrcmpW(nameW, buffW), "got %s, expected %s\n", wine_dbgstr_w(nameW), wine_dbgstr_w(buffW));
 
     CloseHandle(file);
 
     /* Using short and long */
     nameW[0] = 0;
-    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, tmpW, longW);
+    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, L"tmp", L"name");
     ok(ret, "got %d\n", ret);
     lstrcpyW(buffW, pathW);
-    lstrcatW(buffW, longW);
+    lstrcatW(buffW, L"name");
     ok(!lstrcmpW(nameW, buffW), "got %s, expected %s\n", wine_dbgstr_w(nameW), wine_dbgstr_w(buffW));
 
     file = CreateFileW(nameW, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, NULL);
     ok(file != NULL, "got %p\n", file);
 
     nameW[0] = 0;
-    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, tmpW, longW);
+    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, L"tmp", L"name");
     ok(ret, "got %d\n", ret);
     lstrcpyW(buffW, pathW);
-    lstrcatW(buffW, long2W);
+    lstrcatW(buffW, L"name (2)");
     ok(!lstrcmpW(nameW, buffW), "got %s, expected %s\n", wine_dbgstr_w(nameW), wine_dbgstr_w(buffW));
 
     CloseHandle(file);
 
     /* Using long only */
     nameW[0] = 0;
-    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, NULL, longW);
+    ret = pPathYetAnotherMakeUniqueName(nameW, pathW, NULL, L"name");
     ok(ret, "got %d\n", ret);
     lstrcpyW(buffW, pathW);
-    lstrcatW(buffW, longW);
+    lstrcatW(buffW, L"name");
     ok(!lstrcmpW(nameW, buffW), "got %s, expected %s\n", wine_dbgstr_w(nameW), wine_dbgstr_w(buffW));
 }
 

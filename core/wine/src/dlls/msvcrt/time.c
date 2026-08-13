@@ -780,11 +780,12 @@ int CDECL _ftime32_s(struct __timeb32 *buf)
 __time64_t CDECL _time64(__time64_t *buf)
 {
     __time64_t curtime;
-    struct __timeb64 tb;
+    FILETIME ft;
+    ULONGLONG time;
 
-    _ftime64(&tb);
-
-    curtime = tb.time;
+    GetSystemTimeAsFileTime(&ft);
+    time = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    curtime = time / TICKSPERSEC - SECS_1601_TO_1970;
     return buf ? *buf = curtime : curtime;
 }
 
@@ -794,11 +795,10 @@ __time64_t CDECL _time64(__time64_t *buf)
 __time32_t CDECL _time32(__time32_t *buf)
 {
     __time32_t curtime;
-    struct __timeb64 tb;
+    __time64_t time;
 
-    _ftime64(&tb);
-
-    curtime = tb.time;
+    time = _time64(NULL);
+    curtime = (time == (__time32_t)time) ? time : -1;
     return buf ? *buf = curtime : curtime;
 }
 
@@ -1737,7 +1737,11 @@ errno_t CDECL _ctime64_s(char *res, size_t len, const __time64_t *time)
     if (!MSVCRT_CHECK_PMT( len >= 26 )) return EINVAL;
     res[0] = '\0';
     if (!MSVCRT_CHECK_PMT( time != NULL )) return EINVAL;
-    if (!MSVCRT_CHECK_PMT( *time > 0 )) return EINVAL;
+    if (*time < 0)
+    {
+        *_errno() = EINVAL;
+        return EINVAL;
+    }
 
     ret = _localtime64_s( &t, time );
     if (ret)
@@ -1768,7 +1772,11 @@ errno_t CDECL _ctime32_s(char *res, size_t len, const __time32_t *time)
     if (!MSVCRT_CHECK_PMT( len >= 26 )) return EINVAL;
     res[0] = '\0';
     if (!MSVCRT_CHECK_PMT( time != NULL )) return EINVAL;
-    if (!MSVCRT_CHECK_PMT( *time > 0 )) return EINVAL;
+    if (*time < 0)
+    {
+        *_errno() = EINVAL;
+        return EINVAL;
+    }
 
     ret = _localtime32_s( &t, time );
     if (ret)

@@ -578,7 +578,7 @@ static HRESULT WINAPI BindCallbackRedirect_Redirect(IBindCallbackRedirect *iface
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(url), vbCancel);
 
-    if(This->window && This->window->base.outer_window && (browser = This->window->base.outer_window->browser)
+    if(This->window && !is_detached_window(This->window) && (browser = This->window->base.outer_window->browser)
        && browser->doc->doc_object_service) {
         if(is_main_content_window(This->window->base.outer_window)) {
             hres = IHTMLWindow2_get_name(&This->window->base.IHTMLWindow2_iface, &frame_name);
@@ -814,7 +814,8 @@ static void query_http_info(nsChannelBSC *This, IWinInetHttpInfo *wininet_info)
 {
     const WCHAR *ptr;
     DWORD len = 0;
-    WCHAR *buf;
+    WCHAR *wbuf;
+    char *buf;
 
     IWinInetHttpInfo_QueryInfo(wininet_info, HTTP_QUERY_RAW_HEADERS_CRLF, NULL, &len, NULL, NULL);
     if(!len)
@@ -830,13 +831,18 @@ static void query_http_info(nsChannelBSC *This, IWinInetHttpInfo *wininet_info)
         return;
     }
 
-    ptr = wcschr(buf, '\r');
+    wbuf = strdupAtoW(buf);
+    free(buf);
+    if (!wbuf)
+        return;
+
+    ptr = wcschr(wbuf, '\r');
     if(ptr && ptr[1] == '\n') {
         ptr += 2;
         process_response_headers(This, ptr);
     }
 
-    free(buf);
+    free(wbuf);
 }
 
 HRESULT start_binding(HTMLInnerWindow *inner_window, BSCallback *bscallback, IBindCtx *bctx)
@@ -1144,8 +1150,9 @@ static HRESULT read_stream_data(nsChannelBSC *This, IStream *stream)
                 break;
             case BOM_UTF16:
                 This->nschannel->charset = strdup("utf-16");
+                break;
             case BOM_NONE:
-                /* FIXME: Get charset from HTTP headers */;
+                break;
             }
 
             if(!This->nschannel->content_type) {
@@ -1269,7 +1276,7 @@ static nsresult NSAPI nsAsyncVerifyRedirectCallback_OnRedirectVerifyCallback(nsI
             ERR("AddRequest failed: %08lx\n", nsres);
     }
 
-    if(This->bsc->is_doc_channel && This->bsc->bsc.window && This->bsc->bsc.window->base.outer_window) {
+    if(This->bsc->is_doc_channel && This->bsc->bsc.window && !is_detached_window(This->bsc->bsc.window)) {
         IUri *uri = nsuri_get_uri(This->nschannel->uri);
 
         if(uri) {
@@ -1445,7 +1452,7 @@ static void handle_navigation_error(nsChannelBSC *This, DWORD result)
     BSTR unk;
     HRESULT hres;
 
-    if(!This->is_doc_channel || !This->bsc.window || !This->bsc.window->base.outer_window
+    if(!This->is_doc_channel || !This->bsc.window || is_detached_window(This->bsc.window)
        || !This->bsc.window->base.outer_window->browser)
         return;
 
@@ -1644,7 +1651,7 @@ static void handle_extern_mime_navigation(nsChannelBSC *This)
     VARIANT flags;
     HRESULT hres;
 
-    if(!This->bsc.window || !This->bsc.window->base.outer_window || !This->bsc.window->base.outer_window->browser)
+    if(!This->bsc.window || is_detached_window(This->bsc.window) || !This->bsc.window->base.outer_window->browser)
         return;
 
     doc_obj = This->bsc.window->base.outer_window->browser->doc;

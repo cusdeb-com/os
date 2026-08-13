@@ -2317,9 +2317,9 @@ BOOL WINAPI InternetCrackUrlW(const WCHAR *lpszUrl, DWORD dwUrlLength, DWORD dwF
                 }
             }
             /* if ends in \. or \.. append a backslash */
-            if (tmppath[len - 1] == '.' &&
+            if (len >= 2 && tmppath[len - 1] == '.' &&
                     (tmppath[len - 2] == '\\' ||
-                     (tmppath[len - 2] == '.' && tmppath[len - 3] == '\\')))
+                     (len >= 3 && tmppath[len - 2] == '.' && tmppath[len - 3] == '\\')))
             {
                 if (len < MAX_PATH - 1)
                 {
@@ -3960,6 +3960,84 @@ BOOL WINAPI InternetTimeToSystemTimeA( LPCSTR string, SYSTEMTIME* time, DWORD re
     return ret;
 }
 
+static BOOL calc_month(SYSTEMTIME* time, const WCHAR **s)
+{
+    WCHAR *end;
+
+    time->wMonth = 0;
+    if (**s == '\0') return TRUE;
+
+    if (iswalpha(**s))
+    {
+        if ((*s)[1] == '\0' || (*s)[2] == '\0') return TRUE;
+        for (int i = 0; i < 12; i++)
+        {
+            if (!wcsnicmp(WININET_month[i], *s, 3))
+            {
+                time->wMonth = i + 1;
+                *s += 3;
+                break;
+            }
+        }
+    }
+    else if (is_time_digit(**s))
+    {
+        time->wMonth = wcstol(*s, &end, 10);
+        *s = end;
+    }
+    return (time->wMonth == 0);
+}
+
+static void calc_day(SYSTEMTIME* time, const WCHAR **s)
+{
+    WCHAR *end;
+
+    time->wDay = wcstol( *s, &end, 10 );
+    *s = end;
+}
+
+static BOOL calc_time(SYSTEMTIME* time, const WCHAR **s)
+{
+    WCHAR *end;
+
+    if (**s == '\0') return TRUE;
+    time->wHour = wcstol( *s, &end, 10 );
+    *s = end;
+
+    while (**s && !is_time_digit(**s)) (*s)++;
+    if (**s == '\0') return TRUE;
+    time->wMinute = wcstol( *s, &end, 10 );
+    *s = end;
+
+    while (**s && !is_time_digit(**s)) (*s)++;
+    if (**s == '\0') return TRUE;
+    time->wSecond = wcstol( *s, &end, 10 );
+    *s = end;
+
+    time->wMilliseconds = 0;
+    return FALSE;
+}
+
+static BOOL calc_year(SYSTEMTIME* time, const WCHAR **s)
+{
+    WCHAR *end;
+
+    if (**s == '\0') return TRUE;
+    time->wYear = wcstol( *s, &end, 10 );
+    if (80 > time->wYear)
+        time->wYear += 2000;
+    else if (100 > time->wYear)
+        time->wYear += 1900;
+
+    *s = end;
+    return FALSE;
+}
+
+static BOOL is_time(const WCHAR *s)
+{
+    return (s[1] == L':' || s[2] == L':');
+}
+
 /***********************************************************************
  *           InternetTimeToSystemTimeW (WININET.@)
  */
@@ -3992,6 +4070,7 @@ BOOL WINAPI InternetTimeToSystemTimeW( LPCWSTR string, SYSTEMTIME* time, DWORD r
             if (!wcsnicmp(WININET_wkday[i], s, 3))
             {
                 time->wDayOfWeek = i;
+                s += 3;
                 break;
             }
         }
@@ -4003,54 +4082,37 @@ BOOL WINAPI InternetTimeToSystemTimeW( LPCWSTR string, SYSTEMTIME* time, DWORD r
     }
     if (time->wDayOfWeek > 6) return TRUE;
 
-    while (*s && !is_time_digit(*s)) s++;
-    time->wDay = wcstol( s, &end, 10 );
-    s = end;
-
     while (*s && !iswalpha(*s) && !is_time_digit(*s)) s++;
     if (*s == '\0') return TRUE;
-    time->wMonth = 0;
-
-    if (iswalpha(*s))
+    if (is_time_digit(*s))
     {
-        if (s[1] == '\0' || s[2] == '\0') return TRUE;
-        for (i = 0; i < 12; i++)
-        {
-            if (!wcsnicmp(WININET_month[i], s, 3))
-            {
-                time->wMonth = i + 1;
-                break;
-            }
-        }
-    }
-    else if (is_time_digit(*s))
+        calc_day(time, &s);
+        while (*s && !iswalpha(*s) && !is_time_digit(*s)) s++;
+        if (calc_month(time, &s))
+            return TRUE;
+    }else
     {
-        time->wMonth = wcstol(s, &end, 10);
-        s = end;
+        if (calc_month(time, &s))
+            return TRUE;
+        while (*s && !iswalpha(*s) && !is_time_digit(*s)) s++;
+        calc_day(time, &s);
     }
-    if (time->wMonth == 0) return TRUE;
 
     while (*s && !is_time_digit(*s)) s++;
     if (*s == '\0') return TRUE;
-    time->wYear = wcstol( s, &end, 10 );
-    s = end;
-
-    while (*s && !is_time_digit(*s)) s++;
-    if (*s == '\0') return TRUE;
-    time->wHour = wcstol( s, &end, 10 );
-    s = end;
-
-    while (*s && !is_time_digit(*s)) s++;
-    if (*s == '\0') return TRUE;
-    time->wMinute = wcstol( s, &end, 10 );
-    s = end;
-
-    while (*s && !is_time_digit(*s)) s++;
-    if (*s == '\0') return TRUE;
-    time->wSecond = wcstol( s, &end, 10 );
-    s = end;
-
-    time->wMilliseconds = 0;
+    if (is_time(s))
+    {
+        if (calc_time(time, &s))
+            return TRUE;
+        while (*s && !is_time_digit(*s)) s++;
+        calc_year(time, &s);
+    }else
+    {
+        if (calc_year(time, &s))
+            return TRUE;
+        while (*s && !is_time_digit(*s)) s++;
+        calc_time(time, &s);
+    }
     return TRUE;
 }
 
@@ -4114,28 +4176,26 @@ BOOL WINAPI InternetCheckConnectionW( LPCWSTR lpszUrl, DWORD dwFlags, DWORD dwRe
 
   if (dwFlags & FLAG_ICC_FORCE_CONNECTION)
   {
-      struct sockaddr_storage saddr;
-      int sa_len = sizeof(saddr);
+      struct server_addr *addr;
       WCHAR *host_z;
       int fd;
-      BOOL b;
 
       host_z = strndupW(host, host_len);
       if (!host_z)
           return FALSE;
 
-      b = GetAddress(host_z, port, (struct sockaddr *)&saddr, &sa_len, NULL);
+      addr = GetAddress(host_z, port);
       free(host_z);
-      if(!b)
+      if(!addr)
           goto End;
       init_winsock();
-      fd = socket(saddr.ss_family, SOCK_STREAM, 0);
+      fd = create_connect_socket(addr, AF_UNSPEC, INFINITE, NULL, 0);
       if (fd != -1)
       {
-          if (connect(fd, (struct sockaddr *)&saddr, sa_len) == 0)
-              rc = TRUE;
+          rc = TRUE;
           closesocket(fd);
       }
+      free(addr);
   }
   else
   {

@@ -182,14 +182,7 @@ static NTSTATUS create_pipe(PHANDLE handle, ULONG access, ULONG sharing, ULONG o
     NTSTATUS res;
 
     pRtlInitUnicodeString(&name, testpipe_nt);
-
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     timeout.QuadPart = -100000000;
 
     res = pNtCreateNamedPipeFile(handle, FILE_READ_ATTRIBUTES | SYNCHRONIZE | access, &attr, &iosb, sharing,
@@ -265,14 +258,7 @@ static void test_create_invalid(void)
     FILE_PIPE_LOCAL_INFORMATION info;
 
     pRtlInitUnicodeString(&name, testpipe_nt);
-
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     timeout.QuadPart = -100000000;
 
 /* create a pipe with FILE_OVERWRITE */
@@ -583,13 +569,35 @@ static void test_nonalertable(void)
     CloseHandle(hPipe);
 }
 
+struct cancelio_ctx
+{
+    HANDLE pipe;
+    HANDLE event;
+    IO_STATUS_BLOCK *iosb;
+    BOOL null_iosb;
+};
+
+static DWORD WINAPI cancelioex_thread_func(void *arg)
+{
+    struct cancelio_ctx *ctx = arg;
+    IO_STATUS_BLOCK cancel_sb;
+    NTSTATUS res;
+
+    res = pNtCancelIoFileEx(ctx->pipe, ctx->null_iosb ? NULL : ctx->iosb, &cancel_sb);
+    ok(!res, "NtCancelIoFileEx returned %lx\n", res);
+
+    ok(!cancel_sb.Status, "Unexpected Status %lx\n", cancel_sb.Status);
+    ok(!cancel_sb.Information, "Unexpected Information %Iu\n", cancel_sb.Information);
+
+    return 0;
+}
+
 static void test_cancelio(void)
 {
-    IO_STATUS_BLOCK iosb;
-    IO_STATUS_BLOCK cancel_sb;
-    HANDLE hEvent;
-    HANDLE hPipe;
-    NTSTATUS res;
+    IO_STATUS_BLOCK cancel_sb, iosb;
+    HANDLE hEvent, hPipe, thread;
+    struct cancelio_ctx ctx;
+    NTSTATUS res, status;
 
     hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     ok(hEvent != INVALID_HANDLE_VALUE, "can't create event, GetLastError: %lx\n", GetLastError());
@@ -603,9 +611,15 @@ static void test_cancelio(void)
     ok(res == STATUS_PENDING, "NtFsControlFile returned %lx\n", res);
 
     res = pNtCancelIoFile(hPipe, &cancel_sb);
+    /* Save Status first thing after the call. We want to make very unlikely
+     * that the kernel APC updating Status could be executed after the call
+     * but before peeking at Status here. */
+    status = iosb.Status;
     ok(!res, "NtCancelIoFile returned %lx\n", res);
+    ok(!cancel_sb.Status, "Unexpected Status %lx\n", cancel_sb.Status);
+    ok(!cancel_sb.Information, "Unexpected Information %Iu\n", cancel_sb.Information);
 
-    ok(iosb.Status == STATUS_CANCELLED, "Wrong iostatus %lx\n", iosb.Status);
+    ok(status == STATUS_CANCELLED, "Wrong iostatus %lx\n", status);
     ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
 
     ok(!ioapc_called, "IOAPC ran too early\n");
@@ -617,6 +631,8 @@ static void test_cancelio(void)
     res = pNtCancelIoFile(hPipe, &cancel_sb);
     ok(!res, "NtCancelIoFile returned %lx\n", res);
     ok(iosb.Status == STATUS_CANCELLED, "Wrong iostatus %lx\n", iosb.Status);
+    ok(!cancel_sb.Status, "Unexpected Status %lx\n", cancel_sb.Status);
+    ok(!cancel_sb.Information, "Unexpected Information %Iu\n", cancel_sb.Information);
 
     CloseHandle(hPipe);
 
@@ -630,15 +646,41 @@ static void test_cancelio(void)
         ok(res == STATUS_PENDING, "NtFsControlFile returned %lx\n", res);
 
         res = pNtCancelIoFileEx(hPipe, &iosb, &cancel_sb);
+        status = iosb.Status;
         ok(!res, "NtCancelIoFileEx returned %lx\n", res);
+        ok(!cancel_sb.Status, "Unexpected Status %lx\n", cancel_sb.Status);
+        ok(!cancel_sb.Information, "Unexpected Information %Iu\n", cancel_sb.Information);
 
-        ok(iosb.Status == STATUS_CANCELLED, "Wrong iostatus %lx\n", iosb.Status);
+        ok(status == STATUS_CANCELLED, "Wrong iostatus %lx\n", status);
         ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
 
         iosb.Status = 0xdeadbeef;
         res = pNtCancelIoFileEx(hPipe, NULL, &cancel_sb);
         ok(res == STATUS_NOT_FOUND, "NtCancelIoFileEx returned %lx\n", res);
         ok(iosb.Status == 0xdeadbeef, "Wrong iostatus %lx\n", iosb.Status);
+        ok(cancel_sb.Status == STATUS_NOT_FOUND, "Unexpected Status %lx\n", cancel_sb.Status);
+        ok(!cancel_sb.Information, "Unexpected Information %Iu\n", cancel_sb.Information);
+
+        memset(&iosb, 0x55, sizeof(iosb));
+        res = listen_pipe(hPipe, hEvent, &iosb, FALSE);
+        ok(res == STATUS_PENDING, "NtFsControlFile returned %lx\n", res);
+
+        ctx.pipe = hPipe;
+        ctx.event = hEvent;
+        ctx.iosb = &iosb;
+        ctx.null_iosb = FALSE;
+        thread = CreateThread(NULL, 0, cancelioex_thread_func, &ctx, 0, NULL);
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+
+        memset(&iosb, 0x55, sizeof(iosb));
+        res = listen_pipe(hPipe, hEvent, &iosb, FALSE);
+        ok(res == STATUS_PENDING, "NtFsControlFile returned %lx\n", res);
+
+        ctx.null_iosb = TRUE;
+        thread = CreateThread(NULL, 0, cancelioex_thread_func, &ctx, 0, NULL);
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
 
         CloseHandle(hPipe);
     }
@@ -704,6 +746,8 @@ static void test_cancelsynchronousio(void)
     ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %lu (error %lu)\n", ret, GetLastError());
     memset(&iosb, 0x55, sizeof(iosb));
     res = pNtCancelSynchronousIoFile(thread, NULL, &iosb);
+    ok(ctx.iosb.Status == 0xdeadbabe || ctx.iosb.Status == STATUS_CANCELLED,
+        "Unexpected status %lx\n", ctx.iosb.Status);
     ok(res == STATUS_SUCCESS, "Failed to cancel I/O\n");
     ok(iosb.Status == STATUS_SUCCESS, "iosb.Status got changed to %lx\n", iosb.Status);
     ok(iosb.Information == 0, "iosb.Information got changed to %Iu\n", iosb.Information);
@@ -809,14 +853,7 @@ static void test_filepipeinfo(void)
     NTSTATUS res;
 
     pRtlInitUnicodeString(&name, testpipe_nt);
-
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     timeout.QuadPart = -100000000;
 
     /* test with INVALID_HANDLE_VALUE */
@@ -1752,12 +1789,7 @@ static void test_blocking(ULONG options)
     ok(status == STATUS_SUCCESS, "NtCreateNamedPipeFile returned %lx\n", status);
 
     pRtlInitUnicodeString(&name, testpipe_nt);
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     status = NtCreateFile(&ctx.client, SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE, &attr, &io,
                           NULL, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN,
                           options, NULL, 0 );
@@ -2275,14 +2307,7 @@ static HANDLE create_local_info_test_pipe(void)
     NTSTATUS status;
 
     pRtlInitUnicodeString(&name, testpipe_nt);
-
-    attr.Length                   = sizeof(attr);
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     timeout.QuadPart = -100000000;
 
     status = pNtCreateNamedPipeFile(&pipe, FILE_READ_ATTRIBUTES | SYNCHRONIZE | GENERIC_WRITE,
@@ -2342,7 +2367,6 @@ static void test_pipe_local_info(HANDLE pipe, BOOL is_server, DWORD state)
         ok(local_info.ReadDataAvailable == 0, "ReadDataAvailable = %lu\n",
            local_info.ReadDataAvailable);
         ok(local_info.OutboundQuota == 200, "OutboundQuota = %lu\n", local_info.OutboundQuota);
-        todo_wine
         ok(local_info.WriteQuotaAvailable == (is_server ? 200 : 100), "WriteQuotaAvailable = %lu\n",
            local_info.WriteQuotaAvailable);
         ok(local_info.NamedPipeState == state, "%s NamedPipeState = %lu, expected %lu\n",
@@ -2351,14 +2375,7 @@ static void test_pipe_local_info(HANDLE pipe, BOOL is_server, DWORD state)
 
         /* try to create another, incompatible, instance of pipe */
         pRtlInitUnicodeString(&name, testpipe_nt);
-
-        attr.Length                   = sizeof(attr);
-        attr.RootDirectory            = 0;
-        attr.ObjectName               = &name;
-        attr.Attributes               = OBJ_CASE_INSENSITIVE;
-        attr.SecurityDescriptor       = NULL;
-        attr.SecurityQualityOfService = NULL;
-
+        InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
         timeout.QuadPart = -100000000;
 
         status = pNtCreateNamedPipeFile(&new_pipe, FILE_READ_ATTRIBUTES | SYNCHRONIZE | GENERIC_READ,
@@ -2759,15 +2776,8 @@ static void test_empty_name(void)
 
     hpipe = hwrite = NULL;
 
-    attr.Length                   = sizeof(attr);
-    attr.Attributes               = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor       = NULL;
-    attr.SecurityQualityOfService = NULL;
-
+    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
     pRtlInitUnicodeString(&name, L"\\Device\\NamedPipe");
-    attr.RootDirectory            = 0;
-    attr.ObjectName               = &name;
-
     status = NtCreateFile(&hdirectory, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &attr, &io, NULL, 0,
             FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0 );
     ok(!status, "Got unexpected status %#lx.\n", status);

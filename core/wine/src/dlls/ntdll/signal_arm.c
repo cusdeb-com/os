@@ -26,7 +26,6 @@
 #include <setjmp.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "wine/exception.h"
@@ -54,7 +53,7 @@ typedef union _DISPATCHER_CONTEXT_NONVOLREG_ARM
  *         syscalls
  */
 #define SYSCALL_ENTRY(id,name,args) __ASM_SYSCALL_FUNC( id, name, args )
-ALL_SYSCALLS32
+ALL_SYSCALLS
 DEFINE_SYSCALL_HELPER32()
 #undef SYSCALL_ENTRY
 
@@ -145,6 +144,17 @@ EXCEPTION_DISPOSITION WINAPI unwind_exception_handler( EXCEPTION_RECORD *record,
             sizeof(DISPATCHER_CONTEXT_NONVOLREG_ARM) );
     TRACE( "detected collided unwind\n" );
     return ExceptionCollidedUnwind;
+}
+
+
+/*******************************************************************
+ *         nested_exception_handler
+ */
+EXCEPTION_DISPOSITION WINAPI nested_exception_handler( EXCEPTION_RECORD *rec, void *frame,
+                                                       CONTEXT *context, void *dispatch )
+{
+    if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)) return ExceptionContinueSearch;
+    return ExceptionNestedException;
 }
 
 
@@ -510,9 +520,10 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         }
         else  /* hack: call builtin handlers registered in the tib list */
         {
-            while (is_valid_frame( (ULONG_PTR)teb_frame ) &&
-                   (DWORD)teb_frame < new_context.Sp &&
-                   (DWORD)teb_frame < (DWORD)end_frame)
+            ULONG_PTR last_frame = new_context.Sp;
+            if (end_frame && (ULONG_PTR)end_frame < last_frame) last_frame = (ULONG_PTR)end_frame;
+
+            while (is_valid_frame( (ULONG_PTR)teb_frame ) && (ULONG_PTR)teb_frame < last_frame)
             {
                 TRACE( "calling TEB handler %p (rec=%p, frame=%p context=%p, dispatch=%p)\n",
                        teb_frame->Handler, rec, teb_frame, dispatch.ContextRecord, &dispatch );
@@ -539,7 +550,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
                     break;
                 }
             }
-            if ((DWORD)teb_frame == (DWORD)end_frame && (DWORD)end_frame < new_context.Sp) break;
+            if ((ULONG_PTR)teb_frame == last_frame && last_frame < new_context.Sp) break;
         }
 
         if (dispatch.EstablisherFrame == (DWORD)end_frame) break;

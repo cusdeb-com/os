@@ -49,7 +49,7 @@ static HRESULT navigate_href_new_window(HTMLElement *element, nsAString *href_st
     IUri *uri;
     HRESULT hres;
 
-    if(!element->node.doc->window->base.outer_window)
+    if(is_detached_window(element->node.doc->window))
         return S_OK;
 
     nsAString_GetData(href_str, &href);
@@ -114,7 +114,7 @@ static HRESULT navigate_href(HTMLElement *element, nsAString *href_str, nsAStrin
     const PRUnichar *href;
     HRESULT hres;
 
-    if(!element->node.doc->window->base.outer_window)
+    if(is_detached_window(element->node.doc->window))
         return S_OK;
 
     window = get_target_window(element->node.doc->window->base.outer_window, target_str, &use_new_window);
@@ -846,8 +846,8 @@ static const tid_t HTMLAnchorElement_iface_tids[] = {
 };
 
 dispex_static_data_t HTMLAnchorElement_dispex = {
-    .id           = PROT_HTMLAnchorElement,
-    .prototype_id = PROT_HTMLElement,
+    .id           = OBJID_HTMLAnchorElement,
+    .prototype_id = OBJID_HTMLElement,
     .vtbl         = &HTMLAnchorElement_event_target_vtbl.dispex_vtbl,
     .disp_tid     = DispHTMLAnchorElement_tid,
     .iface_tids   = HTMLAnchorElement_iface_tids,

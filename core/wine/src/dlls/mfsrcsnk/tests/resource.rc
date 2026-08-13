@@ -1,0 +1,46 @@
+/*
+ * Resources for mfsrcsnk test suite.
+ *
+ * Copyright 2025 Charlotte Pabst for CodeWeavers
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
+#include "windef.h"
+
+/* Generated with:
+  gst-launch-1.0 videotestsrc num-buffers=60 pattern=smpte100 ! \
+      video/x-raw,format=I420,width=64,height=64,framerate=30000/1001 ! \
+      videoflip method=clockwise ! videoconvert ! \
+      x264enc key-int-max=5 ! qtmux ! filesink location=tmp.mp4 && \
+  ffmpeg -i tmp.mp4 dlls/mfsrcsnk/tests/test_thinning.avi
+ */
+/* @makedep: test_thinning.avi */
+test_thinning.avi RCDATA test_thinning.avi
+
+/* Generated with:
+  ffmpeg -filter_complex "smptebars=s=64x64[vout]" -map "[vout]" -t 0.25 -r 25 -vcodec h264 \
+  -brand mp42 -aspect 3:4 -an test.mp4
+
+  Then, manually remove the pasp atom from the generated mp4 file.
+ */
+/* @makedep: test_metadata.mp4 */
+test_metadata.mp4 RCDATA test_metadata.mp4
+
+/* Same as above, but instead of removing the pasp, it's modify to have an aspect ratio of 15:16
+ * (it was 3:4 originally)
+ */
+/* @makedep: test_metadata2.mp4 */
+test_metadata2.mp4 RCDATA test_metadata2.mp4

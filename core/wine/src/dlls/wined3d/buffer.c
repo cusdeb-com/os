@@ -524,6 +524,11 @@ struct wined3d_resource * CDECL wined3d_buffer_get_resource(struct wined3d_buffe
     return &buffer->resource;
 }
 
+unsigned int buffer_resource_get_sub_resource_count(struct wined3d_resource *resource)
+{
+    return 1;
+}
+
 static HRESULT buffer_resource_sub_resource_get_desc(struct wined3d_resource *resource,
         unsigned int sub_resource_idx, struct wined3d_sub_resource_desc *desc)
 {
@@ -922,6 +927,7 @@ static const struct wined3d_resource_ops buffer_resource_ops =
     buffer_resource_decref,
     buffer_resource_preload,
     buffer_resource_unload,
+    buffer_resource_get_sub_resource_count,
     buffer_resource_sub_resource_get_desc,
     buffer_resource_sub_resource_get_map_pitch,
     buffer_resource_sub_resource_map,
@@ -1142,6 +1148,8 @@ VkBufferUsageFlags vk_buffer_usage_from_bind_flags(uint32_t bind_flags)
         usage |= VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
     if (bind_flags & WINED3D_BIND_INDIRECT_BUFFER)
         usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    if (bind_flags & WINED3D_BIND_DECODER_SRC)
+        usage |= VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR;
     if (bind_flags & (WINED3D_BIND_RENDER_TARGET | WINED3D_BIND_DEPTH_STENCIL))
         FIXME("Ignoring some bind flags %#x.\n", bind_flags);
     return usage;

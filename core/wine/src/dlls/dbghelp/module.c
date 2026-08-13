@@ -25,13 +25,12 @@
 #include <assert.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "dbghelp_private.h"
 #include "image_private.h"
 #include "psapi.h"
+#include "tlhelp32.h"
 #include "winternl.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
@@ -84,33 +83,8 @@ static const WCHAR* get_filename(const WCHAR* name, const WCHAR* endptr)
 static BOOL is_wine_loader(const WCHAR *module)
 {
     const WCHAR *filename = get_filename(module, NULL);
-    const char *ptr;
-    BOOL ret = FALSE;
-    WCHAR *buffer;
-    DWORD len;
 
-    if ((ptr = getenv("WINELOADER")))
-    {
-        ptr = file_nameA(ptr);
-        len = 2 + MultiByteToWideChar( CP_UNIXCP, 0, ptr, -1, NULL, 0 );
-        buffer = heap_alloc( len * sizeof(WCHAR) );
-        MultiByteToWideChar( CP_UNIXCP, 0, ptr, -1, buffer, len );
-    }
-    else
-    {
-        buffer = heap_alloc( sizeof(L"wine") + 2 * sizeof(WCHAR) );
-        lstrcpyW( buffer, L"wine" );
-    }
-
-    if (!wcscmp( filename, buffer ))
-        ret = TRUE;
-
-    lstrcatW( buffer, L"64" );
-    if (!wcscmp( filename, buffer ))
-        ret = TRUE;
-
-    heap_free( buffer );
-    return ret;
+    return !wcscmp( filename, L"wine" );
 }
 
 static void module_fill_module(const WCHAR* in, WCHAR* out, size_t size)
@@ -135,40 +109,9 @@ void module_set_module(struct module* module, const WCHAR* name)
     module_fill_module(name, module->modulename, ARRAY_SIZE(module->modulename));
 }
 
-/* Returned string must be freed by caller */
-WCHAR *get_wine_loader_name(struct process *pcs)
+const WCHAR *get_wine_loader_name(struct process *pcs)
 {
-    const WCHAR *name;
-    WCHAR* altname;
-    unsigned len;
-
-    name = process_getenv(pcs, L"WINELOADER");
-    if (!name) name = pcs->is_host_64bit ? L"wine64" : L"wine";
-    len = lstrlenW(name);
-
-    /* WINELOADER isn't properly updated in Wow64 process calling inside Windows env block
-     * (it's updated in ELF env block though)
-     * So do the adaptation ourselves.
-     */
-    altname = HeapAlloc(GetProcessHeap(), 0, (len + 2 + 1) * sizeof(WCHAR));
-    if (altname)
-    {
-        memcpy(altname, name, len * sizeof(WCHAR));
-        if (pcs->is_host_64bit && len >= 2 && memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)) != 0)
-        {
-            lstrcpyW(altname + len, L"64");
-            /* in multi-arch wow configuration, wine64 doesn't exist */
-            if (GetFileAttributesW(altname) == INVALID_FILE_ATTRIBUTES)
-                altname[len] = L'\0';
-        }
-        else if (!pcs->is_host_64bit && len >= 2 && !memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)))
-            altname[len - 2] = '\0';
-        else
-            altname[len] = '\0';
-    }
-
-    TRACE("returning %s\n", debugstr_w(altname));
-    return altname;
+    return process_getenv(pcs, L"WINELOADER");
 }
 
 static const char*      get_module_type(struct module* module)
@@ -253,14 +196,13 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
         module->cpu = dbghelp_current_cpu;
     module->debug_format_bitmask = 0;
 
-    vector_init(&module->vsymt, sizeof(struct symt*), 128);
-    vector_init(&module->vcustom_symt, sizeof(struct symt*), 16);
+    vector_init(&module->vsymt, sizeof(symref_t), 0);
+    vector_init(&module->vcustom_symt, sizeof(symref_t), 0);
     /* FIXME: this seems a bit too high (on a per module basis)
      * need some statistics about this
      */
     hash_table_init(&module->pool, &module->ht_symbols, 4096);
     hash_table_init(&module->pool, &module->ht_types,   4096);
-    vector_init(&module->vtypes, sizeof(struct symt*),  32);
 
     module->sources_used      = 0;
     module->sources_alloc     = 0;
@@ -396,7 +338,7 @@ BOOL module_load_debug(struct module* module)
             idslW64.hFile = INVALID_HANDLE_VALUE;
 
             pcs_callback(module->process, CBA_DEFERRED_SYMBOL_LOAD_START, &idslW64);
-            ret = pe_load_debug_info(module->process, module);
+            ret = pe_load_debug_info(module);
             pcs_callback(module->process,
                          ret ? CBA_DEFERRED_SYMBOL_LOAD_COMPLETE : CBA_DEFERRED_SYMBOL_LOAD_FAILURE,
                          &idslW64);
@@ -503,7 +445,7 @@ static BOOL image_check_debug_link_crc(const WCHAR* file, struct image_file_map*
 
     path = get_dos_file_name(file);
     handle = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    heap_free(path);
+    HeapFree(GetProcessHeap(), 0, path);
     if (handle == INVALID_HANDLE_VALUE) return FALSE;
 
     crc = calc_crc32(handle);
@@ -535,7 +477,7 @@ static BOOL image_check_debug_link_gnu_id(const WCHAR* file, struct image_file_m
 
     path = get_dos_file_name(file);
     handle = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    heap_free(path);
+    HeapFree(GetProcessHeap(), 0, path);
     if (handle == INVALID_HANDLE_VALUE) return FALSE;
 
     TRACE("Located debug information file at %s\n", debugstr_w(file));
@@ -903,6 +845,7 @@ BOOL image_check_alternate(struct image_file_map* fmap, const struct module* mod
     return FALSE;
 }
 
+#ifndef _WIN64
 /***********************************************************************
  *			SymLoadModule (DBGHELP.@)
  */
@@ -912,6 +855,7 @@ DWORD WINAPI SymLoadModule(HANDLE hProcess, HANDLE hFile, PCSTR ImageName,
     return SymLoadModuleEx(hProcess, hFile, ImageName, ModuleName, BaseOfDll,
                            SizeOfDll, NULL, 0);
 }
+#endif
 
 /***********************************************************************
  *			SymLoadModuleEx (DBGHELP.@)
@@ -1080,34 +1024,25 @@ DWORD64 WINAPI SymLoadModule64(HANDLE hProcess, HANDLE hFile, PCSTR ImageName,
  */
 BOOL module_remove(struct process* pcs, struct module* module)
 {
-    struct module_format*modfmt;
+    struct module_format_vtable_iterator iter = {};
     struct module**     p;
-    unsigned            i;
 
     TRACE("%s (%p)\n", debugstr_w(module->modulename), module);
 
     /* remove local scope if symbol is from this module */
     if (pcs->localscope_symt)
     {
-        struct symt* locsym = pcs->localscope_symt;
-        if (symt_check_tag(locsym, SymTagInlineSite))
-            locsym = &symt_get_function_from_inlined((struct symt_function*)locsym)->symt;
-        if (symt_check_tag(locsym, SymTagFunction))
+        struct module_pair pair;
+        if (module_init_pair(&pair, pcs->handle, pcs->localscope_pc) &&
+            (module == pair.effective || module == pair.requested))
         {
-            locsym = ((struct symt_function*)locsym)->container;
-            if (symt_check_tag(locsym, SymTagCompiland) &&
-                module == ((struct symt_compiland*)locsym)->container->module)
-            {
-                pcs->localscope_pc = 0;
-                pcs->localscope_symt = NULL;
-            }
+            pcs->localscope_pc = 0;
+            pcs->localscope_symt = NULL;
         }
     }
-    for (i = 0; i < DFI_LAST; i++)
-    {
-        if ((modfmt = module->format_info[i]) && modfmt->remove)
-            modfmt->remove(pcs, module->format_info[i]);
-    }
+    while (module_format_vtable_iterator_next(module, &iter, MODULE_FORMAT_VTABLE_INDEX(remove)))
+        iter.modfmt->vtable->remove(iter.modfmt);
+
     hash_table_destroy(&module->ht_symbols);
     hash_table_destroy(&module->ht_types);
     HeapFree(GetProcessHeap(), 0, module->sources);
@@ -1129,6 +1064,7 @@ BOOL module_remove(struct process* pcs, struct module* module)
     return FALSE;
 }
 
+#ifndef _WIN64
 /******************************************************************
  *		SymUnloadModule (DBGHELP.@)
  *
@@ -1137,6 +1073,7 @@ BOOL WINAPI SymUnloadModule(HANDLE hProcess, DWORD BaseOfDll)
 {
     return SymUnloadModule64(hProcess, BaseOfDll);
 }
+#endif
 
 /******************************************************************
  *		SymUnloadModule64 (DBGHELP.@)
@@ -1155,6 +1092,7 @@ BOOL WINAPI SymUnloadModule64(HANDLE hProcess, DWORD64 BaseOfDll)
     return TRUE;
 }
 
+#ifndef _WIN64
 /******************************************************************
  *		SymEnumerateModules (DBGHELP.@)
  *
@@ -1185,6 +1123,7 @@ BOOL  WINAPI SymEnumerateModules(HANDLE hProcess,
 
     return SymEnumerateModulesW64(hProcess, enum_modW64_32, &x);
 }
+#endif
 
 /******************************************************************
  *		SymEnumerateModules64 (DBGHELP.@)
@@ -1274,6 +1213,7 @@ BOOL  WINAPI EnumerateLoadedModules64(HANDLE hProcess,
     return EnumerateLoadedModulesW64(hProcess, enum_load_modW64_64, &x);
 }
 
+#ifndef _WIN64
 /******************************************************************
  *		EnumerateLoadedModules (DBGHELP.@)
  *
@@ -1304,23 +1244,7 @@ BOOL  WINAPI EnumerateLoadedModules(HANDLE hProcess,
 
     return EnumerateLoadedModulesW64(hProcess, enum_load_modW64_32, &x);
 }
-
-static unsigned int load_and_grow_modules(HANDLE process, HMODULE** hmods, unsigned start, unsigned* alloc, DWORD filter)
-{
-    DWORD needed;
-    BOOL ret;
-
-    while ((ret = EnumProcessModulesEx(process, *hmods + start, (*alloc - start) * sizeof(HMODULE),
-                                       &needed, filter)) &&
-           needed > (*alloc - start) * sizeof(HMODULE))
-    {
-        HMODULE* new = HeapReAlloc(GetProcessHeap(), 0, *hmods, (*alloc) * 2 * sizeof(HMODULE));
-        if (!new) return 0;
-        *hmods = new;
-        *alloc *= 2;
-    }
-    return ret ? needed / sizeof(HMODULE) : 0;
-}
+#endif
 
 /******************************************************************
  *		EnumerateLoadedModulesW64 (DBGHELP.@)
@@ -1330,97 +1254,46 @@ BOOL  WINAPI EnumerateLoadedModulesW64(HANDLE process,
                                        PENUMLOADED_MODULES_CALLBACKW64 enum_cb,
                                        PVOID user)
 {
-    HMODULE*            hmods;
-    unsigned            alloc = 256, count, count32, i;
-    USHORT              pcs_machine, native_machine;
-    BOOL                with_32bit_modules;
-    WCHAR               imagenameW[MAX_PATH];
-    MODULEINFO          mi;
-    WCHAR*              sysdir = NULL;
-    WCHAR*              wowdir = NULL;
-    size_t              sysdir_len = 0, wowdir_len = 0;
+    OBJECT_BASIC_INFORMATION obi;
+    DWORD               snapshot_flags;
+    DWORD               pid = GetProcessId( process );
+    HANDLE              snapshot;
+    MODULEENTRY32W      me;
 
-    /* process might not be a handle to a live process */
-    if (!IsWow64Process2(process, &pcs_machine, &native_machine))
+    if (!pid)
     {
         SetLastError(STATUS_INVALID_CID);
         return FALSE;
     }
-    with_32bit_modules = sizeof(void*) > sizeof(int) &&
-        pcs_machine != IMAGE_FILE_MACHINE_UNKNOWN &&
-        (dbghelp_options & SYMOPT_INCLUDE_32BIT_MODULES);
 
-    if (!(hmods = HeapAlloc(GetProcessHeap(), 0, alloc * sizeof(hmods[0]))))
+    if (process != GetCurrentProcess() &&
+        RtlIsCurrentProcess( process ) &&
+        !NtQueryObject(process, ObjectBasicInformation, &obi, sizeof(obi), NULL) &&
+        obi.GrantedAccess & PROCESS_VM_READ)
+    {
+        TRACE("same process.\n");
+        pid = 0;
+    }
+
+    snapshot_flags = TH32CS_SNAPMODULE;
+    if (dbghelp_options & SYMOPT_INCLUDE_32BIT_MODULES)
+        snapshot_flags |= TH32CS_SNAPMODULE32;
+
+    snapshot = CreateToolhelp32Snapshot( snapshot_flags, pid );
+    if (snapshot == INVALID_HANDLE_VALUE)
         return FALSE;
 
-    /* Note:
-     * - we report modules returned from kernelbase.EnumProcessModulesEx
-     * - appending 32bit modules when possible and requested
-     *
-     * When considering 32bit modules in a wow64 child process, required from
-     * a 64bit process:
-     * - native returns from kernelbase.EnumProcessModulesEx
-     *   redirected paths (that is in system32 directory), while
-     *   dbghelp.EnumerateLoadedModulesWine returns the effective path
-     *   (eg. syswow64 for x86_64).
-     * - (Except for the main module, if gotten from syswow64, where kernelbase
-     *    will return the effective path)
-     * - Wine kernelbase (and ntdll) incorrectly return these modules from
-     *   syswow64 (except for ntdll which is returned from system32).
-     * => for these modules, always perform a system32 => syswow64 path
-     *    conversion (it'll work even if ntdll/kernelbase is fixed).
-     */
-    if ((count = load_and_grow_modules(process, &hmods, 0, &alloc, LIST_MODULES_DEFAULT)) && with_32bit_modules)
+    me.dwSize = sizeof(me);
+    if (Module32FirstW( snapshot, &me ))
     {
-        /* append 32bit modules when required */
-        if ((count32 = load_and_grow_modules(process, &hmods, count, &alloc, LIST_MODULES_32BIT)))
+        do
         {
-            sysdir_len = GetSystemDirectoryW(NULL, 0);
-            wowdir_len = GetSystemWow64Directory2W(NULL, 0, pcs_machine);
-
-            if (!sysdir_len || !wowdir_len ||
-                !(sysdir = HeapAlloc(GetProcessHeap(), 0, (sysdir_len + 1 + wowdir_len + 1) * sizeof(WCHAR))))
-            {
-                HeapFree(GetProcessHeap(), 0, hmods);
-                return FALSE;
-            }
-            wowdir = sysdir + sysdir_len + 1;
-            if (GetSystemDirectoryW(sysdir, sysdir_len) >= sysdir_len)
-                FIXME("shouldn't happen\n");
-            if (GetSystemWow64Directory2W(wowdir, wowdir_len, pcs_machine) >= wowdir_len)
-                FIXME("shouldn't happen\n");
-            wcscat(sysdir, L"\\");
-            wcscat(wowdir, L"\\");
-        }
-    }
-    else count32 = 0;
-
-    for (i = 0; i < count + count32; i++)
-    {
-        if (GetModuleInformation(process, hmods[i], &mi, sizeof(mi)) &&
-            GetModuleFileNameExW(process, hmods[i], imagenameW, ARRAY_SIZE(imagenameW)))
-        {
-            /* rewrite path in system32 into syswow64 for 32bit modules */
-            if (i >= count)
-            {
-                size_t len = wcslen(imagenameW);
-
-                if (!wcsnicmp(imagenameW, sysdir, sysdir_len) &&
-                    (len - sysdir_len + wowdir_len) + 1 <= ARRAY_SIZE(imagenameW))
-                {
-                    memmove(&imagenameW[wowdir_len], &imagenameW[sysdir_len], (len - sysdir_len) * sizeof(WCHAR));
-                    memcpy(imagenameW, wowdir, wowdir_len * sizeof(WCHAR));
-                }
-            }
-            if (!enum_cb(imagenameW, (DWORD_PTR)mi.lpBaseOfDll, mi.SizeOfImage, user))
-                break;
-        }
+            if (!enum_cb( me.szExePath, (DWORD_PTR)me.modBaseAddr, me.modBaseSize, user )) break;
+        } while (Module32NextW( snapshot, &me ));
     }
 
-    HeapFree(GetProcessHeap(), 0, hmods);
-    HeapFree(GetProcessHeap(), 0, sysdir);
-
-    return count != 0;
+    CloseHandle( snapshot );
+    return TRUE;
 }
 
 static void dbghelp_str_WtoA(const WCHAR *src, char *dst, int dst_len)
@@ -1429,6 +1302,7 @@ static void dbghelp_str_WtoA(const WCHAR *src, char *dst, int dst_len)
     dst[dst_len - 1] = 0;
 }
 
+#ifndef _WIN64
 /******************************************************************
  *		SymGetModuleInfo (DBGHELP.@)
  *
@@ -1489,6 +1363,7 @@ BOOL  WINAPI SymGetModuleInfoW(HANDLE hProcess, DWORD dwAddr,
 
     return TRUE;
 }
+#endif
 
 /******************************************************************
  *		SymGetModuleInfo64 (DBGHELP.@)
@@ -1584,6 +1459,7 @@ BOOL  WINAPI SymGetModuleInfoW64(HANDLE hProcess, DWORD64 dwAddr,
     return TRUE;
 }
 
+#ifndef _WIN64
 /***********************************************************************
  *		SymGetModuleBase (DBGHELP.@)
  */
@@ -1591,6 +1467,7 @@ DWORD WINAPI SymGetModuleBase(HANDLE hProcess, DWORD dwAddr)
 {
     return (DWORD)SymGetModuleBase64(hProcess, dwAddr);
 }
+#endif
 
 /***********************************************************************
  *		SymGetModuleBase64 (DBGHELP.@)
@@ -1622,7 +1499,6 @@ void module_reset_debug_info(struct module* module)
     hash_table_destroy(&module->ht_types);
     module->ht_types.num_buckets = 0;
     module->ht_types.buckets = NULL;
-    module->vtypes.num_elts = 0;
     hash_table_destroy(&module->ht_symbols);
     module->sources_used = module->sources_alloc = 0;
     module->sources = NULL;
@@ -1665,6 +1541,7 @@ BOOL WINAPI SymRefreshModuleList(HANDLE hProcess)
     return module_refresh_list(pcs);
 }
 
+#ifndef _WIN64
 /***********************************************************************
  *		SymFunctionTableAccess (DBGHELP.@)
  */
@@ -1672,6 +1549,7 @@ PVOID WINAPI SymFunctionTableAccess(HANDLE hProcess, DWORD AddrBase)
 {
     return SymFunctionTableAccess64(hProcess, AddrBase);
 }
+#endif
 
 /***********************************************************************
  *		SymFunctionTableAccess64 (DBGHELP.@)

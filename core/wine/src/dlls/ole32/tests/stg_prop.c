@@ -40,8 +40,8 @@ static void testPropsHelper(IPropertySetStorage **propSetStorage)
     IStorage *storage = NULL;
     IStream *stream = NULL;
     IPropertyStorage *propertyStorage = NULL;
-    PROPSPEC spec;
-    PROPVARIANT var;
+    PROPSPEC spec, spec2[2];
+    PROPVARIANT var, var2[2];
     CLIPDATA clipdata;
     unsigned char clipcontent[] = "foobar";
     GUID anyOldGuid = { 0x12345678,0xdead,0xbeef, {
@@ -178,6 +178,31 @@ static void testPropsHelper(IPropertySetStorage **propSetStorage)
      "Didn't get expected type or value for property (got type %d, value %s)\n",
      var.vt, var.pszVal);
     PropVariantClear(&var);
+
+    /* test read with some missing properties */
+    spec2[0].ulKind = PRSPEC_PROPID;
+    spec2[0].propid = PID_FIRST_USABLE;
+    spec2[1].ulKind = PRSPEC_PROPID;
+    spec2[1].propid = 0xdead;
+    var2[0].vt = VT_BSTR;
+    var2[1].vt = VT_BSTR;
+    hr = IPropertyStorage_ReadMultiple(propertyStorage, 2, spec2, var2);
+    ok(hr == S_OK, "ReadMultiple failed: 0x%08lx\n", hr);
+    ok(var2[0].vt == VT_I4, "got type %d\n", var2[0].vt);
+    ok(var2[0].lVal == 1, "got value %ld\n", var2[0].lVal);
+    ok(var2[1].vt == VT_EMPTY, "got type %d\n", var2[1].vt);
+
+    spec2[0].ulKind = PRSPEC_LPWSTR;
+    spec2[0].lpwstr = propName;
+    spec2[1].ulKind = PRSPEC_LPWSTR;
+    spec2[1].lpwstr = (WCHAR *)L"non-existing";
+    var2[0].vt = VT_BSTR;
+    var2[1].vt = VT_BSTR;
+    hr = IPropertyStorage_ReadMultiple(propertyStorage, 2, spec2, var2);
+    ok(hr == S_OK, "ReadMultiple failed: 0x%08lx\n", hr);
+    ok(var2[0].vt == VT_I4, "got type %d\n", var2[0].vt);
+    ok(var2[0].lVal == 2, "got value %ld\n", var2[0].lVal);
+    ok(var2[1].vt == VT_EMPTY, "got type %d\n", var2[1].vt);
 
     /* read clipboard format */
     spec.ulKind = PRSPEC_PROPID;
@@ -336,6 +361,20 @@ static void testPropsHelper(IPropertySetStorage **propSetStorage)
     hr = IPropertyStorage_WriteMultiple(propertyStorage, 1, &spec, &var, 0);
     ok(hr == S_OK, "WriteMultiple failed: 0x%08lx\n", hr);
 
+    /* set a bool value */
+    spec.ulKind = PRSPEC_PROPID;
+    spec.propid = PID_FIRST_USABLE + 1;
+    var.vt = VT_BOOL;
+    var.boolVal = VARIANT_TRUE;
+    hr = IPropertyStorage_WriteMultiple(propertyStorage, 1, &spec, &var, 0);
+    ok(hr == S_OK, "WriteMultiple failed: 0x%08lx\n", hr);
+
+    spec.ulKind = PRSPEC_LPWSTR;
+    spec.lpwstr = (WCHAR*)L"TestBoolProp";
+    var.boolVal = VARIANT_FALSE;
+    hr = IPropertyStorage_WriteMultiple(propertyStorage, 1, &spec, &var, PID_FIRST_USABLE);
+    ok(hr == S_OK, "Write VT_BOOL (FALSE) by name failed: 0x%08lx\n", hr);
+
     hr = IPropertyStorage_Commit(propertyStorage, STGC_DEFAULT);
     ok(hr == S_OK, "Commit failed: 0x%08lx\n", hr);
 
@@ -377,6 +416,22 @@ static void testPropsHelper(IPropertySetStorage **propSetStorage)
     ok(var.vt == VT_I4 && var.lVal == 1,
      "Didn't get expected type or value for property (got type %d, value %ld)\n",
      var.vt, var.lVal);
+
+    PropVariantClear(&var);
+    spec.ulKind = PRSPEC_PROPID;
+    spec.propid = PID_FIRST_USABLE + 1;
+    hr = IPropertyStorage_ReadMultiple(propertyStorage, 1, &spec, &var);
+    ok(hr == S_OK, "ReadMultiple failed: 0x%08lx\n", hr);
+    ok(var.vt == VT_BOOL && var.boolVal == VARIANT_TRUE,
+     "Didn't get expected type or value for property (got type %d, value %d)\n",
+     var.vt, var.boolVal);
+
+    PropVariantClear(&var);
+    spec.ulKind = PRSPEC_LPWSTR;
+    spec.lpwstr = (WCHAR*)L"TestBoolProp";
+    hr = IPropertyStorage_ReadMultiple(propertyStorage, 1, &spec, &var);
+    ok(hr == S_OK && var.vt == VT_BOOL && var.boolVal == VARIANT_FALSE,
+     "Read VT_BOOL (FALSE) failed\n");
 
     IPropertyStorage_Release(propertyStorage);
     if(propSetStorage) IPropertySetStorage_Release(*propSetStorage);
@@ -730,7 +785,6 @@ static void test_propertyset_storage_enum(void)
 
     hr = IPropertyStorage_Stat(prop_storage, &psstg);
     ok(hr == S_OK, "Failed to get prop storage stats, hr %#lx.\n", hr);
-    todo_wine
     ok(IsEqualCLSID(&psstg.clsid, &IID_IUnknown), "Unexpected storage clsid %s.\n", wine_dbgstr_guid(&psstg.clsid));
 
     hr = IPropertySetStorage_Enum(ps_storage, NULL);

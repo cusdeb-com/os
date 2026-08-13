@@ -40,6 +40,11 @@
 #define ADDRESS_AND_SIZE_TO_SPAN_PAGES(va, length) \
     ((BYTE_OFFSET(va) + ((SIZE_T)(length)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
 
+#define LOW_PRIORITY             0
+#define LOW_REALTIME_PRIORITY   16
+#define HIGH_PRIORITY           31
+#define MAXIMUM_PRIORITY        32
+
 typedef LONG KPRIORITY;
 
 typedef ULONG_PTR KSPIN_LOCK, *PKSPIN_LOCK;
@@ -295,6 +300,7 @@ typedef struct _VPB {
 #define POOL_RAISE_IF_ALLOCATION_FAILURE 0x0010
 #define POOL_COLD_ALLOCATION             0x0100
 #define POOL_NX_ALLOCATION               0x0200
+#define POOL_ZERO_ALLOCATION             0x0400
 
 typedef enum _POOL_TYPE {
   NonPagedPool,
@@ -360,6 +366,92 @@ typedef struct _WAIT_CONTEXT_BLOCK {
 #ifndef DEVICE_TYPE
 #define DEVICE_TYPE ULONG
 #endif
+
+#define FILE_DEVICE_BEEP                0x00000001
+#define FILE_DEVICE_CD_ROM              0x00000002
+#define FILE_DEVICE_CD_ROM_FILE_SYSTEM  0x00000003
+#define FILE_DEVICE_CONTROLLER          0x00000004
+#define FILE_DEVICE_DATALINK            0x00000005
+#define FILE_DEVICE_DFS                 0x00000006
+#define FILE_DEVICE_DISK                0x00000007
+#define FILE_DEVICE_DISK_FILE_SYSTEM    0x00000008
+#define FILE_DEVICE_FILE_SYSTEM         0x00000009
+#define FILE_DEVICE_INPORT_PORT         0x0000000a
+#define FILE_DEVICE_KEYBOARD            0x0000000b
+#define FILE_DEVICE_MAILSLOT            0x0000000c
+#define FILE_DEVICE_MIDI_IN             0x0000000d
+#define FILE_DEVICE_MIDI_OUT            0x0000000e
+#define FILE_DEVICE_MOUSE               0x0000000f
+#define FILE_DEVICE_MULTI_UNC_PROVIDER  0x00000010
+#define FILE_DEVICE_NAMED_PIPE          0x00000011
+#define FILE_DEVICE_NETWORK             0x00000012
+#define FILE_DEVICE_NETWORK_BROWSER     0x00000013
+#define FILE_DEVICE_NETWORK_FILE_SYSTEM 0x00000014
+#define FILE_DEVICE_NULL                0x00000015
+#define FILE_DEVICE_PARALLEL_PORT       0x00000016
+#define FILE_DEVICE_PHYSICAL_NETCARD    0x00000017
+#define FILE_DEVICE_PRINTER             0x00000018
+#define FILE_DEVICE_SCANNER             0x00000019
+#define FILE_DEVICE_SERIAL_MOUSE_PORT   0x0000001a
+#define FILE_DEVICE_SERIAL_PORT         0x0000001b
+#define FILE_DEVICE_SCREEN              0x0000001c
+#define FILE_DEVICE_SOUND               0x0000001d
+#define FILE_DEVICE_STREAMS             0x0000001e
+#define FILE_DEVICE_TAPE                0x0000001f
+#define FILE_DEVICE_TAPE_FILE_SYSTEM    0x00000020
+#define FILE_DEVICE_TRANSPORT           0x00000021
+#define FILE_DEVICE_UNKNOWN             0x00000022
+#define FILE_DEVICE_VIDEO               0x00000023
+#define FILE_DEVICE_VIRTUAL_DISK        0x00000024
+#define FILE_DEVICE_WAVE_IN             0x00000025
+#define FILE_DEVICE_WAVE_OUT            0x00000026
+#define FILE_DEVICE_8042_PORT           0x00000027
+#define FILE_DEVICE_NETWORK_REDIRECTOR  0x00000028
+#define FILE_DEVICE_BATTERY             0x00000029
+#define FILE_DEVICE_BUS_EXTENDER        0x0000002a
+#define FILE_DEVICE_MODEM               0x0000002b
+#define FILE_DEVICE_VDM                 0x0000002c
+#define FILE_DEVICE_MASS_STORAGE        0x0000002d
+#define FILE_DEVICE_SMB                 0x0000002e
+#define FILE_DEVICE_KS                  0x0000002f
+#define FILE_DEVICE_CHANGER             0x00000030
+#define FILE_DEVICE_SMARTCARD           0x00000031
+#define FILE_DEVICE_ACPI                0x00000032
+#define FILE_DEVICE_DVD                 0x00000033
+#define FILE_DEVICE_FULLSCREEN_VIDEO    0x00000034
+#define FILE_DEVICE_DFS_FILE_SYSTEM     0x00000035
+#define FILE_DEVICE_DFS_VOLUME          0x00000036
+#define FILE_DEVICE_SERENUM             0x00000037
+#define FILE_DEVICE_TERMSRV             0x00000038
+#define FILE_DEVICE_KSEC                0x00000039
+#define FILE_DEVICE_FIPS                0x0000003a
+#define FILE_DEVICE_INFINIBAND          0x0000003b
+#define FILE_DEVICE_VMBUS               0x0000003e
+#define FILE_DEVICE_CRYPT_PROVIDER      0x0000003f
+#define FILE_DEVICE_WPD                 0x00000040
+#define FILE_DEVICE_BLUETOOTH           0x00000041
+#define FILE_DEVICE_MT_COMPOSITE        0x00000042
+#define FILE_DEVICE_MT_TRANSPORT        0x00000043
+#define FILE_DEVICE_BIOMETRIC           0x00000044
+#define FILE_DEVICE_PMI                 0x00000045
+#define FILE_DEVICE_EHSTOR              0x00000046
+#define FILE_DEVICE_DEVAPI              0x00000047
+#define FILE_DEVICE_GPIO                0x00000048
+#define FILE_DEVICE_USBEX               0x00000049
+#define FILE_DEVICE_CONSOLE             0x00000050
+#define FILE_DEVICE_NFP                 0x00000051
+#define FILE_DEVICE_SYSENV              0x00000052
+#define FILE_DEVICE_VIRTUAL_BLOCK       0x00000053
+#define FILE_DEVICE_POINT_OF_SERVICE    0x00000054
+#define FILE_DEVICE_STORAGE_REPLICATION 0x00000055
+#define FILE_DEVICE_TRUST_ENV           0x00000056
+#define FILE_DEVICE_UCM                 0x00000057
+#define FILE_DEVICE_UCMTCPCI            0x00000058
+#define FILE_DEVICE_PERSISTENT_MEMORY   0x00000059
+#define FILE_DEVICE_NVDIMM              0x0000005a
+#define FILE_DEVICE_HOLOGRAPHIC         0x0000005b
+#define FILE_DEVICE_SDFXHCI             0x0000005c
+
 #define IRP_MJ_MAXIMUM_FUNCTION           0x1b
 #define IRP_MJ_CREATE                     0x00
 #define IRP_MJ_CREATE_NAMED_PIPE          0x01
@@ -471,6 +563,26 @@ typedef struct _DEVICE_OBJECT {
   PVOID  Reserved;
 } DEVICE_OBJECT;
 typedef struct _DEVICE_OBJECT *PDEVICE_OBJECT;
+
+struct _DEVICE_OBJECT_POWER_EXTENSION;
+typedef struct _DEVOBJ_EXTENSION {
+  CSHORT Type;
+  USHORT Size;
+  PDEVICE_OBJECT DeviceObject;
+  ULONG PowerFlags;
+  struct _DEVICE_OBJECT_POWER_EXTENSION *Dope;
+  ULONG ExtensionFlags;
+  PVOID DeviceNode;
+  PDEVICE_OBJECT AttachedTo;
+  LONG StartIoCount;
+  LONG StartIoKey;
+  ULONG StartIoFlags;
+  PVPB Vpb;
+  PVOID DependencyNode;
+  PVOID InterruptContext;
+  LONG InterruptCount;
+  PVOID VerifierContext;
+} DEVOBJ_EXTENSION, *PDEVOBJ_EXTENSION;
 
 typedef struct _DEVICE_RELATIONS {
   ULONG Count;
@@ -795,6 +907,11 @@ typedef enum _INTERFACE_TYPE {
   MaximumInterfaceType
 } INTERFACE_TYPE, *PINTERFACE_TYPE;
 
+typedef enum _DRIVER_REGKEY_TYPE {
+  DriverRegKeyParameters,
+  DriverRegKeyPersistentState,
+} DRIVER_REGKEY_TYPE, *PDRIVER_REGKEY_TYPE;
+
 typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 
 #define IO_RESOURCE_PREFERRED             0x01
@@ -904,7 +1021,10 @@ typedef enum {
   DevicePropertyAddress,
   DevicePropertyUINumber,
   DevicePropertyInstallState,
-  DevicePropertyRemovalPolicy
+  DevicePropertyRemovalPolicy,
+  DevicePropertyResourceRequirements,
+  DevicePropertyAllocatedResources,
+  DevicePropertyContainerID,
 } DEVICE_REGISTRY_PROPERTY;
 
 typedef enum _DEVICE_TEXT_TYPE {
@@ -1007,7 +1127,7 @@ typedef NTSTATUS (WINAPI *PIO_COMPLETION_ROUTINE)(
 #define SL_INVOKE_ON_ERROR              0x80
 
 #if !defined(_WIN64)
-#include <pshpack4.h>
+#pragma pack(push,4)
 #endif
 typedef struct _IO_STACK_LOCATION {
   UCHAR  MajorFunction;
@@ -1150,7 +1270,7 @@ typedef struct _IO_STACK_LOCATION {
   PVOID  Context;
 } IO_STACK_LOCATION, *PIO_STACK_LOCATION;
 #if !defined(_WIN64)
-#include <poppack.h>
+#pragma pack(pop)
 #endif
 
 /* MDL definitions */
@@ -1346,7 +1466,12 @@ typedef struct _KUSER_SHARED_DATA {
     LARGE_INTEGER TimeZoneBiasEffectiveStart;              /* 0x3c8 */
     LARGE_INTEGER TimeZoneBiasEffectiveEnd;                /* 0x3d0 */
     XSTATE_CONFIGURATION XState;                           /* 0x3d8 */
-} KSHARED_USER_DATA, *PKSHARED_USER_DATA;
+    KSYSTEM_TIME FeatureConfigurationChangeStamp;          /* 0x720 */
+    ULONG Spare;
+    ULONG64 UserPointerAuthMask;                           /* 0x730 */
+} KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
+
+C_ASSERT( sizeof(KUSER_SHARED_DATA) == 0x738 );
 
 #define SHARED_GLOBAL_FLAGS_QPC_BYPASS_ENABLED 0x01
 #define SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_HV_PAGE 0x02
@@ -1371,6 +1496,9 @@ typedef enum _MM_PAGE_PRIORITY {
     NormalPagePriority = 16,
     HighPagePriority = 32
 } MM_PAGE_PRIORITY;
+
+#define MdlMappingNoWrite   0x80000000
+#define MdlMappingNoExecute 0x40000000
 
 typedef enum _MM_SYSTEM_SIZE
 {
@@ -1692,6 +1820,12 @@ typedef enum _MODE
     MaximumMode
 } MODE;
 
+typedef enum _DRIVER_RUNTIME_INIT_FLAGS
+{
+  DrvRtPoolNxOptIn = 0x00000001,
+  LastDrvRtFlag
+} DRIVER_RUNTIME_INIT_FLAGS, *PDRIVER_RUNTIME_INIT_FLAGS;
+
 /* directory object access rights */
 #define DIRECTORY_QUERY                 0x0001
 #define DIRECTORY_TRAVERSE              0x0002
@@ -1744,6 +1878,10 @@ void      WINAPI ExReleaseResourceForThreadLite(ERESOURCE*,ERESOURCE_THREAD);
 ULONG     WINAPI ExSetTimerResolution(ULONG,BOOLEAN);
 void      WINAPI ExUnregisterCallback(void*);
 
+#define PLUGPLAY_REGKEY_DEVICE            1
+#define PLUGPLAY_REGKEY_DRIVER            2
+#define PLUGPLAY_REGKEY_CURRENT_HWPROFILE 4
+
 #define PLUGPLAY_PROPERTY_PERSISTENT 0x0001
 
 void      WINAPI IoFreeErrorLogEntry(void*);
@@ -1776,6 +1914,7 @@ NTSTATUS  WINAPI IoDeleteSymbolicLink(UNICODE_STRING*);
 DEVICE_OBJECT * WINAPI IoGetAttachedDeviceReference(DEVICE_OBJECT*);
 PEPROCESS WINAPI IoGetCurrentProcess(void);
 NTSTATUS  WINAPI IoGetDeviceInterfaces(const GUID*,PDEVICE_OBJECT,ULONG,PWSTR*);
+NTSTATUS  WINAPI IoGetDeviceInterfacePropertyData(UNICODE_STRING*,const DEVPROPKEY*,LCID,ULONG,ULONG,void*,ULONG*,DEVPROPTYPE*);
 NTSTATUS  WINAPI IoGetDeviceObjectPointer(UNICODE_STRING*,ACCESS_MASK,PFILE_OBJECT*,PDEVICE_OBJECT*);
 NTSTATUS  WINAPI IoGetDeviceProperty(PDEVICE_OBJECT,DEVICE_REGISTRY_PROPERTY,ULONG,PVOID,PULONG);
 NTSTATUS  WINAPI IoGetDevicePropertyData(PDEVICE_OBJECT,const DEVPROPKEY*,LCID,ULONG,ULONG,void*,ULONG*,DEVPROPTYPE*);
@@ -1797,6 +1936,7 @@ void      WINAPI IoReleaseRemoveLockEx(IO_REMOVE_LOCK*,void*,ULONG);
 NTSTATUS  WINAPI IoReportTargetDeviceChange(DEVICE_OBJECT*,void*);
 NTSTATUS  WINAPI IoReportTargetDeviceChangeAsynchronous(DEVICE_OBJECT*,void*,PDEVICE_CHANGE_COMPLETE_CALLBACK,void*);
 void      WINAPI IoReuseIrp(IRP*,NTSTATUS);
+NTSTATUS  WINAPI IoSetDeviceInterfacePropertyData(UNICODE_STRING*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,void*);
 NTSTATUS  WINAPI IoSetDeviceInterfaceState(UNICODE_STRING*,BOOLEAN);
 NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,void*);
 NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
@@ -1859,10 +1999,12 @@ PMDL      WINAPI MmAllocatePagesForMdl(PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,PHYSICA
 void      WINAPI MmBuildMdlForNonPagedPool(MDL*);
 NTSTATUS  WINAPI MmCopyVirtualMemory(PEPROCESS,void*,PEPROCESS,void*,SIZE_T,KPROCESSOR_MODE,SIZE_T*);
 void *    WINAPI MmGetSystemRoutineAddress(UNICODE_STRING*);
+PVOID     WINAPI MmMapLockedPages(MDL*,KPROCESSOR_MODE);
 PVOID     WINAPI MmMapLockedPagesSpecifyCache(PMDLX,KPROCESSOR_MODE,MEMORY_CACHING_TYPE,PVOID,ULONG,MM_PAGE_PRIORITY);
 MM_SYSTEMSIZE WINAPI MmQuerySystemSize(void);
 void      WINAPI MmProbeAndLockPages(PMDLX, KPROCESSOR_MODE, LOCK_OPERATION);
 void      WINAPI MmUnmapLockedPages(void*, PMDL);
+void      WINAPI MmUnlockPages(PMDLX);
 
 void    FASTCALL ObfReferenceObject(void*);
 void      WINAPI ObDereferenceObject(void*);
@@ -1906,7 +2048,7 @@ NTSTATUS  WINAPI ZwClose(HANDLE);
 NTSTATUS  WINAPI ZwCloseObjectAuditAlarm(PUNICODE_STRING,HANDLE,BOOLEAN);
 NTSTATUS  WINAPI ZwConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
 NTSTATUS  WINAPI ZwCreateDirectoryObject(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-NTSTATUS  WINAPI ZwCreateEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *,BOOLEAN,BOOLEAN);
+NTSTATUS  WINAPI ZwCreateEvent(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES *,EVENT_TYPE,BOOLEAN);
 NTSTATUS  WINAPI ZwCreateFile(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,PLARGE_INTEGER,ULONG,ULONG,ULONG,ULONG,PVOID,ULONG);
 NTSTATUS  WINAPI ZwCreateKey(PHANDLE,ACCESS_MASK,const OBJECT_ATTRIBUTES*,ULONG,const UNICODE_STRING*,ULONG,PULONG);
 NTSTATUS  WINAPI ZwCreateSection(HANDLE*,ACCESS_MASK,const OBJECT_ATTRIBUTES*,const LARGE_INTEGER*,ULONG,ULONG,HANDLE);
@@ -1924,7 +2066,7 @@ NTSTATUS  WINAPI ZwEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,
 NTSTATUS  WINAPI ZwEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 NTSTATUS  WINAPI ZwFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
 NTSTATUS  WINAPI ZwFlushKey(HANDLE);
-NTSTATUS  WINAPI ZwFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,ULONG);
+NTSTATUS  WINAPI ZwFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,IO_STATUS_BLOCK*);
 NTSTATUS  WINAPI ZwFreeVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
 NTSTATUS  WINAPI ZwFsControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
 NTSTATUS  WINAPI ZwInitiatePowerAction(POWER_ACTION,SYSTEM_POWER_STATE,ULONG,BOOLEAN);
@@ -1996,7 +2138,7 @@ NTSTATUS  WINAPI ZwUnloadDriver(const UNICODE_STRING *);
 NTSTATUS  WINAPI ZwUnloadKey(HANDLE);
 NTSTATUS  WINAPI ZwUnmapViewOfSection(HANDLE,PVOID);
 NTSTATUS  WINAPI ZwWaitForSingleObject(HANDLE,BOOLEAN,const LARGE_INTEGER*);
-NTSTATUS  WINAPI ZwWaitForMultipleObjects(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
+NTSTATUS  WINAPI ZwWaitForMultipleObjects(ULONG,const HANDLE*,WAIT_TYPE,BOOLEAN,const LARGE_INTEGER*);
 NTSTATUS  WINAPI ZwWriteFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,const void*,ULONG,PLARGE_INTEGER,PULONG);
 NTSTATUS  WINAPI ZwYieldExecution(void);
 
@@ -2006,6 +2148,19 @@ static inline void ExInitializeFastMutex( FAST_MUTEX *mutex )
     mutex->Owner = NULL;
     mutex->Contention = 0;
     KeInitializeEvent( &mutex->Event, SynchronizationEvent, FALSE );
+}
+
+FORCEINLINE void ExInitializeDriverRuntime( ULONG flags )
+{
+}
+
+FORCEINLINE void* NTAPI ExAllocatePoolZero( POOL_TYPE type, SIZE_T size, ULONG tag )
+{
+    void *mem;
+
+    mem = ExAllocatePoolWithTag((POOL_TYPE) (type | POOL_ZERO_ALLOCATION), size, tag);
+    if (mem) RtlZeroMemory(mem, size);
+    return mem;
 }
 
 static FORCEINLINE void WINAPI KeInitializeSpinLock( KSPIN_LOCK *lock )

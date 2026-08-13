@@ -25,6 +25,7 @@
 #include "wingdi.h"
 #include "commctrl.h"
 #include "wininet.h"
+#include "exdispid.h"
 
 #include "wine/debug.h"
 
@@ -47,6 +48,8 @@ static void ExpandContract(HHInfo *pHHInfo);
 #define TAB_RIGHT_PADDING   4
 #define TAB_MARGIN  8
 #define EDIT_HEIGHT         20
+#define BUTTON_HEIGHT       25
+#define BUTTON_WIDTH        65
 
 struct list window_list = LIST_INIT(window_list);
 
@@ -233,10 +236,6 @@ BOOL NavigateToUrl(HHInfo *info, LPCWSTR surl)
 
 static BOOL AppendFullPathURL(LPCWSTR file, LPWSTR buf, LPCWSTR index)
 {
-    static const WCHAR url_format[] =
-        {'m','k',':','@','M','S','I','T','S','t','o','r','e',':','%','s',':',':','%','s','%','s',0};
-    static const WCHAR slash[] = {'/',0};
-    static const WCHAR empty[] = {0};
     WCHAR full_path[MAX_PATH];
 
     TRACE("%s %p %s\n", debugstr_w(file), buf, debugstr_w(index));
@@ -246,7 +245,7 @@ static BOOL AppendFullPathURL(LPCWSTR file, LPWSTR buf, LPCWSTR index)
         return FALSE;
     }
 
-    wsprintfW(buf, url_format, full_path, (!index || index[0] == '/') ? empty : slash, index);
+    wsprintfW(buf, L"mk:@MSITStore:%s::%s%s", full_path, (!index || index[0] == '/') ? L"" : L"/", index);
     return TRUE;
 }
 
@@ -262,11 +261,20 @@ BOOL NavigateToChm(HHInfo *info, LPCWSTR file, LPCWSTR index)
     return SUCCEEDED(navigate_url(info, buf));
 }
 
-static void DoSync(HHInfo *info)
+static BOOL is_chm(WCHAR *url)
 {
-    WCHAR buf[INTERNET_MAX_URL_LENGTH];
+    const WCHAR *prefix = L"mk:@MSITStore:";
+    return !wcsncmp(url, prefix, wcslen(prefix));
+}
+
+static void DoSyncContent(HHInfo *info)
+{
+    const WCHAR *index;
     HRESULT hres;
     BSTR url;
+
+    if (info->current_tab != TAB_CONTENTS)
+        return;
 
     hres = IWebBrowser2_get_LocationURL(info->web_browser->web_browser, &url);
 
@@ -276,34 +284,131 @@ static void DoSync(HHInfo *info)
         return;
     }
 
-    /* If we're not currently viewing a page in the active .chm file, abort */
-    if ((!AppendFullPathURL(info->WinType.pszFile, buf, NULL)) || (lstrlenW(buf) > lstrlenW(url)))
+    /* If we're not currently viewing a page in a .chm file, abort */
+    if (!is_chm(url))
     {
         SysFreeString(url);
         return;
     }
 
-    if (lstrcmpiW(buf, url) > 0)
-    {
-        static const WCHAR delimW[] = {':',':','/',0};
-        const WCHAR *index;
+    index = wcsstr(url, L"::/");
 
-        index = wcsstr(url, delimW);
-
-        if (index)
-            ActivateContentTopic(info->tabs[TAB_CONTENTS].hwnd, index + 3, info->content); /* skip over ::/ */
-    }
+    if (index)
+        ActivateContentTopic(info->tabs[TAB_CONTENTS].hwnd, index + 3, info->content); /* skip over ::/ */
 
     SysFreeString(url);
+}
+
+static HRESULT WINAPI WebBrowserEvents2_QueryInterface(IDispatch *iface, REFIID riid, void **v)
+{
+    *v = NULL;
+
+    if (IsEqualGUID(&IID_IDispatch, riid) || IsEqualGUID(&IID_IUnknown, riid))
+    {
+        *v = iface;
+        IDispatch_AddRef(iface);
+        return S_OK;
+    }
+
+    return E_NOINTERFACE;
+}
+
+static inline WebBrowserEvents2Impl *impl_from_IDispatch(IDispatch *iface)
+{
+    return CONTAINING_RECORD(iface, WebBrowserEvents2Impl, WebBrowserEvents2Impl_iface);
+}
+
+static ULONG WINAPI WebBrowserEvents2_AddRef(IDispatch *iface)
+{
+    WebBrowserEvents2Impl *impl = impl_from_IDispatch(iface);
+    return InterlockedIncrement(&impl->ref);
+}
+
+static ULONG WINAPI WebBrowserEvents2_Release(IDispatch *iface)
+{
+    WebBrowserEvents2Impl *impl = impl_from_IDispatch(iface);
+    ULONG ref = InterlockedDecrement(&impl->ref);
+
+    if (!ref)
+        free(impl);
+    return ref;
+}
+
+static HRESULT WINAPI WebBrowserEvents2_GetTypeInfoCount(IDispatch *iface, UINT *pctinfo)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WebBrowserEvents2_GetTypeInfo(IDispatch *iface, UINT iTInfo, LCID lcid,
+        ITypeInfo **ppTInfo)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WebBrowserEvents2_GetIDsOfNames(IDispatch *iface, REFIID riid, LPOLESTR *rgszNames,
+        UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI WebBrowserEvents2_Invoke(IDispatch *iface, DISPID dispIdMember, REFIID riid,
+        LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
+        EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    if (dispIdMember == DISPID_NAVIGATECOMPLETE2)
+    {
+        WebBrowserEvents2Impl *impl = impl_from_IDispatch(iface);
+        DoSyncContent((HHInfo *)impl->info);
+    }
+    return S_OK;
+}
+
+static const IDispatchVtbl WebBrowserEvents2Vtbl =
+{
+    WebBrowserEvents2_QueryInterface,
+    WebBrowserEvents2_AddRef,
+    WebBrowserEvents2_Release,
+    WebBrowserEvents2_GetTypeInfoCount,
+    WebBrowserEvents2_GetTypeInfo,
+    WebBrowserEvents2_GetIDsOfNames,
+    WebBrowserEvents2_Invoke
+};
+
+static void hook_WebBrowserEvents2(HHInfo *info, BOOL init)
+{
+    IConnectionPointContainer *container;
+    IConnectionPoint *point;
+    HRESULT hres;
+
+    if (!info->web_browser || !info->web_browser->web_browser)
+        return;
+
+    hres = IWebBrowser2_QueryInterface(info->web_browser->web_browser, &IID_IConnectionPointContainer, (void **)&container);
+    if (FAILED(hres))
+        return;
+
+    hres = IConnectionPointContainer_FindConnectionPoint(container, &DIID_DWebBrowserEvents2, &point);
+    IConnectionPointContainer_Release(container);
+    if (FAILED(hres))
+        return;
+
+    if (init)
+    {
+        info->web_browser->WebBrowser_events_sink = malloc(sizeof(*(info->web_browser->WebBrowser_events_sink)));
+        info->web_browser->WebBrowser_events_sink->WebBrowserEvents2Impl_iface.lpVtbl = &WebBrowserEvents2Vtbl;
+        info->web_browser->WebBrowser_events_sink->info = (struct HHInfo *)info;
+        info->web_browser->WebBrowser_events_sink->ref = 1;
+        IConnectionPoint_Advise(point, (IUnknown *)info->web_browser->WebBrowser_events_sink, &info->web_browser->WebBrowser_events_sink->cookie);
+    }
+    else
+        IConnectionPoint_Unadvise(point, info->web_browser->WebBrowser_events_sink->cookie);
+
+    IConnectionPoint_Release(point);
 }
 
 /* Size Bar */
 
 #define SIZEBAR_WIDTH   4
-
-static const WCHAR szSizeBarClass[] = {
-    'H','H',' ','S','i','z','e','B','a','r',0
-};
 
 /* Draw the SizeBar */
 static void SB_OnPaint(HWND hWnd)
@@ -398,7 +503,7 @@ static void HH_RegisterSizeBarClass(HHInfo *pHHInfo)
     wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);
     wcex.hbrBackground  = (HBRUSH)(COLOR_MENU + 1);
     wcex.lpszMenuName   = NULL;
-    wcex.lpszClassName  = szSizeBarClass;
+    wcex.lpszClassName  = L"HH SizeBar";
     wcex.hIconSm        = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
 
     RegisterClassExW(&wcex);
@@ -428,7 +533,7 @@ static BOOL HH_AddSizeBar(HHInfo *pHHInfo)
 
     SB_GetSizeBarRect(pHHInfo, &rc);
 
-    hWnd = CreateWindowExW(dwExStyles, szSizeBarClass, szEmpty, dwStyles,
+    hWnd = CreateWindowExW(dwExStyles, L"HH SizeBar", L"", dwStyles,
                            rc.left, rc.top, rc.right, rc.bottom,
                            hwndParent, NULL, hhctrl_hinstance, NULL);
     if (!hWnd)
@@ -442,10 +547,6 @@ static BOOL HH_AddSizeBar(HHInfo *pHHInfo)
 }
 
 /* Child Window */
-
-static const WCHAR szChildClass[] = {
-    'H','H',' ','C','h','i','l','d',0
-};
 
 static LRESULT Child_OnPaint(HWND hWnd)
 {
@@ -486,7 +587,7 @@ static void ResizeTabChild(HHInfo *info, int tab)
     RECT rect, tabrc;
     DWORD cnt;
 
-    GetClientRect(info->WinType.hwndNavigation, &rect);
+    GetClientRect(info->hwndTabCtrl, &rect);
     SendMessageW(info->hwndTabCtrl, TCM_GETITEMRECT, 0, (LPARAM)&tabrc);
     cnt = SendMessageW(info->hwndTabCtrl, TCM_GETROWCOUNT, 0, 0);
 
@@ -519,11 +620,19 @@ static void ResizeTabChild(HHInfo *info, int tab)
         int scroll_width = GetSystemMetrics(SM_CXVSCROLL);
         int border_width = GetSystemMetrics(SM_CXBORDER);
         int edge_width = GetSystemMetrics(SM_CXEDGE);
+
+        int right_pos = rect.right - TAB_MARGIN - BUTTON_WIDTH;
         int top_pos = 0;
 
         SetWindowPos(info->search.hwndEdit, NULL, 0, top_pos, width,
                       EDIT_HEIGHT, SWP_NOZORDER | SWP_NOACTIVATE);
         top_pos += EDIT_HEIGHT + TAB_MARGIN;
+
+        if (0 > right_pos)
+            right_pos = 0;
+        SetWindowPos(info->search.hwndSearchBtn, NULL, right_pos, top_pos, BUTTON_WIDTH, BUTTON_HEIGHT, SWP_NOZORDER | SWP_NOACTIVATE);
+        top_pos += BUTTON_HEIGHT + TAB_MARGIN;
+
         SetWindowPos(info->search.hwndList, NULL, 0, top_pos, width,
                       height-top_pos, SWP_NOZORDER | SWP_NOACTIVATE);
         /* Resize the tab widget column to perfectly fit the tab window and
@@ -590,7 +699,34 @@ static LRESULT OnTabChange(HWND hwnd)
     if(info->tabs[info->current_tab].hwnd)
         ShowWindow(info->tabs[info->current_tab].hwnd, SW_SHOW);
 
+    if (info->current_tab == TAB_CONTENTS)
+        DoSyncContent(info);
+
     return 0;
+}
+
+static BOOL is_current_page(HHInfo *info, const WCHAR *local)
+{
+    WCHAR *url;
+    WCHAR *current_page;
+    HRESULT res;
+
+    res = IWebBrowser2_get_LocationURL(info->web_browser->web_browser, &url);
+    if (FAILED(res))
+        return FALSE;
+
+    if (is_chm(url))
+    {
+        current_page = wcsstr(url, L"::/");
+        if (current_page && !lstrcmpW(local, current_page + 3))
+            return TRUE;
+    }else
+    {
+        if (!lstrcmpW(local, url))
+            return TRUE;
+    }
+
+    return FALSE;
 }
 
 static LRESULT OnTopicChange(HHInfo *info, void *user_data)
@@ -609,6 +745,9 @@ static LRESULT OnTopicChange(HHInfo *info, void *user_data)
         citer = (ContentItem *) user_data;
         name = citer->name;
         local = citer->local;
+        if (is_current_page(info, local))
+            return 0;
+
         while(citer) {
             if(citer->merge.chm_file) {
                 chmfile = citer->merge.chm_file;
@@ -668,7 +807,7 @@ static LRESULT OnTopicChange(HHInfo *info, void *user_data)
         return 0;
     }
 
-    TRACE("name %s loal %s\n", debugstr_w(name), debugstr_w(local));
+    TRACE("name %s local %s\n", debugstr_w(name), debugstr_w(local));
 
     NavigateToChm(info, chmfile, local);
     return 0;
@@ -688,6 +827,25 @@ static LRESULT CALLBACK EditChild_WndProc(HWND hWnd, UINT message, WPARAM wParam
         SendMessageW(GetParent(GetParent(hWnd)), WM_NOTIFY, wParam, (LPARAM)&nmhdr);
     }
     return editWndProc(hWnd, message, wParam, lParam);
+}
+
+static void do_search(HHInfo *info)
+{
+    char needle[100];
+    DWORD i, len;
+
+    len = GetWindowTextA(info->search.hwndEdit, needle, sizeof(needle));
+    if(!len)
+    {
+        FIXME("Unable to get search text.\n");
+        return;
+    }
+    /* Convert the requested text for comparison later against the
+     * lower case version of HTML file contents.
+     */
+    for(i=0;i<len;i++)
+        needle[i] = tolower(needle[i]);
+    InitSearch(info, needle);
 }
 
 static LRESULT CALLBACK Child_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -752,21 +910,7 @@ static LRESULT CALLBACK Child_WndProc(HWND hWnd, UINT message, WPARAM wParam, LP
             }
             case TAB_SEARCH: {
                 if(nmhdr->hwndFrom == info->search.hwndEdit) {
-                    char needle[100];
-                    DWORD i, len;
-
-                    len = GetWindowTextA(info->search.hwndEdit, needle, sizeof(needle));
-                    if(!len)
-                    {
-                        FIXME("Unable to get search text.\n");
-                        return 0;
-                    }
-                    /* Convert the requested text for comparison later against the
-                     * lower case version of HTML file contents.
-                     */
-                    for(i=0;i<len;i++)
-                        needle[i] = tolower(needle[i]);
-                    InitSearch(info, needle);
+                    do_search(info);
                     return 0;
                 }else if(nmhdr->hwndFrom == info->search.hwndList) {
                     HWND hwndList = info->search.hwndList;
@@ -784,6 +928,12 @@ static LRESULT CALLBACK Child_WndProc(HWND hWnd, UINT message, WPARAM wParam, LP
             break;
         }
         break;
+    }
+    case WM_COMMAND:
+    {
+        HHInfo *info = (HHInfo*)GetWindowLongPtrW(hWnd, 0);
+        if (info->current_tab == TAB_SEARCH && LOWORD(wParam) == IDC_SEARCH_BTN && HIWORD(wParam) == BN_CLICKED)
+            do_search(info);
     }
     default:
         return DefWindowProcW(hWnd, message, wParam, lParam);
@@ -806,7 +956,7 @@ static void HH_RegisterChildWndClass(HHInfo *pHHInfo)
     wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_BTNFACE + 1);
     wcex.lpszMenuName   = NULL;
-    wcex.lpszClassName  = szChildClass;
+    wcex.lpszClassName  = L"HH Child";
     wcex.hIconSm        = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
 
     RegisterClassExW(&wcex);
@@ -893,7 +1043,7 @@ static void TB_OnClick(HWND hWnd, DWORD dwID)
             ExpandContract(info);
             break;
         case IDTB_SYNC:
-            DoSync(info);
+            DoSyncContent(info);
             break;
         case IDTB_OPTIONS:
             DisplayPopupMenu(info);
@@ -1092,7 +1242,7 @@ static BOOL HH_AddNavigationPane(HHInfo *info)
 
     NP_GetNavigationRect(info, &rc);
 
-    hWnd = CreateWindowExW(dwExStyles, szChildClass, szEmpty, dwStyles,
+    hWnd = CreateWindowExW(dwExStyles, L"HH Child", szEmpty, dwStyles,
                            rc.left, rc.top, rc.right, rc.bottom,
                            hwndParent, NULL, hhctrl_hinstance, NULL);
     if (!hWnd)
@@ -1162,7 +1312,7 @@ static BOOL HH_AddHTMLPane(HHInfo *pHHInfo)
 
     HP_GetHTMLRect(pHHInfo, &rc);
 
-    hWnd = CreateWindowExW(dwExStyles, szChildClass, szEmpty, dwStyles,
+    hWnd = CreateWindowExW(dwExStyles, L"HH Child", szEmpty, dwStyles,
                            rc.left, rc.top, rc.right, rc.bottom,
                            hwndParent, NULL, hhctrl_hinstance, NULL);
     if (!hWnd)
@@ -1170,6 +1320,8 @@ static BOOL HH_AddHTMLPane(HHInfo *pHHInfo)
 
     if (!InitWebBrowser(pHHInfo, hWnd))
         return FALSE;
+
+    hook_WebBrowserEvents2(pHHInfo, TRUE);
 
     /* store the pointer to the HH info struct */
     SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pHHInfo);
@@ -1191,7 +1343,7 @@ static BOOL AddContentTab(HHInfo *info)
         return TRUE; /* No "Contents" tab */
     hWnd = CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, szEmpty, WS_CHILD | WS_BORDER | TVS_LINESATROOT
                            | TVS_SHOWSELALWAYS | TVS_HASBUTTONS, 50, 50, 100, 100,
-                           info->WinType.hwndNavigation, NULL, hhctrl_hinstance, NULL);
+                           info->hwndTabCtrl, NULL, hhctrl_hinstance, NULL);
     if(!hWnd) {
         ERR("Could not create treeview control\n");
         return FALSE;
@@ -1219,7 +1371,7 @@ static BOOL AddIndexTab(HHInfo *info)
         return TRUE; /* No "Index" tab */
     info->tabs[TAB_INDEX].hwnd = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW,
            szEmpty, WS_CHILD | WS_BORDER | LVS_SINGLESEL | LVS_REPORT | LVS_NOCOLUMNHEADER, 50, 50, 100, 100,
-           info->WinType.hwndNavigation, NULL, hhctrl_hinstance, NULL);
+           info->hwndTabCtrl, NULL, hhctrl_hinstance, NULL);
     if(!info->tabs[TAB_INDEX].hwnd) {
         ERR("Could not create ListView control\n");
         return FALSE;
@@ -1241,15 +1393,15 @@ static BOOL AddIndexTab(HHInfo *info)
 
 static BOOL AddSearchTab(HHInfo *info)
 {
-    HWND hwndList, hwndEdit, hwndContainer;
+    HWND hwndList, hwndEdit, hwndContainer, hwndSearchBtn;
     char hidden_column[] = "Column";
     WNDPROC editWndProc;
     LVCOLUMNA lvc;
 
     if(info->tabs[TAB_SEARCH].id == -1)
         return TRUE; /* No "Search" tab */
-    hwndContainer = CreateWindowExW(WS_EX_CONTROLPARENT, szChildClass, szEmpty,
-                                    WS_CHILD, 0, 0, 0, 0, info->WinType.hwndNavigation,
+    hwndContainer = CreateWindowExW(WS_EX_CONTROLPARENT, L"HH Child", szEmpty,
+                                    WS_CHILD, 0, 0, 0, 0, info->hwndTabCtrl,
                                     NULL, hhctrl_hinstance, NULL);
     if(!hwndContainer) {
         ERR("Could not create search window container control.\n");
@@ -1273,6 +1425,15 @@ static BOOL AddSearchTab(HHInfo *info)
         return FALSE;
     }
     SetWindowLongPtrW(hwndEdit, GWLP_USERDATA, (LONG_PTR)editWndProc);
+    hwndSearchBtn = CreateWindowExW(WS_EX_NOPARENTNOTIFY, WC_BUTTONW, szEmpty,
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_GROUP,
+                                    0, 0, 0, 0, hwndContainer, IDC_SEARCH_BTN, hhctrl_hinstance, NULL);
+    if (SendMessageW(hwndSearchBtn, WM_SETFONT, (WPARAM) info->hFont, (LPARAM) FALSE) == -1)
+    {
+        ERR("Could not set font for \"List Topics\" button.\n");
+        return FALSE;
+    }
+    SetWindowTextW(hwndSearchBtn, L"&List Topics");
     hwndList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, szEmpty,
                                WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_SINGLESEL
                                 | LVS_REPORT | LVS_NOCOLUMNHEADER, 0, 0, 0, 0,
@@ -1293,6 +1454,7 @@ static BOOL AddSearchTab(HHInfo *info)
     info->search.hwndEdit = hwndEdit;
     info->search.hwndList = hwndList;
     info->search.hwndContainer = hwndContainer;
+    info->search.hwndSearchBtn = hwndSearchBtn;
     info->tabs[TAB_SEARCH].hwnd = hwndContainer;
 
     SetWindowLongPtrW(hwndContainer, 0, (LONG_PTR)info);
@@ -1405,11 +1567,9 @@ static LRESULT CALLBACK PopupChild_WndProc(HWND hWnd, UINT message, WPARAM wPara
 
 static BOOL AddIndexPopup(HHInfo *info)
 {
-    static const WCHAR szPopupChildClass[] = {'H','H',' ','P','o','p','u','p',' ','C','h','i','l','d',0};
-    static const WCHAR windowCaptionW[] = {'S','e','l','e','c','t',' ','T','o','p','i','c',':',0};
-    static const WCHAR windowClassW[] = {'H','H',' ','P','o','p','u','p',0};
     HWND hwndList, hwndPopup, hwndCallback;
     char hidden_column[] = "Column";
+    WCHAR *window_title;
     WNDCLASSEXW wcex;
     LVCOLUMNA lvc;
 
@@ -1426,7 +1586,7 @@ static BOOL AddIndexPopup(HHInfo *info)
     wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_MENU + 1);
     wcex.lpszMenuName   = NULL;
-    wcex.lpszClassName  = windowClassW;
+    wcex.lpszClassName  = L"HH Popup";
     wcex.hIconSm        = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
     RegisterClassExW(&wcex);
 
@@ -1440,28 +1600,29 @@ static BOOL AddIndexPopup(HHInfo *info)
     wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_BTNFACE + 1);
     wcex.lpszMenuName   = NULL;
-    wcex.lpszClassName  = szPopupChildClass;
+    wcex.lpszClassName  = L"HH Popup Child";
     wcex.hIconSm        = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
     RegisterClassExW(&wcex);
 
+    window_title = HH_LoadString(IDS_SELECT_TOPIC);
     hwndPopup = CreateWindowExW(WS_EX_LEFT | WS_EX_LTRREADING | WS_EX_APPWINDOW
                                  | WS_EX_WINDOWEDGE | WS_EX_RIGHTSCROLLBAR,
-                                windowClassW, windowCaptionW, WS_POPUPWINDOW
-                                 | WS_OVERLAPPEDWINDOW | WS_VISIBLE
+                                L"HH Popup", window_title, WS_POPUPWINDOW
+                                 | WS_OVERLAPPEDWINDOW
                                  | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, CW_USEDEFAULT,
                                 CW_USEDEFAULT, 300, 200, info->WinType.hwndHelp,
                                 NULL, hhctrl_hinstance, NULL);
+    free(window_title);
     if (!hwndPopup)
         return FALSE;
 
     hwndCallback = CreateWindowExW(WS_EX_LEFT | WS_EX_LTRREADING | WS_EX_RIGHTSCROLLBAR,
-                                   szPopupChildClass, szEmpty, WS_CHILDWINDOW | WS_VISIBLE,
+                                   L"HH Popup Child", szEmpty, WS_CHILDWINDOW | WS_VISIBLE,
                                    0, 0, 0, 0,
                                    hwndPopup, NULL, hhctrl_hinstance, NULL);
     if (!hwndCallback)
         return FALSE;
 
-    ShowWindow(hwndPopup, SW_HIDE);
     hwndList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, szEmpty,
                                WS_CHILD | WS_BORDER | LVS_SINGLESEL | LVS_REPORT
                                 | LVS_NOCOLUMNHEADER, 50, 50, 100, 100,
@@ -1610,10 +1771,6 @@ static BOOL HH_CreateHelpWindow(HHInfo *info)
     DWORD x, y, width = 0, height = 0;
     LPCWSTR caption;
 
-    static const WCHAR windowClassW[] = {
-        'H','H',' ', 'P','a','r','e','n','t',0
-    };
-
     wcex.cbSize         = sizeof(WNDCLASSEXW);
     wcex.style          = CS_HREDRAW | CS_VREDRAW;
     wcex.lpfnWndProc    = Help_WndProc;
@@ -1624,7 +1781,7 @@ static BOOL HH_CreateHelpWindow(HHInfo *info)
     wcex.hCursor        = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_MENU + 1);
     wcex.lpszMenuName   = NULL;
-    wcex.lpszClassName  = windowClassW;
+    wcex.lpszClassName  = L"HH Parent";
     wcex.hIconSm        = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
 
     RegisterClassExW(&wcex);
@@ -1677,7 +1834,7 @@ static BOOL HH_CreateHelpWindow(HHInfo *info)
     caption = info->WinType.pszCaption;
     if (!*caption) caption = info->pCHMInfo->defTitle;
 
-    hWnd = CreateWindowExW(dwExStyles, windowClassW, caption, dwStyles, x, y, width, height,
+    hWnd = CreateWindowExW(dwExStyles, L"HH Parent", caption, dwStyles, x, y, width, height,
                            info->WinType.hwndCaller, NULL, hhctrl_hinstance, NULL);
     if (!hWnd)
         return FALSE;
@@ -1802,6 +1959,7 @@ void ReleaseHelpViewer(HHInfo *info)
     if (info->pCHMInfo)
         CloseCHM(info->pCHMInfo);
 
+    hook_WebBrowserEvents2(info, FALSE);
     ReleaseWebBrowser(info);
     ReleaseContent(info);
     ReleaseIndex(info);

@@ -117,16 +117,19 @@ HCERTCHAINENGINE CRYPT_CreateChainEngine(HCERTSTORE root, DWORD system_store, co
     CertificateChainEngine *engine;
     HCERTSTORE worldStores[4];
 
-    if(!root) {
+    if (root) {
+        root = CertDuplicateStore(root);
+    } else {
         if(config->cbSize >= sizeof(CERT_CHAIN_ENGINE_CONFIG) && config->hExclusiveRoot)
             root = CertDuplicateStore(config->hExclusiveRoot);
         else if (config->hRestrictedRoot)
             root = CertDuplicateStore(config->hRestrictedRoot);
         else
             root = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, system_store, L"Root");
-        if(!root)
-            return NULL;
     }
+
+    if(!root)
+        return NULL;
 
     engine = CryptMemAlloc(sizeof(CertificateChainEngine));
     if(!engine) {
@@ -173,7 +176,7 @@ static CertificateChainEngine *get_chain_engine(HCERTCHAINENGINE handle, BOOL al
             if(default_cu_engine != handle)
                 CertFreeCertificateChainEngine(handle);
         }
-
+        CertControlStore(default_cu_engine->hWorld, 0, CERT_STORE_CTRL_RESYNC, NULL);
         return default_cu_engine;
     }
 
@@ -187,7 +190,7 @@ static CertificateChainEngine *get_chain_engine(HCERTCHAINENGINE handle, BOOL al
             if(default_lm_engine != handle)
                 CertFreeCertificateChainEngine(handle);
         }
-
+        CertControlStore(default_lm_engine->hWorld, 0, CERT_STORE_CTRL_RESYNC, NULL);
         return default_lm_engine;
     }
 
@@ -218,19 +221,54 @@ typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT
     DWORD       CycleDetectionModulus;
 } CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT;
 
+typedef struct _CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS
+{
+    DWORD       cbSize;
+    HCERTSTORE  hRestrictedRoot;
+    HCERTSTORE  hRestrictedTrust;
+    HCERTSTORE  hRestrictedOther;
+    DWORD       cAdditionalStore;
+    HCERTSTORE *rghAdditionalStore;
+    DWORD       dwFlags;
+    DWORD       dwUrlRetrievalTimeout;
+    DWORD       MaximumCachedCertificates;
+    DWORD       CycleDetectionModulus;
+    HCERTSTORE  hExclusiveRoot;
+    HCERTSTORE  hExclusiveTrustedPeople;
+} CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS;
+
 BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig,
  HCERTCHAINENGINE *phChainEngine)
 {
     BOOL ret;
 
     TRACE("(%p, %p)\n", pConfig, phChainEngine);
-
-    if (pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT)
-     && pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG))
+    TRACE("cbSize %lu\n", pConfig->cbSize);
+    TRACE("hRestrictedRoot %p\n", pConfig->hRestrictedRoot);
+    TRACE("hRestrictedTrust %p\n", pConfig->hRestrictedTrust);
+    TRACE("hRestrictedOther %p\n", pConfig->hRestrictedOther);
+    TRACE("cAdditionalStore %lu\n", pConfig->cAdditionalStore);
+    TRACE("dwFlags %lx\n", pConfig->dwFlags);
+    TRACE("dwUrlRetrievalTimeout %lu\n", pConfig->dwUrlRetrievalTimeout);
+    TRACE("MaximumCachedCertificates %lu\n", pConfig->MaximumCachedCertificates);
+    TRACE("CycleDetectionModulus %lu\n", pConfig->CycleDetectionModulus);
+    if (pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_ROOT) &&
+        pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG_NO_EXCLUSIVE_FLAGS) &&
+        pConfig->cbSize != sizeof(CERT_CHAIN_ENGINE_CONFIG))
     {
         SetLastError(E_INVALIDARG);
         return FALSE;
     }
+
+    if (pConfig->cbSize == sizeof(CERT_CHAIN_ENGINE_CONFIG))
+    {
+        TRACE("hExclusiveRoot %p\n", pConfig->hExclusiveRoot);
+        TRACE("hExclusiveTrustedPeople %p\n", pConfig->hExclusiveTrustedPeople);
+        TRACE("dwExclusiveFlags %lx\n", pConfig->dwExclusiveFlags);
+        if (pConfig->dwExclusiveFlags)
+            FIXME("dwExclusiveFlags %lx not supported\n", pConfig->dwExclusiveFlags);
+    }
+
     ret = CRYPT_CheckRestrictedRoot(pConfig->hRestrictedRoot);
     if (!ret)
     {
@@ -1662,6 +1700,8 @@ static void dump_extension(const CERT_EXTENSION *ext)
         dump_name_constraints(ext);
     else if (!strcmp(ext->pszObjId, szOID_CERT_POLICIES))
         dump_cert_policies(ext);
+    else if (!strcmp(ext->pszObjId, szOID_APPLICATION_CERT_POLICIES))
+        FIXME("szOID_APPLICATION_CERT_POLICIES\n");
     else if (!strcmp(ext->pszObjId, szOID_ENHANCED_KEY_USAGE))
         dump_enhanced_key_usage(ext);
     else if (!strcmp(ext->pszObjId, szOID_NETSCAPE_CERT_TYPE))
@@ -1735,13 +1775,6 @@ static BOOL CRYPT_KeyUsageValid(CertificateChainEngine *engine,
          &usage, &size);
         if (!ret)
             return FALSE;
-        else if (usage.cbData > 2)
-        {
-            /* The key usage extension only defines 9 bits => no more than 2
-             * bytes are needed to encode all known usages.
-             */
-            return FALSE;
-        }
         else
         {
             /* The only bit relevant to chain validation is the keyCertSign
@@ -1819,6 +1852,8 @@ static BOOL CRYPT_CriticalExtensionsSupported(PCCERT_CONTEXT cert)
             else if (!strcmp(oid, szOID_SUBJECT_ALT_NAME2))
                 ret = TRUE;
             else if (!strcmp(oid, szOID_CERT_POLICIES))
+                ret = TRUE;
+            else if (!strcmp(oid, szOID_APPLICATION_CERT_POLICIES))
                 ret = TRUE;
             else if (!strcmp(oid, szOID_ENHANCED_KEY_USAGE))
                 ret = TRUE;
@@ -2707,6 +2742,7 @@ static void CRYPT_VerifyChainRevocation(PCERT_CHAIN_CONTEXT chain,
 
                     switch (revocationStatus.dwError)
                     {
+                    case CRYPT_E_REVOCATION_OFFLINE:
                     case CRYPT_E_NO_REVOCATION_CHECK:
                     case CRYPT_E_NO_REVOCATION_DLL:
                     case CRYPT_E_NOT_IN_REVOCATION_DATABASE:
@@ -2715,9 +2751,6 @@ static void CRYPT_VerifyChainRevocation(PCERT_CHAIN_CONTEXT chain,
                          */
                         error = CERT_TRUST_REVOCATION_STATUS_UNKNOWN |
                          CERT_TRUST_IS_OFFLINE_REVOCATION;
-                        break;
-                    case CRYPT_E_REVOCATION_OFFLINE:
-                        error = CERT_TRUST_IS_OFFLINE_REVOCATION;
                         break;
                     case CRYPT_E_REVOKED:
                         error = CERT_TRUST_IS_REVOKED;
@@ -2989,6 +3022,24 @@ static void find_element_with_error(PCCERT_CHAIN_CONTEXT chain, DWORD error,
                 *iElement = j;
                 return;
             }
+}
+
+static BOOL find_chain_first_element_with_error(PCCERT_CHAIN_CONTEXT chain, DWORD error, LONG *chain_idx,
+                                                LONG *element_idx)
+{
+    unsigned int i;
+
+    for (i = 0; i < chain->cChain; i++)
+    {
+        if (!chain->rgpChain[i]->cElement) continue;
+        if (chain->rgpChain[i]->rgpElement[0]->TrustStatus.dwErrorStatus & error)
+        {
+            *chain_idx = i;
+            *element_idx = 0;
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static BOOL WINAPI verify_base_policy(LPCSTR szPolicyOID,
@@ -3503,7 +3554,7 @@ static BOOL WINAPI verify_ssl_policy(LPCSTR szPolicyOID,
     }
     else if (pChainContext->TrustStatus.dwErrorStatus &
      CERT_TRUST_IS_NOT_VALID_FOR_USAGE &&
-     !(checks & SECURITY_FLAG_IGNORE_WRONG_USAGE))
+     !(checks & SECURITY_FLAG_IGNORE_WRONG_USAGE) && !(baseChecks & CERT_CHAIN_POLICY_IGNORE_WRONG_USAGE_FLAG))
     {
         pPolicyStatus->dwError = CERT_E_WRONG_USAGE;
         find_element_with_error(pChainContext,
@@ -3513,19 +3564,18 @@ static BOOL WINAPI verify_ssl_policy(LPCSTR szPolicyOID,
     else if (pChainContext->TrustStatus.dwErrorStatus &
      CERT_TRUST_IS_REVOKED && !(checks & SECURITY_FLAG_IGNORE_REVOCATION))
     {
-        pPolicyStatus->dwError = CERT_E_REVOKED;
+        pPolicyStatus->dwError = CRYPT_E_REVOKED;
         find_element_with_error(pChainContext,
          CERT_TRUST_IS_REVOKED, &pPolicyStatus->lChainIndex,
          &pPolicyStatus->lElementIndex);
     }
     else if (pChainContext->TrustStatus.dwErrorStatus &
-     CERT_TRUST_IS_OFFLINE_REVOCATION &&
-     !(checks & SECURITY_FLAG_IGNORE_REVOCATION))
+     CERT_TRUST_REVOCATION_STATUS_UNKNOWN &&
+     !(checks & SECURITY_FLAG_IGNORE_REVOCATION) && !(baseChecks & CERT_CHAIN_POLICY_IGNORE_END_REV_UNKNOWN_FLAG)
+     && find_chain_first_element_with_error(pChainContext, CERT_TRUST_REVOCATION_STATUS_UNKNOWN,
+                                            &pPolicyStatus->lChainIndex, &pPolicyStatus->lElementIndex))
     {
-        pPolicyStatus->dwError = CERT_E_REVOCATION_FAILURE;
-        find_element_with_error(pChainContext,
-         CERT_TRUST_IS_OFFLINE_REVOCATION, &pPolicyStatus->lChainIndex,
-         &pPolicyStatus->lElementIndex);
+        pPolicyStatus->dwError = CRYPT_E_REVOCATION_OFFLINE;
     }
     else if (pChainContext->TrustStatus.dwErrorStatus &
      CERT_TRUST_HAS_NOT_SUPPORTED_CRITICAL_EXT)
@@ -3845,8 +3895,7 @@ BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR szPolicyOID,
         if (!set)
             set = CryptInitOIDFunctionSet(
              CRYPT_OID_VERIFY_CERTIFICATE_CHAIN_POLICY_FUNC, 0);
-        CryptGetOIDFunctionAddress(set, X509_ASN_ENCODING, szPolicyOID, 0,
-         (void **)&verifyPolicy, &hFunc);
+        CryptGetOIDFunctionAddress(set, 0, szPolicyOID, 0, (void **)&verifyPolicy, &hFunc);
     }
     if (verifyPolicy)
         ret = verifyPolicy(szPolicyOID, pChainContext, pPolicyPara,

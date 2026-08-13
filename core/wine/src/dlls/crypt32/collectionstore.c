@@ -51,12 +51,12 @@ static DWORD Collection_release(WINECRYPT_CERTSTORE *store, DWORD flags)
     WINE_STORE_LIST_ENTRY *entry, *next;
     LONG ref;
 
-    if(flags)
+    if(flags & ~CERT_CLOSE_STORE_FORCE_FLAG)
         FIXME("Unimplemented flags %lx\n", flags);
 
     ref = InterlockedDecrement(&cs->hdr.ref);
     TRACE("(%p) ref=%ld\n", store, ref);
-    if(ref)
+    if(ref && !(flags & CERT_CLOSE_STORE_FORCE_FLAG))
         return ERROR_SUCCESS;
 
     LIST_FOR_EACH_ENTRY_SAFE(entry, next, &cs->stores, WINE_STORE_LIST_ENTRY, entry)
@@ -265,7 +265,7 @@ static BOOL Collection_deleteCert(WINECRYPT_CERTSTORE *store, context_t *context
     TRACE("(%p, %p)\n", store, cert);
 
     linked = (cert_t*)context->linked;
-    return CertDeleteCertificateFromStore(&linked->ctx);
+    return CRYPT_DeleteCertificateFromStore(&linked->ctx);
 }
 
 static BOOL Collection_addCRL(WINECRYPT_CERTSTORE *store, context_t *crl,

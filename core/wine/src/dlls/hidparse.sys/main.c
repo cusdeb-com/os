@@ -22,7 +22,6 @@
 #include <stdlib.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -795,4 +794,9 @@ void WINAPI HidP_FreeCollectionDescription( HIDP_DEVICE_DESC *device_desc )
         ExFreePool( device_desc->CollectionDesc[i].PreparsedData );
     ExFreePool( device_desc->CollectionDesc );
     ExFreePool( device_desc->ReportIDs );
+}
+
+NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
+{
+    return STATUS_SUCCESS;
 }
