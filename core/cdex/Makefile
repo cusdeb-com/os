@@ -161,10 +161,7 @@ install: build
 		fi; \
 		install -m 755 "$$candidate" "$(CDEX_DIR)/$$artifact"; \
 	done
-	# Distinct launcher name for ReactOS Explorer so Wine does not confuse it
-	# with its own explorer.exe when the payload is symlinked into the
-	# per-user Wine prefix (see runtime/bin/cdex-win32-session).
-	ln -sf explorer.exe "$(CDEX_DIR)/reactos-explorer.exe"
+
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"
 	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry runtime/bin/cdex-taskbar-bridge \
