@@ -1,3 +1,19 @@
+cdex (0.0.3-2cd) trixie; urgency=medium
+
+  * cdex-win32-session: stop trying to recreate the reactos-explorer.exe
+    symlink on every login. /usr/share/cusdeb/cdex is root-owned, so the
+    ln -sf there silently failed with "Permission denied" on every
+    session start (masked because it ran as an `if` condition under
+    set -e); it was also redundant, since the symlink is already
+    shipped by the package.
+  * Ship that symlink via debian/cdex-base.links (dh_link) instead of a
+    plain ln -sf in the Makefile install rule. The previous approach
+    already produced a correctly dpkg-owned symlink (fixed in
+    0.0.1-5cd), so this is a packaging-style cleanup, not a fix for an
+    unowned file.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 19 Aug 2026 20:50:55 +0300
+
 cdex (0.0.3-1cd) trixie; urgency=medium
 
   * add the CusDeb brand wallpaper: the PNG master lives in

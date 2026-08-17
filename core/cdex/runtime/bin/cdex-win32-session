@@ -169,7 +169,6 @@ prepare_reactos_payload() {
   rm -rf "$REACTOS_DRIVE_DIR"
   ln -s "$REACTOS_SOURCE_DIR" "$REACTOS_DRIVE_DIR"
 
-  ln -sf "$REACTOS_SOURCE_DIR/explorer.exe" "$REACTOS_DRIVE_DIR/reactos-explorer.exe"
   install -m 755 "$REACTOS_SOURCE_DIR/filebrowser.exe" "$REACTOS_PREFIX/drive_c/windows/explorer.exe"
   for dll in shell32.dll shlwapi.dll browseui.dll rshell.dll shdocvw.dll uxtheme.dll version.dll sendmail.dll w32time.dll; do
     rm -f "$REACTOS_PREFIX/drive_c/windows/system32/$dll"
