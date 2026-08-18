@@ -1,0 +1,178 @@
+Author: CusDeb OS Team
+Description: explorer: show host window icons on external taskbar buttons.
+ External task buttons had their icon hardcoded to NULL, so every button
+ fell back to the generic OIC_SAMPLE glyph. The taskbar bridge now exports
+ each window's _NET_WM_ICON to a content-hashed .ico file and advertises
+ it in the state JSON. Parse the new "icon" field, cache the HICON per
+ task item, reload it when the hashed path changes and retry on transient
+ load failures (the bridge may rewrite the file a poll later). LoadImage
+ is used instead of ExtractIconEx because the shell32 icon cache
+ downscales the large icon instead of returning the real small one.
+ The taskbar image list stays at the upstream ILC_COLOR32: the comctl32
+ alpha-blending issue that once forced ILC_COLOR24 does not reproduce on
+ Wine 11, and 32-bit lists render alpha icons with proper antialiased
+ edges.
+Last-Modified: Tue, 18 Aug 2026 17:30:00 +0300
+
+--- a/src/base/shell/explorer/taskswnd.cpp
++++ b/src/base/shell/explorer/taskswnd.cpp
+@@ -232,6 +232,12 @@
+     WCHAR ExternalWindowId[32];
+     WCHAR ExternalTitle[255];
+ 
++    /* .ico file with the host window icon, exported by the bridge. The path
++       contains a content hash, so it changes exactly when the icon does. */
++    WCHAR ExternalIconPath[MAX_TASKBAR_PATH];
++    WCHAR ExternalIconLoaded[MAX_TASKBAR_PATH];
++    HICON hExternalIcon;
++
+     union
+     {
+         DWORD dwFlags;
+@@ -765,6 +771,47 @@
+         return (HICON)GetClassLongPtr(hwnd, g_TaskbarSettings.bSmallIcons ? GCLP_HICON : GCLP_HICONSM);
+     }
+ 
++    /* External task icons come from a .ico file the bridge exports for the
++       host window. The file name contains a content hash, so a changed path
++       means a changed icon; the HICON is cached per task item. LoadImage is
++       used instead of ExtractIconEx because the shell32 icon cache returns
++       a poorly downscaled large icon instead of the real small one. The
++       path is only marked as loaded on success: the bridge may rewrite the
++       file a poll later, so a failed load must be retried on the next sync
++       instead of sticking with the fallback icon forever. */
++    HICON GetExternalTaskIcon(IN PTASK_ITEM TaskItem)
++    {
++        if (!TaskItem->ExternalIconPath[0])
++            return NULL;
++
++        if (!TaskItem->hExternalIcon ||
++            lstrcmpW(TaskItem->ExternalIconLoaded, TaskItem->ExternalIconPath) != 0)
++        {
++            INT size;
++            HICON hIcon;
++
++            if (TaskItem->hExternalIcon)
++            {
++                DestroyIcon(TaskItem->hExternalIcon);
++                TaskItem->hExternalIcon = NULL;
++            }
++
++            size = GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CXSMICON : SM_CXICON);
++            hIcon = (HICON)LoadImageW(NULL, TaskItem->ExternalIconPath,
++                                      IMAGE_ICON, size, size,
++                                      LR_LOADFROMFILE);
++            if (hIcon)
++            {
++                TaskItem->hExternalIcon = hIcon;
++                StringCchCopyW(TaskItem->ExternalIconLoaded,
++                               _countof(TaskItem->ExternalIconLoaded),
++                               TaskItem->ExternalIconPath);
++            }
++        }
++
++        return TaskItem->hExternalIcon;
++    }
++
+     INT UpdateTaskItemButton(IN PTASK_ITEM TaskItem)
+     {
+         TBBUTTONINFO tbbi = { 0 };
+@@ -795,7 +842,7 @@
+             tbbi.pszText = windowText;
+         }
+ 
+-        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? GetExternalTaskIcon(TaskItem) : GetWndIcon(TaskItem->hWnd);
+         if (!icon)
+             icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
+         TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, TaskItem->IconIndex, icon);
+@@ -941,7 +988,7 @@
+             return UpdateTaskGroupButton(TaskItem->Group);
+         }
+ 
+-        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? GetExternalTaskIcon(TaskItem) : GetWndIcon(TaskItem->hWnd);
+         if (!icon)
+             icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
+         TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, -1, icon);
+@@ -1138,7 +1185,7 @@
+         return NULL;
+     }
+ 
+-    BOOL AddOrUpdateExternalTask(IN LPCWSTR WindowId, IN LPCWSTR Title)
++    BOOL AddOrUpdateExternalTask(IN LPCWSTR WindowId, IN LPCWSTR Title, IN LPCWSTR IconPath)
+     {
+         PTASK_ITEM TaskItem = FindExternalTaskItem(WindowId);
+         if (!TaskItem)
+@@ -1155,14 +1202,25 @@
+             TaskItem->IsExternal = TRUE;
+             StringCchCopyW(TaskItem->ExternalWindowId, _countof(TaskItem->ExternalWindowId), WindowId);
+             StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++            StringCchCopyW(TaskItem->ExternalIconPath, _countof(TaskItem->ExternalIconPath), IconPath);
+ 
+             if (!m_IsDestroying)
+                 AddTaskItemButton(TaskItem);
+         }
+-        else if (lstrcmpW(TaskItem->ExternalTitle, Title) != 0)
++        else
+         {
+-            StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
+-            if (TaskItem->Index >= 0)
++            BOOL changed = FALSE;
++            if (lstrcmpW(TaskItem->ExternalTitle, Title) != 0)
++            {
++                StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++                changed = TRUE;
++            }
++            if (lstrcmpW(TaskItem->ExternalIconPath, IconPath) != 0)
++            {
++                StringCchCopyW(TaskItem->ExternalIconPath, _countof(TaskItem->ExternalIconPath), IconPath);
++                changed = TRUE;
++            }
++            if (changed && TaskItem->Index >= 0)
+                 UpdateTaskItemButton(TaskItem);
+         }
+ 
+@@ -1223,18 +1281,25 @@
+ 
+             CHAR idA[32];
+             CHAR titleA[255];
++            CHAR iconA[MAX_TASKBAR_PATH];
+             WCHAR idW[32];
+             WCHAR titleW[255];
++            WCHAR iconUnixW[MAX_TASKBAR_PATH];
++            WCHAR iconW[MAX_TASKBAR_PATH];
+             idA[0] = ANSI_NULL;
+             titleA[0] = ANSI_NULL;
++            iconA[0] = ANSI_NULL;
+ 
+             if (FindJsonStringValue(cursor, objectEnd, "\"window_id\"", idA, _countof(idA)) &&
+                 FindJsonStringValue(cursor, objectEnd, "\"title\"", titleA, _countof(titleA)))
+             {
++                FindJsonStringValue(cursor, objectEnd, "\"icon\"", iconA, _countof(iconA));
+                 Utf8ToWide(idA, idW, _countof(idW));
+                 Utf8ToWide(titleA, titleW, _countof(titleW));
++                Utf8ToWide(iconA, iconUnixW, _countof(iconUnixW));
++                ConvertUnixToWinePath(iconUnixW, iconW, _countof(iconW));
+                 if (idW[0] && titleW[0])
+-                    AddOrUpdateExternalTask(idW, titleW);
++                    AddOrUpdateExternalTask(idW, titleW, iconW);
+             }
+ 
+             cursor = objectEnd + 1;
+@@ -1428,8 +1493,15 @@
+         m_TaskItemCount--;
+     }
+ 
++    /* Free the cached external icon together with the item */
+     VOID DeleteTaskItem(IN OUT PTASK_ITEM TaskItem)
+     {
++        if (TaskItem->hExternalIcon)
++        {
++            DestroyIcon(TaskItem->hExternalIcon);
++            TaskItem->hExternalIcon = NULL;
++        }
++
+         if (!m_IsDestroying)
+         {
+             /* Delete the task button from the toolbar */
