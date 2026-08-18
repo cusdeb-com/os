@@ -1,0 +1,87 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: winex11: Adopt host window rect on WM-driven maximize.
+ On maximize, Wine first computes a Windows-style guessed rect, then asks
+ the window manager to change the state via EWMH. The WM determines the
+ real geometry and reports it through X11 events. Previously, Wine handled
+ this synchronously and replaced the guess with the WM-reported geometry.
+ .
+ Wine 11 defers this: the WM_STATE change is now recorded and applied
+ later via the internal WM_WINE_WINDOW_STATE_CHANGED message, processed by
+ a separate message-loop pass with no X11 event context
+ (thread_data->current_event is NULL). The existing guard in
+ X11DRV_ShowWindow required that context, so it fell through to the
+ initial Windows-style guess instead of the real WM geometry. The WM then
+ saw a mismatch with what it considers the correct maximized geometry and
+ unmaximized the window, restoring its old position.
+ .
+ The fix allows adopting the host rect from this deferred path too, but
+ only while the window state lock is held (state_locks), the command is
+ SW_MAXIMIZE, and the desired state is NormalState -- the same requirement
+ as the original event-driven path.
+ .
+ Additionally, a guard rejects the adopted rect when it does not intersect
+ the virtual screen. During the WM's iconify animation, the window frame
+ temporarily slides off-screen before the transition visually completes.
+ This validation now covers both the new path and the original
+ ConfigureNotify/PropertyNotify adoption path.
+Last-Modified: Tue, 18 Aug 2026 14:10:00 +0300
+
+--- a/src/dlls/winex11.drv/window.c
++++ b/src/dlls/winex11.drv/window.c
+@@ -3385,16 +3385,32 @@
+         }
+         goto done;
+     }
+-    if (!data->managed || data->desired_state.wm_state != NormalState) goto done;
++    if (!data->managed) goto done;
+ 
+-    /* only fetch the new rectangle if the ShowWindow was a result of a window manager event */
+-
+-    if (!thread_data->current_event || thread_data->current_event->xany.window != data->whole_window)
+-        goto done;
+-
+-    if (thread_data->current_event->type != ConfigureNotify &&
+-        thread_data->current_event->type != PropertyNotify)
+-        goto done;
++    /* Only fetch the new rectangle if the ShowWindow was a result of a window manager event,
++     * either directly from an event handler, or while applying a host window state update
++     * for a WM-driven maximize (WM_WINE_WINDOW_STATE_CHANGED holds the window state lock).
++     */
++
++    if (!thread_data->current_event)
++    {
++        /* Same NormalState requirement as the event path below: never adopt
++         * host geometry while the window is transitioning to/from iconic. */
++        if (!data->state_locks || cmd != SW_MAXIMIZE ||
++            data->desired_state.wm_state != NormalState)
++            goto done;
++    }
++    else
++    {
++        if (data->desired_state.wm_state != NormalState) goto done;
++
++        if (thread_data->current_event->xany.window != data->whole_window)
++            goto done;
++
++        if (thread_data->current_event->type != ConfigureNotify &&
++            thread_data->current_event->type != PropertyNotify)
++            goto done;
++    }
+ 
+     TRACE( "win %p/%lx cmd %d at %s flags %08x\n",
+            hwnd, data->whole_window, cmd, wine_dbgstr_rect(rect), swp );
+@@ -3405,6 +3421,14 @@
+     pos = root_to_virtual_screen( x, y );
+     SetRect( rect, pos.x, pos.y, pos.x + width, pos.y + height );
+     *rect = window_rect_from_visible( &data->rects, *rect );
++
++    /* The host geometry may be transient: the WM's iconify animation slides the
++     * frame from/to an off-screen point. Adopting such a rect would place the
++     * window outside every monitor, and win32u would withdraw it entirely, so
++     * keep the computed rect instead.
++     */
++    if (!is_window_rect_mapped( rect )) goto done;
++
+     swp &= ~(SWP_NOMOVE | SWP_NOCLIENTMOVE | SWP_NOSIZE | SWP_NOCLIENTSIZE);
+ 
+ done:
