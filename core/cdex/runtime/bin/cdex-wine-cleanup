@@ -3,7 +3,7 @@
 set -euo pipefail
 
 prefix_glob="${CUSDEB_WINE_CLEANUP_PREFIX_GLOB:-/home/*/.wine}"
-wine_arch="${CUSDEB_WINE_CLEANUP_WINEARCH:-win32}"
+wine_arch="${CUSDEB_WINE_CLEANUP_WINEARCH:-win64}"
 current_user="$(id -un)"
 
 mapfile -t prefixes < <(compgen -G "$prefix_glob" || true)

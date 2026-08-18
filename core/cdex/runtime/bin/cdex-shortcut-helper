@@ -46,7 +46,7 @@ runuser_wine_env() {
         export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/'"$uid"'/bus"
         export XDG_RUNTIME_DIR="/run/user/'"$uid"'"
         export WINEPREFIX="$HOME/.wine"
-        export WINEARCH=win32
+        export WINEARCH=win64
         export WINEDEBUG=-all
         # Use the built-in ReactOS shell DLLs so shortcuts match the payload.
         export WINEDLLOVERRIDES="winemenubuilder.exe=d;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b"
