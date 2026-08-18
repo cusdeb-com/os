@@ -1,3 +1,63 @@
+cdex (0.0.5-1cd) trixie; urgency=medium
+
+  * runtime/bin: migrate the CDEX session to a win64 Wine prefix, matching
+    Wine 11 where pure win32 prefixes are deprecated:
+    - cdex-win32-session: export WINEARCH=win64, wipe prefixes created as
+      win32 (no syswow64) by renaming them aside to .legacy-win32 to
+      preserve user data, link the ReactOS payload DLLs and .cpl files into
+      syswow64 instead of system32, scope the native ReactOS DLL overrides
+      to the 32-bit shell processes, and keep only mscoree and
+      winemenubuilder.exe in the session-wide WINEDLLOVERRIDES.
+    - cdex-registry: register browseui.dll with the 32-bit regsvr32 from
+      syswow64, and mirror shell-visible HKLM\Software writes into the
+      32-bit registry view (Wow6432Node) via reg /reg:32 — the 32-bit
+      reactos-explorer reads Classes CLSID registrations, FontSubstitutes,
+      the desktop NameSpace and Winlogon\Shell only from that view, so
+      64-bit-only writes left desktop icons blank (white sheets) and the
+      shell without the UI font substitution.
+    - cdex-display-properties, cdex-shortcut-helper, cdex-wine-cleanup:
+      switch WINEARCH to win64; cdex-display-properties now runs the 32-bit
+      control.exe by its explicit syswow64 path.
+  * Add 0020-taskbar-erase-no-reinvalidate.patch: stop CTaskSwitchWnd from
+    invalidating its TBSTYLE_TRANSPARENT toolbar in OnEraseBackground. With
+    an active msstyles theme (Wine 11 default Aero/Mizu) the erase handler
+    and the toolbar paint re-trigger each other in an infinite repaint loop
+    (100% CPU, WM_TIMER starvation: taskbar bridge sync and tray clock
+    frozen).
+  * Add 0021-uxtheme-export-openthemedatafordpi.patch: export
+    OpenThemeDataForDpi from the ReactOS uxtheme. Wine 11 comctl32 resolves
+    it at load time and threw a DelayLoadFailure exception inside window
+    procs when it was missing.
+  * debian/control: require wine (>= 11.15.0-1cd), matching the win64
+    session migration.
+  * Add 0022-external-task-icons.patch: load host window icons on external
+    taskbar buttons from .ico files exported by the bridge (LoadImage,
+    instead of ExtractIconEx which downscales via the shell32 icon cache).
+    The taskbar image list stays at the upstream ILC_COLOR32; the
+    alpha-blending workaround that forced ILC_COLOR24 in 0008 is dropped as
+    it does not reproduce on Wine 11. A failed icon load is retried on the
+    next sync instead of sticking with the fallback icon.
+  * 0002-taskbar-bridge.patch: also write the exact on-screen rect of every
+    external task button to reactos-taskbar-buttons.json.
+  * cdex-taskbar-bridge: export each window's _NET_WM_ICON to a
+    content-hashed .ico under taskbar-icons/ and advertise it in the state
+    JSON; the export is cached by the hash of the raw _NET_WM_ICON payload,
+    and stale .ico files are pruned once no window references them.
+  * cdex-taskbar-bridge: set _NET_WM_ICON_GEOMETRY on task windows, using
+    the exact button rects exported by the explorer (falling back to an
+    approximation from the window order). The ReactOS taskbar is a Wine
+    window and cannot set it, and without it openbox's iconify animation
+    slides windows to a default off-screen point, where Wine 11 adopted the
+    transient geometry and win32u withdrew the window (window and taskbar
+    button vanished on restore). The root size is re-read on every scan so
+    a resolution change during login no longer poisons the geometry.
+  * cdex-taskbar-bridge: skip oversized _NET_WM_ICON entries instead of
+    aborting the whole icon parse.
+  * cdex-win32-session: guard configure_reactos_registry so a single
+    failing wine reg add does not abort the login session.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 21 Aug 2026 13:31:03 +0300
+
 cdex (0.0.4-1cd) trixie; urgency=medium
 
   * Ship the ReactOS Marlett.ttf font in usr/share/cusdeb/cdex/fonts/ and
