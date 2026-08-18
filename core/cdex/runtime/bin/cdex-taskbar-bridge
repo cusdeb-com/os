@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
@@ -11,10 +13,53 @@ import time
 
 WINDOW_ID_RE = re.compile(r"0x[0-9a-fA-F]+")
 
+# Maximum icon dimension the bridge will parse/export.
+_MAX_ICON_SIZE = 256
 
-_ROOT_WIDTH = None
-_ROOT_HEIGHT = None
+# In the ICO directory a zero width/height byte means exactly 256 pixels
+# (the field is a single byte); kept separate from _MAX_ICON_SIZE because
+# the two limits are unrelated semantically.
+_ICO_DIMENSION_BYTE_LIMIT = 256
+
+# Pixels with alpha below this threshold are marked transparent in the
+# AND bitmask of the BMP-based .ico.
+_ALPHA_MASK_THRESHOLD = 128
+
+# Little-endian 32-bit unsigned integer struct format.
+_UINT32_LE = "<I"
+
+# BITMAPINFOHEADER: biSize, biWidth, biHeight, biPlanes, biBitCount,
+# biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant
+_BITMAP_INFO_HEADER_FMT = "<IiiHHIIiiII"
+
+# ICONDIR entry: bWidth, bHeight, bColorCount, bReserved, wPlanes, wBitCount,
+# dwBytesInRes, dwImageOffset
+_ICON_DIR_ENTRY_FMT = "<BBBBHHII"
+
+# ICONDIR: idReserved, idType, idCount
+_ICON_DIR_FMT = "<HHH"
+
+
 _NORMALIZED_WINDOWS = set()
+_icon_dir = None
+
+# _NET_WM_ICON_GEOMETRY tells openbox where a window's taskbar button is, so
+# its iconify animation slides to the button instead of a default off-screen
+# point. The ReactOS taskbar is a Wine window and cannot set it, so the
+# bridge sets it instead: exact button rects come from the explorer via a
+# sidecar JSON (see --buttons); as a fallback they are approximated from the
+# window order it publishes.
+_ICON_GEOMETRY = {}
+_TASKBAR_BUTTONS_X = 60
+_TASKBAR_BUTTON_WIDTH = 160
+_TASKBAR_HEIGHT = 24
+
+# window_id -> (sha1 of the raw _NET_WM_ICON payload, exported .ico path)
+_ICON_CACHE = {}
+
+# Sidecar JSON written by the ReactOS explorer (patch 0002) with exact
+# taskbar button rects; None when --buttons is not passed.
+_buttons_path = None
 
 # The last poll's active task window. Clicking a taskbar button moves X
 # activation to the taskbar dock *before* the control command reaches the
@@ -119,21 +164,192 @@ def is_task_window(window):
     return True
 
 
-def read_windows():
-    return [window for window in (read_window(window_id) for window_id in get_window_ids()) if is_task_window(window)]
+def set_icon_geometry(window_id, index, button_rect=None, root_size=None):
+    """Point openbox's iconify animation at the window's taskbar button."""
+    if button_rect:
+        rect = f"{button_rect[0]}, {button_rect[1]}, {button_rect[2]}, {button_rect[3]}"
+    else:
+        root_width, root_height = root_size or get_root_size()
+        x = min(_TASKBAR_BUTTONS_X + index * _TASKBAR_BUTTON_WIDTH,
+                max(root_width - _TASKBAR_BUTTON_WIDTH, 0))
+        rect = f"{x}, {max(root_height - _TASKBAR_HEIGHT, 0)}, {_TASKBAR_BUTTON_WIDTH}, {_TASKBAR_HEIGHT}"
+    if _ICON_GEOMETRY.get(window_id) == rect:
+        return
+    subprocess.run(
+        ["xprop", "-id", window_id, "-f", "_NET_WM_ICON_GEOMETRY", "32c", "-set", "_NET_WM_ICON_GEOMETRY", rect],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    _ICON_GEOMETRY[window_id] = rect
+
+
+def sync_windows():
+    """Read all taskbar-eligible windows and sync their side data.
+
+    Besides reading the window list this exports each window's icon to a
+    .ico file, sets _NET_WM_ICON_GEOMETRY for the WM's iconify animation
+    and prunes icon files that no window references anymore.
+    """
+    windows = [window for window in (read_window(window_id) for window_id in get_window_ids()) if is_task_window(window)]
+    current_ids = {window["window_id"] for window in windows}
+    for cache in (_ICON_GEOMETRY, _ICON_CACHE):
+        for window_id in list(cache):
+            if window_id not in current_ids:
+                del cache[window_id]
+    button_rects = read_button_rects()
+    root_size = get_root_size()
+    for index, window in enumerate(windows):
+        window["icon"] = get_window_icon_path(window["window_id"])
+        set_icon_geometry(window["window_id"], index, button_rects.get(window["window_id"]), root_size)
+    prune_icon_dir({window["icon"] for window in windows if window["icon"]})
+    return windows
+
+
+def parse_window_icon(payload):
+    """Parse a _NET_WM_ICON payload into a list of (width, height, [ARGB pixels])."""
+    try:
+        values = [int(part) for part in payload.split(",")]
+    except ValueError:
+        return []
+
+    icons = []
+    offset = 0
+    while offset + 2 <= len(values):
+        width, height = values[offset], values[offset + 1]
+        offset += 2
+        size = width * height
+        if width <= 0 or height <= 0 or offset + size > len(values):
+            break
+        # Always advance past the pixel data; oversized entries are skipped,
+        # not misparsed as subsequent headers.
+        offset += size
+        if width > _MAX_ICON_SIZE or height > _MAX_ICON_SIZE:
+            continue
+        icons.append((width, height, values[offset - size:offset]))
+    return icons
+
+
+def build_ico(icons):
+    """Pack (width, height, [ARGB pixels]) entries into a classic BMP-based .ico."""
+    images = []
+    for width, height, pixels in icons:
+        xor = bytearray()
+        for src_row in range(height - 1, -1, -1):
+            for px in pixels[src_row * width:(src_row + 1) * width]:
+                # keep straight (non-premultiplied) alpha: shell32's icon
+                # cache already premultiplies while loading 32bpp icons;
+                # little-endian ARGB packs to exactly BGRA bytes
+                xor += struct.pack(_UINT32_LE, px)
+        stride = ((width + 31) // 32) * 4
+        mask = bytearray(stride * height)
+        for row in range(height):
+            for x, px in enumerate(pixels[row * width:(row + 1) * width]):
+                if ((px >> 24) & 0xFF) < _ALPHA_MASK_THRESHOLD:
+                    mask[(height - 1 - row) * stride + x // 8] |= 0x80 >> (x % 8)
+        header = struct.pack(_BITMAP_INFO_HEADER_FMT, 40, width, height * 2, 1, 32, 0, len(xor) + len(mask), 0, 0, 0, 0)
+        images.append(header + bytes(xor) + bytes(mask))
+
+    offset = 6 + 16 * len(images)
+    entries = []
+    for (width, height, _), image in zip(icons, images):
+        entries.append(struct.pack(
+            _ICON_DIR_ENTRY_FMT,
+            width if width < _ICO_DIMENSION_BYTE_LIMIT else 0,
+            height if height < _ICO_DIMENSION_BYTE_LIMIT else 0,
+            0, 0, 1, 32, len(image), offset)
+        )
+        offset += len(image)
+    return struct.pack(_ICON_DIR_FMT, 0, 1, len(images)) + b"".join(entries) + b"".join(images)
+
+
+def get_window_icon_path(window_id):
+    """Export the window icon to a .ico file shared with the ReactOS side.
+
+    Cached by the hash of the raw _NET_WM_ICON payload: re-parsing and
+    re-packing thousands of pixels on every poll just to recompute the same
+    content hash costs noticeable CPU per window per cycle.
+    """
+    if _icon_dir is None:
+        return ""
+
+    output = run_text(["xprop", "-id", window_id, "32c", "_NET_WM_ICON"])
+    payload = output.split("=", 1)[1] if "=" in output else ""
+    payload_hash = hashlib.sha1(payload.encode()).hexdigest() if payload else ""
+    cached = _ICON_CACHE.get(window_id)
+    if cached and cached[0] == payload_hash:
+        return cached[1]
+
+    path = ""
+    icons = parse_window_icon(payload) if payload else []
+    if icons:
+        data = build_ico(icons)
+        path = os.path.join(_icon_dir, f"{hashlib.sha1(data).hexdigest()[:16]}.ico")
+        if not os.path.exists(path):
+            # A local failure (e.g. unwritable icon dir) must not kill the
+            # main loop: the icon is simply not exported this cycle.
+            try:
+                fd, temp_path = tempfile.mkstemp(prefix=".icon-", dir=_icon_dir)
+            except OSError:
+                path = ""
+            else:
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(data)
+                    os.replace(temp_path, path)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+    _ICON_CACHE[window_id] = (payload_hash, path)
+    return path
+
+
+def prune_icon_dir(used_paths):
+    """Drop exported .ico files no window references anymore."""
+    if _icon_dir is None or not os.path.isdir(_icon_dir):
+        return
+    for name in os.listdir(_icon_dir):
+        if name.endswith(".ico") and os.path.join(_icon_dir, name) not in used_paths:
+            try:
+                os.unlink(os.path.join(_icon_dir, name))
+            except OSError:
+                pass
+
+
+def read_button_rects():
+    """Read exact taskbar button rects exported by the explorer, if any."""
+    if _buttons_path is None:
+        return {}
+    try:
+        with open(_buttons_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    rects = {}
+    for entry in payload.get("buttons", []):
+        window_id = str(entry.get("window_id", ""))
+        rect = entry.get("rect")
+        if (WINDOW_ID_RE.fullmatch(window_id) and isinstance(rect, list)
+                and len(rect) == 4 and all(isinstance(v, int) for v in rect)):
+            rects[window_id] = rect
+    return rects
 
 
 def get_root_size():
-    global _ROOT_WIDTH, _ROOT_HEIGHT
-    if _ROOT_WIDTH is not None and _ROOT_HEIGHT is not None:
-        return _ROOT_WIDTH, _ROOT_HEIGHT
+    """Return the root window size as (width, height).
+
+    Queried on every scan (not cached) so resolution changes are picked up.
+    Falls back to 1920x1080 when xwininfo fails: a wrong guess only shifts
+    the iconify animation target, so a common large desktop resolution is a
+    safe default.
+    """
     output = run_text(["xwininfo", "-root"])
     match_w = re.search(r"Width:\s+(\d+)", output)
     match_h = re.search(r"Height:\s+(\d+)", output)
     if match_w and match_h:
-        _ROOT_WIDTH = int(match_w.group(1))
-        _ROOT_HEIGHT = int(match_h.group(1))
-        return _ROOT_WIDTH, _ROOT_HEIGHT
+        return int(match_w.group(1)), int(match_h.group(1))
     return 1920, 1080
 
 
@@ -422,7 +638,7 @@ def handle_launch_request(path):
 
 
 def build_payload():
-    return {"version": 1, "timestamp": time.time(), "windows": read_windows()}
+    return {"version": 1, "timestamp": time.time(), "windows": sync_windows()}
 
 
 def main():
@@ -433,12 +649,26 @@ def main():
         "REACTOS_LAUNCH_REQUEST",
         os.path.expanduser("~/.wine/drive_c/cusdeb/launch-request"),
     ))
+    parser.add_argument("--buttons", default=None,
+                        help="sidecar JSON with exact taskbar button rects, "
+                             "written by the ReactOS explorer")
     parser.add_argument("--interval", type=float, default=0.5,
                         help="window list sync interval, seconds")
     parser.add_argument("--control-interval", type=float, default=0.1,
                         help="control/launch file poll interval, seconds")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+
+    # _icon_dir/_buttons_path are module-level runtime settings; `global` is
+    # required because main() assigns to them after parsing command-line
+    # arguments.
+    global _icon_dir, _buttons_path
+
+    # Keep exported icons next to the state file: the ReactOS side reaches
+    # them through Wine's Z: drive, which maps to the host filesystem root.
+    _icon_dir = os.path.join(os.path.dirname(os.path.abspath(args.state)), "taskbar-icons")
+    os.makedirs(_icon_dir, exist_ok=True)
+    _buttons_path = args.buttons
 
     log_startup()
 

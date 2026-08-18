@@ -1,14 +1,22 @@
 Author: CusDeb OS Team
-Description: Change base/shell/explorer/taskswnd.cpp to integrate the external Python
- taskbar bridge. The patch adds a timer-driven sync that reads
- /tmp/reactos-taskbar-windows.json, maintains a parallel set of external
- TASK_ITEM entries keyed by window ID, and renders them alongside native
- Windows tasks in the ReactOS Explorer taskbar. It also writes
- focus/right-click actions to /tmp/reactos-taskbar-control.json so the bridge
- can raise or activate the corresponding host X11 windows. Native Wine window
- icons are skipped for external tasks because the host bridge supplies its own
- imagery.
-Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+Description: explorer: integrate the external taskbar bridge and its icons.
+ Change base/shell/explorer/taskswnd.cpp to integrate the external Python
+ taskbar bridge. Adds a timer-driven sync that reads /tmp/reactos-taskbar-
+ windows.json, maintains a parallel set of external TASK_ITEM entries
+ keyed by window ID, and renders them alongside native Windows tasks in
+ the ReactOS Explorer taskbar. Writes focus/right-click actions to
+ /tmp/reactos-taskbar-control.json so the bridge can raise or activate the
+ corresponding host X11 windows, and the exact on-screen rect of every
+ external task button to reactos-taskbar-buttons.json, so the bridge can
+ set each window's _NET_WM_ICON_GEOMETRY for the WM's iconify animation.
+ .
+ External task buttons load their icon from the .ico file the bridge
+ exports for the window's _NET_WM_ICON, via LoadImage rather than
+ ExtractIconEx (which downscales through the shell32 icon cache instead of
+ returning the real small icon); the HICON is cached per task item,
+ reloaded when the hashed path changes, and retried on transient load
+ failures.
+Last-Modified: Tue, 18 Aug 2026 18:23:12 +0300
 
 --- a/src/base/shell/explorer/taskswnd.cpp
 +++ b/src/base/shell/explorer/taskswnd.cpp
@@ -70,16 +78,22 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
  static BOOL
  SHELL_GetMonitorRect(
-@@ -167,6 +218,8 @@ typedef struct _TASK_ITEM
+@@ -167,6 +218,14 @@
      PTASK_GROUP Group;
      INT Index;
      INT IconIndex;
 +    WCHAR ExternalWindowId[32];
 +    WCHAR ExternalTitle[255];
++
++    /* .ico file with the host window icon, exported by the bridge. The path
++       contains a content hash, so it changes exactly when the icon does. */
++    WCHAR ExternalIconPath[MAX_TASKBAR_PATH];
++    WCHAR ExternalIconLoaded[MAX_TASKBAR_PATH];
++    HICON hExternalIcon;
  
      union
      {
-@@ -180,10 +233,23 @@ typedef struct _TASK_ITEM
+@@ -180,10 +239,23 @@
              /* RenderFlashed is only TRUE if the task bar item should be
                 drawn with a flash. */
              DWORD RenderFlashed : 1;
@@ -103,7 +117,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
  class CHardErrorThread
  {
-@@ -434,11 +500,91 @@ public:
+@@ -434,11 +506,91 @@
  
      INT GetWndTextFromTaskItem(IN PTASK_ITEM TaskItem, LPWSTR szBuf, DWORD cchBuf)
      {
@@ -195,16 +209,64 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
  #if DUMP_TASKS != 0
      VOID DumpTasks()
-@@ -638,7 +784,7 @@ public:
+@@ -608,6 +760,47 @@
+         return (HICON)GetClassLongPtr(hwnd, g_TaskbarSettings.bSmallIcons ? GCLP_HICON : GCLP_HICONSM);
+     }
+ 
++    /* External task icons come from a .ico file the bridge exports for the
++       host window. The file name contains a content hash, so a changed path
++       means a changed icon; the HICON is cached per task item. LoadImage is
++       used instead of ExtractIconEx because the shell32 icon cache returns
++       a poorly downscaled large icon instead of the real small one. The
++       path is only marked as loaded on success: the bridge may rewrite the
++       file a poll later, so a failed load must be retried on the next sync
++       instead of sticking with the fallback icon forever. */
++    HICON GetExternalTaskIcon(IN PTASK_ITEM TaskItem)
++    {
++        if (!TaskItem->ExternalIconPath[0])
++            return NULL;
++
++        if (!TaskItem->hExternalIcon ||
++            lstrcmpW(TaskItem->ExternalIconLoaded, TaskItem->ExternalIconPath) != 0)
++        {
++            INT size;
++            HICON hIcon;
++
++            if (TaskItem->hExternalIcon)
++            {
++                DestroyIcon(TaskItem->hExternalIcon);
++                TaskItem->hExternalIcon = NULL;
++            }
++
++            size = GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CXSMICON : SM_CXICON);
++            hIcon = (HICON)LoadImageW(NULL, TaskItem->ExternalIconPath,
++                                      IMAGE_ICON, size, size,
++                                      LR_LOADFROMFILE);
++            if (hIcon)
++            {
++                TaskItem->hExternalIcon = hIcon;
++                StringCchCopyW(TaskItem->ExternalIconLoaded,
++                               _countof(TaskItem->ExternalIconLoaded),
++                               TaskItem->ExternalIconPath);
++            }
++        }
++
++        return TaskItem->hExternalIcon;
++    }
++
+     INT UpdateTaskItemButton(IN PTASK_ITEM TaskItem)
+     {
+         TBBUTTONINFO tbbi = { 0 };
+@@ -638,7 +831,7 @@
              tbbi.pszText = windowText;
          }
  
 -        icon = GetWndIcon(TaskItem->hWnd);
-+        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? GetExternalTaskIcon(TaskItem) : GetWndIcon(TaskItem->hWnd);
          if (!icon)
              icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
          TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, TaskItem->IconIndex, icon);
-@@ -650,7 +796,8 @@ public:
+@@ -650,7 +843,8 @@
              return -1;
          }
  
@@ -214,16 +276,16 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          return TaskItem->Index;
      }
  
-@@ -783,7 +930,7 @@ public:
+@@ -783,7 +977,7 @@
              return UpdateTaskGroupButton(TaskItem->Group);
          }
  
 -        icon = GetWndIcon(TaskItem->hWnd);
-+        icon = TaskItem->IsExternal ? NULL : GetWndIcon(TaskItem->hWnd);
++        icon = TaskItem->IsExternal ? GetExternalTaskIcon(TaskItem) : GetWndIcon(TaskItem->hWnd);
          if (!icon)
              icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
          TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, -1, icon);
-@@ -809,7 +956,8 @@ public:
+@@ -809,7 +1003,8 @@
          {
              UpdateIndexesAfter(iIndex, TRUE);
  
@@ -233,7 +295,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
              TaskItem->Index = iIndex;
              m_ButtonCount++;
-@@ -966,6 +1114,148 @@ public:
+@@ -966,6 +1161,166 @@
          return NULL;
      }
  
@@ -250,7 +312,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +        return NULL;
 +    }
 +
-+    BOOL AddOrUpdateExternalTask(IN LPCWSTR WindowId, IN LPCWSTR Title)
++    BOOL AddOrUpdateExternalTask(IN LPCWSTR WindowId, IN LPCWSTR Title, IN LPCWSTR IconPath)
 +    {
 +        PTASK_ITEM TaskItem = FindExternalTaskItem(WindowId);
 +        if (!TaskItem)
@@ -267,14 +329,25 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +            TaskItem->IsExternal = TRUE;
 +            StringCchCopyW(TaskItem->ExternalWindowId, _countof(TaskItem->ExternalWindowId), WindowId);
 +            StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++            StringCchCopyW(TaskItem->ExternalIconPath, _countof(TaskItem->ExternalIconPath), IconPath);
 +
 +            if (!m_IsDestroying)
 +                AddTaskItemButton(TaskItem);
 +        }
-+        else if (lstrcmpW(TaskItem->ExternalTitle, Title) != 0)
++        else
 +        {
-+            StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
-+            if (TaskItem->Index >= 0)
++            BOOL changed = FALSE;
++            if (lstrcmpW(TaskItem->ExternalTitle, Title) != 0)
++            {
++                StringCchCopyW(TaskItem->ExternalTitle, _countof(TaskItem->ExternalTitle), Title);
++                changed = TRUE;
++            }
++            if (lstrcmpW(TaskItem->ExternalIconPath, IconPath) != 0)
++            {
++                StringCchCopyW(TaskItem->ExternalIconPath, _countof(TaskItem->ExternalIconPath), IconPath);
++                changed = TRUE;
++            }
++            if (changed && TaskItem->Index >= 0)
 +                UpdateTaskItemButton(TaskItem);
 +        }
 +
@@ -334,18 +407,25 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +
 +            CHAR idA[32];
 +            CHAR titleA[255];
++            CHAR iconA[MAX_TASKBAR_PATH];
 +            WCHAR idW[32];
 +            WCHAR titleW[255];
++            WCHAR iconUnixW[MAX_TASKBAR_PATH];
++            WCHAR iconW[MAX_TASKBAR_PATH];
 +            idA[0] = ANSI_NULL;
 +            titleA[0] = ANSI_NULL;
++            iconA[0] = ANSI_NULL;
 +
 +            if (FindJsonStringValue(cursor, objectEnd, "\"window_id\"", idA, _countof(idA)) &&
 +                FindJsonStringValue(cursor, objectEnd, "\"title\"", titleA, _countof(titleA)))
 +            {
++                FindJsonStringValue(cursor, objectEnd, "\"icon\"", iconA, _countof(iconA));
 +                Utf8ToWide(idA, idW, _countof(idW));
 +                Utf8ToWide(titleA, titleW, _countof(titleW));
++                Utf8ToWide(iconA, iconUnixW, _countof(iconUnixW));
++                ConvertUnixToWinePath(iconUnixW, iconW, _countof(iconW));
 +                if (idW[0] && titleW[0])
-+                    AddOrUpdateExternalTask(idW, titleW);
++                    AddOrUpdateExternalTask(idW, titleW, iconW);
 +            }
 +
 +            cursor = objectEnd + 1;
@@ -382,7 +462,23 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
      PTASK_ITEM FindOtherTaskItem(IN HWND hWnd)
      {
          PTASK_ITEM LastItem, TaskItem;
-@@ -1478,7 +1768,7 @@ public:
+@@ -1077,8 +1432,15 @@
+         m_TaskItemCount--;
+     }
+ 
++    /* Free the cached external icon together with the item */
+     VOID DeleteTaskItem(IN OUT PTASK_ITEM TaskItem)
+     {
++        if (TaskItem->hExternalIcon)
++        {
++            DestroyIcon(TaskItem->hExternalIcon);
++            TaskItem->hExternalIcon = NULL;
++        }
++
+         if (!m_IsDestroying)
+         {
+             /* Delete the task button from the toolbar */
+@@ -1478,7 +1840,7 @@
          if (m_Tray->IsTaskWnd(hWnd))
          {
              TRACE("Adding task for %p...\n", hWnd);
@@ -391,7 +487,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          }
          return TRUE;
      }
-@@ -1535,6 +1825,9 @@ public:
+@@ -1535,6 +1897,9 @@
          RegisterShellHook(m_hWnd, 3); /* 1 if no NT! We're targeting NT so we don't care! */
  
          RefreshWindowList();
@@ -401,7 +497,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
          /* Recalculate the button size */
          UpdateButtonsSize(FALSE);
-@@ -1550,6 +1843,7 @@ public:
+@@ -1550,6 +1915,7 @@
          m_IsDestroying = TRUE;
  
          KillTimer(TIMER_ID_VALIDATE_RUDE_APP);
@@ -409,7 +505,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
          /* Unregister the shell hook */
          RegisterShellHook(m_hWnd, FALSE);
-@@ -1642,7 +1936,7 @@ public:
+@@ -1642,7 +2008,7 @@
              break;
  
          case HSHELL_WINDOWCREATED:
@@ -418,7 +514,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
              break;
  
          case HSHELL_WINDOWDESTROYED:
-@@ -1711,6 +2005,13 @@ public:
+@@ -1711,6 +2077,13 @@
          BOOL bIsMinimized;
          BOOL bIsActive;
  
@@ -432,7 +528,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          if (::IsWindow(TaskItem->hWnd))
          {
              bIsMinimized = ::IsIconic(TaskItem->hWnd);
-@@ -1776,6 +2077,12 @@ public:
+@@ -1776,6 +2149,12 @@
  
      VOID HandleTaskItemRightClick(IN OUT PTASK_ITEM TaskItem)
      {
@@ -445,7 +541,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          POINT pt;
          GetCursorPos(&pt);
  
-@@ -2193,6 +2500,11 @@ public:
+@@ -2193,6 +2572,11 @@
                      SetTimer(wParam, VALIDATE_RUDE_INTERVAL, NULL);
                  break;
              }
