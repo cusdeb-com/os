@@ -3,12 +3,10 @@ Description: Change base/shell/explorer/taskswnd.cpp in several places. Disable 
  Windows task tracking in CTaskSwitchWnd so the taskbar relies entirely on
  external bridge tasks and no longer leaves stale buttons after windows close.
  Recalculate toolbar button spacing immediately after a theme change to prevent
- overlapping or stale metrics. Switch the taskbar image list from ILC_COLOR32 |
- ILC_MASK to ILC_COLOR24 | ILC_MASK to work around a Wine comctl32
- alpha-blending issue. Draw the taskbar background explicitly via
+ overlapping or stale metrics. Draw the taskbar background explicitly via
  DrawThemeBackground, without invalidating the toolbar afterward (which
  closed an infinite repaint loop with a themed TBSTYLE_TRANSPARENT toolbar).
-Last-Modified: Tue, 18 Aug 2026 18:22:33 +0300
+Last-Modified: Tue, 01 Sep 2026 18:46:20 +0300
 
 --- a/src/base/shell/explorer/taskswnd.cpp
 +++ b/src/base/shell/explorer/taskswnd.cpp
@@ -24,15 +22,6 @@ Last-Modified: Tue, 18 Aug 2026 18:22:33 +0300
          return TRUE;
      }
  
-@@ -1521,7 +1526,7 @@
- 
-         m_ImageList = ImageList_Create(GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CXSMICON : SM_CXICON),
-                                        GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CYSMICON : SM_CYICON),
--                                       ILC_COLOR32 | ILC_MASK, 0, 1000);
-+                                       ILC_COLOR24 | ILC_MASK, 0, 1000);
-         m_TaskBar.SetImageList(m_ImageList);
- 
-         /* Set proper spacing between buttons */
 @@ -2032,7 +2037,16 @@
  
          RECT rect;
