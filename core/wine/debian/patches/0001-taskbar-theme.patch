@@ -2,28 +2,28 @@ Author: CusDeb OS Team
 Description: Fix taskbar button theming. Map TaskBand part 1 to the BUTTON theme class
  in uxtheme so DrawThemeBackground finds the button bitmap, and pass the real toolbar
  hwnd to OpenThemeDataForDpi in comctl32 so the TaskBand theme override is respected.
-Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
+Last-Modified: Mon, 04 Aug 2026 18:30:00 +0300
 
 --- a/src/dlls/comctl32/toolbar.c
 +++ b/src/dlls/comctl32/toolbar.c
-@@ -5302,7 +5302,7 @@
- 
-     SystemParametersInfoW (SPI_GETICONTITLELOGFONT, 0, &logFont, 0);
+@@ -5342,7 +5342,7 @@
      infoPtr->hFont = infoPtr->hDefaultFont = CreateFontIndirectW (&logFont);
--    infoPtr->hTheme = OpenThemeDataForDpi (NULL, themeClass, GetDpiForWindow (hwnd));
-+    infoPtr->hTheme = OpenThemeDataForDpi (hwnd, themeClass, GetDpiForWindow (hwnd));
+ 
+ #if __WINE_COMCTL32_VERSION == 6
+-    infoPtr->hTheme = OpenThemeDataForDpi (NULL, L"Toolbar", GetDpiForWindow (hwnd));
++    infoPtr->hTheme = OpenThemeDataForDpi (hwnd, L"Toolbar", GetDpiForWindow (hwnd));
+ #endif
  
      TOOLBAR_CheckStyle (infoPtr);
- 
-@@ -6538,7 +6538,7 @@
- static LRESULT theme_changed (TOOLBAR_INFO *infoPtr)
+@@ -6607,7 +6607,7 @@
  {
+ #if __WINE_COMCTL32_VERSION == 6
      CloseThemeData (infoPtr->hTheme);
--    infoPtr->hTheme = OpenThemeDataForDpi (NULL, themeClass, GetDpiForWindow (infoPtr->hwndSelf));
-+    infoPtr->hTheme = OpenThemeDataForDpi (infoPtr->hwndSelf, themeClass, GetDpiForWindow (infoPtr->hwndSelf));
+-    infoPtr->hTheme = OpenThemeDataForDpi (NULL, L"Toolbar", GetDpiForWindow (infoPtr->hwndSelf));
++    infoPtr->hTheme = OpenThemeDataForDpi (infoPtr->hwndSelf, L"Toolbar", GetDpiForWindow (infoPtr->hwndSelf));
      InvalidateRect (infoPtr->hwndSelf, NULL, TRUE);
      return 0;
- }
+ #else
 --- a/src/dlls/uxtheme/stylemap.c
 +++ b/src/dlls/uxtheme/stylemap.c
 @@ -1047,7 +1047,7 @@

@@ -7,7 +7,7 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 
 --- a/src/dlls/comctl32/commctrl.c
 +++ b/src/dlls/comctl32/commctrl.c
-@@ -1655,35 +1655,115 @@
+@@ -1614,35 +1614,115 @@
  /***********************************************************************
   * DrawShadowText [COMCTL32.@]
   *
@@ -151,7 +151,7 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
  /***********************************************************************
 --- a/src/dlls/comctl32/listview.c
 +++ b/src/dlls/comctl32/listview.c
-@@ -4752,7 +4752,16 @@
+@@ -4764,7 +4764,20 @@
      if (infoPtr->uView == LV_VIEW_DETAILS && infoPtr->dwLvExStyle & LVS_EX_GRIDLINES)
          rcLabel.bottom--;
  
@@ -159,8 +159,12 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 +    if ((!(item->state & LVIS_SELECTED) || !infoPtr->bFocus) &&
 +        (infoPtr->dwLvExStyle & LVS_EX_TRANSPARENTSHADOWTEXT))
 +    {
++#if __WINE_COMCTL32_VERSION == 6
 +        DrawShadowText(nmlvcd->nmcd.hdc, item->pszText, -1, &rcLabel, format,
 +                       RGB(255, 255, 255), RGB(0, 0, 0), 2, 2);
++#else
++        DrawTextW(nmlvcd->nmcd.hdc, item->pszText, -1, &rcLabel, format);
++#endif
 +    }
 +    else
 +    {
@@ -171,11 +175,12 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
  /***
 --- a/src/dlls/comctl32/toolbar.c
 +++ b/src/dlls/comctl32/toolbar.c
-@@ -612,6 +612,47 @@
+@@ -620,6 +620,49 @@
                wine_dbgstr_rect(rcText));
  
  	hOldFont = SelectObject (hdc, infoPtr->hFont);
 +
++#if __WINE_COMCTL32_VERSION == 6
 +    {
 +        HTHEME theme = GetWindowTheme(infoPtr->hwndSelf);
 +        if (theme && !(state & CDIS_DISABLED))
@@ -215,6 +220,7 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 +            }
 +        }
 +    }
++#endif
 +
  	if ((state & CDIS_HOT) && (dwItemCDFlag & TBCDRF_HILITEHOTTRACK )) {
  	    clrOld = SetTextColor (hdc, tbcd->clrTextHighlight);

@@ -7,7 +7,7 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
 
 --- a/src/dlls/shell32/shellpath.c
 +++ b/src/dlls/shell32/shellpath.c
-@@ -2798,31 +2798,11 @@
+@@ -2821,31 +2821,11 @@
   */
  static void _SHCreateSymbolicLink(int nFolder, const WCHAR *path)
  {
