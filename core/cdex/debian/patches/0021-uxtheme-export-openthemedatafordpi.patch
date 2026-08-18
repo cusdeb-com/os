@@ -1,0 +1,18 @@
+Author: CusDeb OS Team
+Description: Export OpenThemeDataForDpi from uxtheme (non-Vista spec).
+ Wine 11 comctl32 calls OpenThemeDataForDpi for themed controls
+ (listview, toolbar, treeview). The delay-load resolves against the
+ loaded uxtheme.dll, which is our ReactOS one; without this export the
+ lookup fails, an exception is raised inside the control's window proc,
+ and themed painting aborts mid-way, leaving blank white icons on the
+ desktop, the taskbar and explorer list views. The implementation in
+ system.c already exists, it just was not exported in uxtheme.spec.
+Last-Modified: Tue, 11 Aug 2026 17:45:00 +0300
+
+--- a/src/dll/win32/uxtheme/uxtheme.spec
++++ b/src/dll/win32/uxtheme/uxtheme.spec
+@@ -93,3 +93,4 @@
+ 93 stdcall SetThemeAppProperties(long)
+ 94 stdcall SetWindowTheme(ptr wstr wstr)
+ 95 stdcall ThemeInitApiHook(long ptr)
++@ stdcall OpenThemeDataForDpi(ptr wstr long)
