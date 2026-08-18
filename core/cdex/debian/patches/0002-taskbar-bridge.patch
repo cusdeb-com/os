@@ -7,12 +7,14 @@ Description: Change base/shell/explorer/taskswnd.cpp to integrate the external P
  focus/right-click actions to /tmp/reactos-taskbar-control.json so the bridge
  can raise or activate the corresponding host X11 windows. Native Wine window
  icons are skipped for external tasks because the host bridge supplies its own
- imagery.
-Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+ imagery. It also writes the exact on-screen rect of every external task
+ button to reactos-taskbar-buttons.json, so the bridge can set each window's
+ _NET_WM_ICON_GEOMETRY for the WM's iconify animation.
+Last-Modified: Tue, 18 Aug 2026 14:10:00 +0300
 
 --- a/src/base/shell/explorer/taskswnd.cpp
 +++ b/src/base/shell/explorer/taskswnd.cpp
-@@ -37,6 +37,57 @@
+@@ -37,6 +37,68 @@
  #define TIMER_ID_VALIDATE_RUDE_APP 5
  #define VALIDATE_RUDE_INTERVAL 1000
  #define VALIDATE_RUDE_MAX_COUNT 5
@@ -23,6 +25,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +
 +static WCHAR g_szExternalTasksPath[MAX_TASKBAR_PATH];
 +static WCHAR g_szExternalTaskControlPath[MAX_TASKBAR_PATH];
++static WCHAR g_szExternalTaskButtonsPath[MAX_TASKBAR_PATH];
 +
 +static void ConvertUnixToWinePath(LPCWSTR unixPath, LPWSTR winePath, SIZE_T cchWinePath)
 +{
@@ -66,11 +69,21 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +    {
 +        ConvertUnixToWinePath(buf, g_szExternalTaskControlPath, MAX_TASKBAR_PATH);
 +    }
++
++    len = GetEnvironmentVariableW(L"REACTOS_TASKBAR_BUTTONS", buf, MAX_TASKBAR_PATH);
++    if (len == 0 || len >= MAX_TASKBAR_PATH)
++    {
++        StringCchCopyW(g_szExternalTaskButtonsPath, MAX_TASKBAR_PATH, L"Z:\\tmp\\reactos-taskbar-buttons.json");
++    }
++    else
++    {
++        ConvertUnixToWinePath(buf, g_szExternalTaskButtonsPath, MAX_TASKBAR_PATH);
++    }
 +}
  
  static BOOL
  SHELL_GetMonitorRect(
-@@ -167,6 +218,8 @@ typedef struct _TASK_ITEM
+@@ -167,6 +229,8 @@
      PTASK_GROUP Group;
      INT Index;
      INT IconIndex;
@@ -79,7 +92,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
      union
      {
-@@ -180,10 +233,23 @@ typedef struct _TASK_ITEM
+@@ -180,10 +244,23 @@
              /* RenderFlashed is only TRUE if the task bar item should be
                 drawn with a flash. */
              DWORD RenderFlashed : 1;
@@ -103,7 +116,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
  class CHardErrorThread
  {
-@@ -434,11 +500,91 @@ public:
+@@ -434,11 +511,91 @@
  
      INT GetWndTextFromTaskItem(IN PTASK_ITEM TaskItem, LPWSTR szBuf, DWORD cchBuf)
      {
@@ -195,7 +208,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
  #if DUMP_TASKS != 0
      VOID DumpTasks()
-@@ -638,7 +784,7 @@ public:
+@@ -638,7 +795,7 @@
              tbbi.pszText = windowText;
          }
  
@@ -204,7 +217,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          if (!icon)
              icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
          TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, TaskItem->IconIndex, icon);
-@@ -650,7 +796,8 @@ public:
+@@ -650,7 +807,8 @@
              return -1;
          }
  
@@ -214,7 +227,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          return TaskItem->Index;
      }
  
-@@ -783,7 +930,7 @@ public:
+@@ -783,7 +941,7 @@
              return UpdateTaskGroupButton(TaskItem->Group);
          }
  
@@ -223,7 +236,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          if (!icon)
              icon = static_cast<HICON>(LoadImageW(NULL, MAKEINTRESOURCEW(OIC_SAMPLE), IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE));
          TaskItem->IconIndex = ImageList_ReplaceIcon(m_ImageList, -1, icon);
-@@ -809,7 +956,8 @@ public:
+@@ -809,7 +967,8 @@
          {
              UpdateIndexesAfter(iIndex, TRUE);
  
@@ -233,7 +246,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
              TaskItem->Index = iIndex;
              m_ButtonCount++;
-@@ -966,6 +1114,148 @@ public:
+@@ -966,6 +1125,198 @@
          return NULL;
      }
  
@@ -320,6 +333,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +        {
 +            MarkExternalTasksUnseen();
 +            RemoveUnseenExternalTasks();
++            WriteExternalTaskButtons();
 +            return;
 +        }
 +
@@ -352,6 +366,55 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +        }
 +
 +        RemoveUnseenExternalTasks();
++
++        WriteExternalTaskButtons();
++    }
++
++    /* Export the exact on-screen rect of every external task button, so the
++       bridge can point the WM's iconify animation at the button (the ReactOS
++       taskbar is a Wine window and cannot set _NET_WM_ICON_GEOMETRY itself).
++       Written on every sync; a missing state file still writes an empty list
++       so the bridge drops stale rects. */
++    VOID WriteExternalTaskButtons()
++    {
++        CHeapPtr<CHAR> json;
++        if (!json.AllocateBytes(64 + (SIZE_T)(m_TaskItemCount + 1) * 128))
++            return;
++
++        CHAR* p = json;
++        p += wsprintfA(p, "{\"buttons\":[");
++
++        BOOL first = TRUE;
++        PTASK_ITEM TaskItem = m_TaskItems;
++        PTASK_ITEM LastItem = TaskItem + m_TaskItemCount;
++        for (; TaskItem != LastItem; ++TaskItem)
++        {
++            if (!TaskItem->IsExternal || TaskItem->Index < 0)
++                continue;
++
++            RECT rc;
++            if (!m_TaskBar.GetItemRect(TaskItem->Index, &rc))
++                continue;
++            ::MapWindowPoints(m_TaskBar.m_hWnd, HWND_DESKTOP, (LPPOINT)&rc, 2);
++
++            CHAR idA[32];
++            WideCharToMultiByte(CP_UTF8, 0, TaskItem->ExternalWindowId, -1, idA, _countof(idA), NULL, NULL);
++            p += wsprintfA(p, "%s{\"window_id\":\"%s\",\"rect\":[%ld,%ld,%ld,%ld]}",
++                           first ? "" : ",", idA,
++                           (LONG)rc.left, (LONG)rc.top,
++                           (LONG)(rc.right - rc.left), (LONG)(rc.bottom - rc.top));
++            first = FALSE;
++        }
++        p += wsprintfA(p, "]}\n");
++
++        HANDLE hFile = CreateFileW(g_szExternalTaskButtonsPath, GENERIC_WRITE, 0, NULL,
++                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++        if (hFile == INVALID_HANDLE_VALUE)
++            return;
++
++        DWORD cbWritten = 0;
++        WriteFile(hFile, json, (DWORD)(p - (CHAR*)json), &cbWritten, NULL);
++        CloseHandle(hFile);
 +    }
 +
 +    BOOL WriteExternalTaskCommand(IN LPCWSTR Action, IN LPCWSTR WindowId)
@@ -382,7 +445,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
      PTASK_ITEM FindOtherTaskItem(IN HWND hWnd)
      {
          PTASK_ITEM LastItem, TaskItem;
-@@ -1478,7 +1768,7 @@ public:
+@@ -1478,7 +1829,7 @@
          if (m_Tray->IsTaskWnd(hWnd))
          {
              TRACE("Adding task for %p...\n", hWnd);
@@ -391,7 +454,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          }
          return TRUE;
      }
-@@ -1535,6 +1825,9 @@ public:
+@@ -1535,6 +1886,9 @@
          RegisterShellHook(m_hWnd, 3); /* 1 if no NT! We're targeting NT so we don't care! */
  
          RefreshWindowList();
@@ -401,7 +464,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
          /* Recalculate the button size */
          UpdateButtonsSize(FALSE);
-@@ -1550,6 +1843,7 @@ public:
+@@ -1550,6 +1904,7 @@
          m_IsDestroying = TRUE;
  
          KillTimer(TIMER_ID_VALIDATE_RUDE_APP);
@@ -409,7 +472,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
  
          /* Unregister the shell hook */
          RegisterShellHook(m_hWnd, FALSE);
-@@ -1642,7 +1936,7 @@ public:
+@@ -1642,7 +1997,7 @@
              break;
  
          case HSHELL_WINDOWCREATED:
@@ -418,7 +481,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
              break;
  
          case HSHELL_WINDOWDESTROYED:
-@@ -1711,6 +2005,13 @@ public:
+@@ -1711,6 +2066,13 @@
          BOOL bIsMinimized;
          BOOL bIsActive;
  
@@ -432,7 +495,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          if (::IsWindow(TaskItem->hWnd))
          {
              bIsMinimized = ::IsIconic(TaskItem->hWnd);
-@@ -1776,6 +2077,12 @@ public:
+@@ -1776,6 +2138,12 @@
  
      VOID HandleTaskItemRightClick(IN OUT PTASK_ITEM TaskItem)
      {
@@ -445,7 +508,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          POINT pt;
          GetCursorPos(&pt);
  
-@@ -2193,6 +2500,11 @@ public:
+@@ -2193,6 +2561,11 @@
                      SetTimer(wParam, VALIDATE_RUDE_INTERVAL, NULL);
                  break;
              }
