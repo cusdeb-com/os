@@ -2,9 +2,10 @@
 set -euo pipefail
 
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
-export WINEARCH=win32
+export WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all}"
 export WINEDLLOVERRIDES="desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
 
-cd "$WINEPREFIX/drive_c/windows/system32"
-exec wine control.exe desk.cpl
+# desk.cpl is 32-bit; run the 32-bit control.exe by its explicit path instead
+# of relying on CreateProcess checking the current directory first.
+exec wine 'C:\windows\syswow64\control.exe' desk.cpl

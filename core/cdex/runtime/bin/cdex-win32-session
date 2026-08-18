@@ -9,10 +9,24 @@ export XCURSOR_THEME="Chicago95_Standard_Cursors"
 export XCURSOR_SIZE=16
 export WINEDEBUG="${WINEDEBUG:--all}"
 
+# Session-wide Wine overrides: no Mono download (mscoree) and no Linux desktop
+# icons from wineboot (winemenubuilder); only CusDeb shortcuts should remain.
+# The builtin explorer.exe must stay enabled: win32u auto-spawns it as the
+# desktop/driver host, and without it no Wine window can be created at all.
+# It is prevented from stealing the shell role by a Wine patch instead
+# (set_shell_window is only honoured for shell-enabled named desktops).
+export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d"
+
 REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
 REACTOS_PREFIX="$HOME/.wine"
 REACTOS_DRIVE_DIR="$REACTOS_PREFIX/drive_c/reactos"
 REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
+
+# The native ReactOS DLL overrides are scoped to the 32-bit shell processes:
+# a global export would make 64-bit Wine processes (wineboot, services, ...)
+# try to load the 32-bit native DLLs from system32 and abort. mscoree and
+# winemenubuilder.exe are disabled session-wide via WINEDLLOVERRIDES above.
+REACTOS_DLL_OVERRIDES="desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
 
 # Keep taskbar bridge state/control in the per-user runtime directory so
 # multiple users do not collide on the sticky /tmp shared files.
@@ -20,6 +34,9 @@ REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
 mkdir -p "$XDG_RUNTIME_DIR"
 export REACTOS_TASKBAR_STATE="${REACTOS_TASKBAR_STATE:-$XDG_RUNTIME_DIR/reactos-taskbar-windows.json}"
 export REACTOS_TASKBAR_CONTROL="${REACTOS_TASKBAR_CONTROL:-$XDG_RUNTIME_DIR/reactos-taskbar-control.json}"
+# Exact taskbar button rects, written by the ReactOS explorer and consumed by
+# cdex-taskbar-bridge to point openbox's iconify animation at the button.
+export REACTOS_TASKBAR_BUTTONS="${REACTOS_TASKBAR_BUTTONS:-$XDG_RUNTIME_DIR/reactos-taskbar-buttons.json}"
 # Launch requests are written by Windows shortcuts to a Wine-mapped path under
 # C:\cusdeb and consumed by cdex-taskbar-bridge to start native Linux
 # applications.  The real file lives inside the Wine prefix.
@@ -85,23 +102,32 @@ log_stage() {
 ensure_wine_prefix() {
   local marker="$WINEPREFIX/drive_c/windows/system32/kernel32.dll"
 
-  # If the prefix exists but the marker is missing or empty, kill any stale
-  # wineserver and wipe the prefix so wineboot can create a clean one.
+  # If the prefix exists but the marker is missing or empty, it is broken
+  # (e.g. interrupted first boot): kill any stale wineserver and wipe it so
+  # wineboot can create a clean one. A legacy 32-bit prefix (no syswow64)
+  # cannot be converted to win64 (Wine hard-fails on the mismatch), so it is
+  # renamed aside instead of deleted to preserve user data under drive_c.
   if [ -d "$WINEPREFIX" ]; then
     if [ ! -s "$marker" ]; then
       log_stage "prefix-corrupt-wiping"
       wineserver -k 2>/dev/null || true
       rm -rf "$WINEPREFIX"
+    elif [ ! -d "$WINEPREFIX/drive_c/windows/syswow64" ]; then
+      log_stage "prefix-legacy-win32-renaming"
+      wineserver -k 2>/dev/null || true
+      rm -rf "$WINEPREFIX.legacy-win32"
+      mv "$WINEPREFIX" "$WINEPREFIX.legacy-win32"
     fi
   fi
 
   if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ]; then
     log_stage "wineboot-start"
     wineserver -k 2>/dev/null || true
-    # Disable winemenubuilder so Wine does not create its own Linux desktop
-    # icons (/, My Documents, Internet Explorer, etc.); only CusDeb shortcuts
-    # should remain.
-    WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d" WINEDEBUG=-all wineboot --init
+    # winemenubuilder and explorer.exe are disabled via the session-wide
+    # WINEDLLOVERRIDES above, so Wine does not create its own Linux desktop
+    # icons (/ , My Documents, Internet Explorer, etc.) or its own shell;
+    # only CusDeb shortcuts should remain.
+    WINEDEBUG=-all wineboot --init
     wineserver -w
     log_stage "wineboot-done"
   fi
@@ -149,12 +175,15 @@ log_stage "session-start"
 source "$(dirname "$0")/cdex-registry"
 
 export WINEPREFIX="$REACTOS_PREFIX"
-export WINEARCH=win32
+export WINEARCH=win64
 
 # Decide whether this is a first-time initialization or a regular login.
+# A prefix without syswow64 is a legacy 32-bit one: it will be moved aside
+# to .legacy-win32 and recreated as 64-bit below, so treat the login as a
+# first-time init.
 initial_run=false
 payload_ready=false
-if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ] || [ ! -f "$REACTOS_REGISTRY_MARKER" ]; then
+if [ ! -d "$WINEPREFIX/drive_c/windows/system32" ] || [ ! -d "$WINEPREFIX/drive_c/windows/syswow64" ] || [ ! -f "$REACTOS_REGISTRY_MARKER" ]; then
   initial_run=true
 fi
 
@@ -163,22 +192,26 @@ prepare_reactos_payload() {
     return 1
   fi
 
-  install -d "$REACTOS_PREFIX/drive_c/windows/system32" "$REACTOS_PREFIX/drive_c/cusdeb"
+  install -d "$REACTOS_PREFIX/drive_c/windows/syswow64" "$REACTOS_PREFIX/drive_c/cusdeb"
   # Replace any existing copied payload with a live symlink so that
   # post-install application packages are visible immediately.
   rm -rf "$REACTOS_DRIVE_DIR"
   ln -s "$REACTOS_SOURCE_DIR" "$REACTOS_DRIVE_DIR"
 
   install -m 755 "$REACTOS_SOURCE_DIR/filebrowser.exe" "$REACTOS_PREFIX/drive_c/windows/explorer.exe"
+
+  # The payload DLLs and CPLs are 32-bit PE binaries. In a 64-bit prefix the
+  # 32-bit system directory is syswow64; placing them in system32 would make
+  # 64-bit Wine processes (wineboot, services, ...) fail to load them.
   for dll in shell32.dll shlwapi.dll browseui.dll rshell.dll shdocvw.dll uxtheme.dll version.dll sendmail.dll w32time.dll; do
-    rm -f "$REACTOS_PREFIX/drive_c/windows/system32/$dll"
-    ln -s "$REACTOS_SOURCE_DIR/$dll" "$REACTOS_PREFIX/drive_c/windows/system32/$dll"
+    rm -f "$REACTOS_PREFIX/drive_c/windows/syswow64/$dll"
+    ln -s "$REACTOS_SOURCE_DIR/$dll" "$REACTOS_PREFIX/drive_c/windows/syswow64/$dll"
   done
   if compgen -G "$REACTOS_SOURCE_DIR/*.cpl" >/dev/null; then
     for cpl in "$REACTOS_SOURCE_DIR"/*.cpl; do
       [ -f "$cpl" ] || continue
-      rm -f "$REACTOS_PREFIX/drive_c/windows/system32/$(basename "$cpl")"
-      ln -s "$cpl" "$REACTOS_PREFIX/drive_c/windows/system32/$(basename "$cpl")"
+      rm -f "$REACTOS_PREFIX/drive_c/windows/syswow64/$(basename "$cpl")"
+      ln -s "$cpl" "$REACTOS_PREFIX/drive_c/windows/syswow64/$(basename "$cpl")"
     done
   fi
   if [ -f "$REACTOS_SOURCE_DIR/mizu.msstyles" ]; then
@@ -238,9 +271,10 @@ create_reactos_shortcuts() {
      "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
   local cscript_rc=0
   # Suppress Wine debug spam; failure is logged by the caller via return value.
-  # mscoree=d prevents Wine Mono Installer (appwiz.cpl install_mono) from
-  # blocking the first login while it tries to download/install Mono.
-  WINEDEBUG=-all WINEDLLOVERRIDES='mscoree=d;winemenubuilder.exe=d;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b' wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
+  # The builtin shell libraries are forced here because shortcut creation must
+  # not pick up the ReactOS shell DLLs; the session-wide WINEDLLOVERRIDES
+  # already disables mscoree, winemenubuilder and the builtin explorer.
+  WINEDEBUG=-all WINEDLLOVERRIDES="$WINEDLLOVERRIDES;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b" wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
   rm -f "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
   # Wait for wineserver so that registry changes and shortcut writes are flushed
   # before Explorer starts.
@@ -283,7 +317,7 @@ splash_update 15
 
 if [ -x /usr/bin/cdex-taskbar-bridge ]; then
   rm -f "$BRIDGE_CONTROL" "$BRIDGE_LOG" 2>/dev/null || true
-  /usr/bin/cdex-taskbar-bridge --state "$BRIDGE_STATE" --control "$BRIDGE_CONTROL" --launch-request "$BRIDGE_LAUNCH_REQUEST" >"$BRIDGE_LOG" 2>&1 &
+  /usr/bin/cdex-taskbar-bridge --state "$BRIDGE_STATE" --control "$BRIDGE_CONTROL" --launch-request "$BRIDGE_LAUNCH_REQUEST" --buttons "$REACTOS_TASKBAR_BUTTONS" >"$BRIDGE_LOG" 2>&1 &
   bridge_pid=$!
   log_stage "bridge-started pid=$bridge_pid"
 fi
@@ -303,7 +337,7 @@ if prepare_reactos_payload; then
 
   if [ ! -f "$REACTOS_REGISTRY_MARKER" ]; then
     log_stage "registry-start"
-    configure_reactos_registry
+    configure_reactos_registry || log_stage "registry-failed"
     log_stage "registry-ready"
   else
     log_stage "registry-skip"
@@ -342,9 +376,6 @@ log_stage "shortcuts-start"
 create_reactos_shortcuts && log_stage "shortcuts-ready" || log_stage "shortcuts-failed"
 splash_update 90
 
-# mscoree=d keeps Wine Mono Installer from popping up when Explorer or a
-# Control Panel applet triggers a .NET/Mono dependency check.
-export WINEDLLOVERRIDES="mscoree=d;desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b;winemenubuilder.exe=d"
 # wine.inf (after Wine upgrades) and theme applications clobber the shell
 # and UI font settings; restore them on every login. The desktop background
 # color is set once on prefix creation and left to the user afterwards.
@@ -353,7 +384,7 @@ restore_saved_resolution
 log_stage "reactos-explorer-start"
 splash_update 95
 
-wine 'C:\reactos\reactos-explorer.exe' &
+WINEDLLOVERRIDES="$WINEDLLOVERRIDES;$REACTOS_DLL_OVERRIDES" wine 'C:\reactos\reactos-explorer.exe' &
 
 stop_splash
 wait "$wm_pid"
