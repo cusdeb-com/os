@@ -1,0 +1,29 @@
+Author: CusDeb OS Team
+Description: win32u: do not export the IDI_WINLOGO fallback icon.
+ get_window_icon_info() fell back to the default wine glass icon when a
+ window had no real icon yet, so the glass was written to _NET_WM_ICON at
+ window show time. openbox gets stuck on that placeholder and ignores the
+ later updates with the real icon. Without the fallback nothing is
+ exported until the application assigns its icon; the window manager
+ shows its own default icon meanwhile.
+Last-Modified: Wed, 12 Aug 2026 15:45:00 +0300
+
+--- a/src/dlls/win32u/window.c
++++ b/src/dlls/win32u/window.c
+@@ -2210,11 +2210,11 @@
+     if ((icon = get_icon_info( icon, ret ))) return icon;
+     if ((icon = get_icon_info( (HICON)send_message( hwnd, WM_GETICON, type, 0 ), ret ))) return icon;
+     if ((icon = get_icon_info( (HICON)get_class_long_ptr( hwnd, GCLP_HICON, FALSE ), ret ))) return icon;
+-    if (type == ICON_BIG)
+-    {
+-        icon = LoadImageW( 0, (const WCHAR *)IDI_WINLOGO, IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE );
+-        return get_icon_info( icon, ret );
+-    }
++    /* CusDeb: do not fall back to the default IDI_WINLOGO icon. Exporting it
++       to _NET_WM_ICON before the application assigns its real icon makes
++       openbox get stuck on the placeholder (wine glass) and never pick up
++       the later updates. With no fallback nothing is exported until a real
++       icon is set, and the window manager shows its own default icon. */
+     return NULL;
+ }
+ 

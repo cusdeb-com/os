@@ -1,0 +1,30 @@
+Author: CusDeb OS Team
+Description: explorer: only set shell window for shell-enabled desktops
+ The auto-spawned explorer.exe /desktop instance unconditionally called
+ SetShellWindow() on a visible window station, claiming the shell role
+ before the real shell (ReactOS explorer) starts. ReactOS explorer checks
+ GetShellWindow() at startup and exits immediately when a shell window
+ already exists, so the CDEX session ended up with no taskbar or desktop.
+ Gate the SetShellWindow() call behind enable_shell, which is only true
+ for named desktops with shell integration enabled (the magic "shell"
+ desktop or an explicit EnableShell registry setting), so the lazily
+ spawned /desktop instance keeps hosting the desktop window and display
+ driver without stealing the shell role.
+Last-Modified: Mon, 10 Aug 2026 18:40:00 +0300
+
+--- a/src/programs/explorer/desktop.c
++++ b/src/programs/explorer/desktop.c
+@@ -1320,8 +1320,11 @@
+     shellwindows_init();
+ 
+     /* Ideally we would set the window of an IShellView here, but we never
+-       actually create one, so the desktop window itself will have to do. */
+-    set_shell_window( hwnd );
++       actually create one, so the desktop window itself will have to do.
++       Only claim the shell window when shell integration is enabled for this
++       desktop: the auto-spawned /desktop instance must not steal the shell
++       role from a real shell such as the ReactOS explorer. */
++    if (enable_shell) set_shell_window( hwnd );
+ 
+     /* run the desktop message loop */
+     if (hwnd)

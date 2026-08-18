@@ -9,7 +9,7 @@ Last-Modified: Fri, 17 Jul 2026 13:39:56 +0300
 
 --- a/src/dlls/user32/dialog.c
 +++ b/src/dlls/user32/dialog.c
-@@ -491,6 +491,10 @@
+@@ -490,6 +490,10 @@
              /* We convert the size to pixels and then make it -ve.  This works
               * for both +ve and -ve template.pointSize */
              int pixels = MulDiv(template.pointSize, GetDeviceCaps(dc , LOGPIXELSY), 72);

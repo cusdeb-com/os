@@ -10,7 +10,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
 
 --- a/src/dlls/win32u/gdiobj.c
 +++ b/src/dlls/win32u/gdiobj.c
-@@ -157,7 +157,7 @@
+@@ -156,7 +156,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -19,7 +19,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -179,7 +179,7 @@
+@@ -178,7 +178,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -28,7 +28,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -201,7 +201,7 @@
+@@ -200,7 +200,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -37,7 +37,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -223,7 +223,7 @@
+@@ -222,7 +222,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -46,7 +46,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -245,7 +245,7 @@
+@@ -244,7 +244,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -55,7 +55,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -267,7 +267,7 @@
+@@ -266,7 +266,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -64,7 +64,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -289,7 +289,7 @@
+@@ -288,7 +288,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -73,7 +73,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -311,7 +311,7 @@
+@@ -310,7 +310,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -82,7 +82,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -333,7 +333,7 @@
+@@ -332,7 +332,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -91,7 +91,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -355,7 +355,7 @@
+@@ -354,7 +354,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -100,7 +100,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -377,7 +377,7 @@
+@@ -376,7 +376,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -109,7 +109,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -399,7 +399,7 @@
+@@ -398,7 +398,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -118,7 +118,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -421,7 +421,7 @@
+@@ -420,7 +420,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */
@@ -127,7 +127,7 @@ Last-Modified: Fri, 17 Jul 2026 13:38:11 +0300
             0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
             {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
          },
-@@ -443,7 +443,7 @@
+@@ -442,7 +442,7 @@
             {'C','o','u','r','i','e','r'}
          },
          { /* DefaultGuiFont */

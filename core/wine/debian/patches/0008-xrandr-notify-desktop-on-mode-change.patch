@@ -1,33 +1,49 @@
 Author: CusDeb OS Team
 Description: Notify the shell on display mode switch without deadlocking or
- stalling the caller.
- Refreshing the winex11 driver state is safe under the win32u display devices
- lock, but the WM_DISPLAYCHANGE notification itself is deferred until after the
- lock is released: display_mode_changed() re-enters lock_display_devices() and
- would deadlock on the non-recursive display_lock mutex. Externally driven
- (XRandR) and self-initiated (desk.cpl) switches are both broadcast to all
- top-level windows, including the ReactOS Explorer taskbar, and the broadcast
- uses send_notify_message so a mode switch never blocks for 2s per top-level
- window (previously desk.cpl froze and its window stopped repainting).
-Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
+ stalling the caller. Refreshing the winex11 driver state is safe under the
+ win32u display devices lock, but the WM_DISPLAYCHANGE notification itself is
+ deferred until after the lock is released: display_mode_changed() re-enters
+ lock_display_devices() and would deadlock on the non-recursive display_lock
+ mutex. Externally driven (XRandR) and self-initiated (desk.cpl) switches are
+ both broadcast to all top-level windows, including the ReactOS Explorer
+ taskbar, and the broadcast uses send_notify_message so a mode switch never
+ blocks for 2s per top-level window.
+Last-Modified: Mon, 04 Aug 2026 18:40:00 +0300
+
+--- a/src/dlls/win32u/sysparams.c
++++ b/src/dlls/win32u/sysparams.c
+@@ -4376,9 +4376,12 @@
+         NtUserClipCursor( NULL );
+         send_notify_message( get_desktop_window(), WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
+-        send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+-                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ),
+-                              SMTO_ABORTIFHUNG, 2000, FALSE );
++        /* CusDeb: use send_notify_message instead of a blocking
++         * send_message_timeout broadcast. With many top-level windows the
++         * 2s-per-window timeout stalls the caller for tens of seconds (e.g.
++         * desk.cpl hangs and its window stops repainting on mode change). */
++        send_notify_message( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
++                             MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
+         /* post clip_fullscreen_window request to the foreground window */
+         NtUserPostMessage( NtUserGetForegroundWindow(), WM_WINE_CLIPCURSOR, SET_CURSOR_FSCLIP, 0 );
+     }
 --- a/src/dlls/winex11.drv/xrandr.c
 +++ b/src/dlls/winex11.drv/xrandr.c
-@@ -406,6 +406,14 @@
+@@ -391,6 +391,12 @@
+     if (stat != RRSetConfigSuccess)
          return DISP_CHANGE_FAILED;
  
-     XFlush( gdi_display );
 +    {
 +        RECT rect;
-+        /* Do not call NtUserCallNoParam_DisplayModeChanged here: it re-enters
-+         * the win32u display devices lock. The notification is deferred to
-+         * display_mode_changed() after the lock is released. */
++        /* Update xinerama monitors for xinerama_get_fullscreen_monitors() */
 +        rect = get_host_primary_monitor_rect();
 +        xinerama_init( rect.right - rect.left, rect.bottom - rect.top );
 +    }
      return DISP_CHANGE_SUCCESSFUL;
  }
  
-@@ -1210,16 +1218,48 @@
+@@ -1221,16 +1227,48 @@
      free( monitors );
  }
  
@@ -79,7 +95,7 @@ Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
      return FALSE;
  }
  
-@@ -1667,7 +1707,13 @@
+@@ -1659,7 +1697,13 @@
      if (output_info)
          pXRRFreeOutputInfo( output_info );
      pXRRFreeScreenResources( screen_resources );
@@ -94,21 +110,3 @@ Last-Modified: Wed, 22 Jul 2026 16:20:00 +0300
      return ret;
  }
  
---- a/src/dlls/win32u/sysparams.c
-+++ b/src/dlls/win32u/sysparams.c
-@@ -3843,9 +3843,12 @@
-         NtUserClipCursor( NULL );
-         send_notify_message( get_desktop_window(), WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
-                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
--        send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
--                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ),
--                              SMTO_ABORTIFHUNG, 2000, FALSE );
-+        /* CusDeb: use send_notify_message instead of a blocking
-+         * send_message_timeout broadcast. With many top-level windows the
-+         * 2s-per-window timeout stalls the caller for tens of seconds (e.g.
-+         * desk.cpl hangs and its window stops repainting on mode change). */
-+        send_notify_message( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
-+                             MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ), FALSE );
-         /* post clip_fullscreen_window request to the foreground window */
-         NtUserPostMessage( NtUserGetForegroundWindow(), WM_WINE_CLIPCURSOR, SET_CURSOR_FSCLIP, 0 );
-     }
