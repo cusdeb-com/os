@@ -1,3 +1,35 @@
+wine (11.15.0-1cd) trixie; urgency=medium
+
+  * Bump vendored upstream Wine to 11.15 (upstream commit
+    2df1ee28039cf84776eb1421ed90bd154cebb65f).
+  * Refresh quilt patches against the new upstream tree; all patches apply
+    without rejects.
+  * debian/control: add mingw-w64 to Build-Depends so Wine is built with
+    real PE builtins instead of .so-based placeholders; without it 64-bit
+    applications fail to start in win64 prefixes ("wine: failed to open").
+  * debian/control: add missing runtime Depends for X libraries that
+    winex11 dlopens (libxxf86vm1, libxinerama1, libxcursor1, libxi6,
+    libxcomposite1, libxfixes3) and the amd64 libasound2t64 package, so
+    64-bit applications and X11 features work on minimal systems.
+  * Add 0009-desktop-shell-window-only-when-shell-enabled.patch: keep the
+    auto-spawned explorer.exe /desktop instance from claiming the shell
+    window, so the ReactOS explorer can take the shell role in CDEX
+    sessions instead of exiting at startup.
+  * Add 0010-win32u-no-winlogo-icon-fallback.patch: stop exporting the
+    IDI_WINLOGO placeholder to _NET_WM_ICON; openbox latched onto it and
+    ignored the real icon that arrived later.
+  * Add 0011-winex11-adopt-host-rect-on-maximize.patch: adopt the host
+    window rect while applying WM-driven maximize (window state lock held),
+    fixing openbox leaving the window oversized at its old position. The
+    adopted rect is accepted only when it intersects the virtual screen —
+    openbox's iconify animation slides the frame to/from an off-screen
+    point, and adopting that transient geometry made win32u withdraw the
+    window entirely (window and taskbar button vanished on Alt-Tab /
+    taskbar restore). The validation also covers the original
+    ConfigureNotify/PropertyNotify adoption path.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 18 Aug 2026 14:10:00 +0300
+
 wine (10.0.1-4cd) trixie; urgency=medium
 
   * debian/control: restore Priority: optional, dropped in 10.0.1-3cd,
