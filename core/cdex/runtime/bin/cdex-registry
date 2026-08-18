@@ -46,13 +46,13 @@ configure_reactos_registry() {
   # Winlogon\Shell, font substitutes and WindowMetrics live in
   # ensure_reactos_ui_settings below and are re-applied on every login because
   # wine.inf (after Wine upgrades) and theme applications clobber them.
-  # The desktop background color is different: wine.inf does not touch it, so
-  # we set it only once here (on prefix creation) and let the user change it
-  # afterwards. #5D81AB == "93 129 171".
-  reg_add "HKCU\\Control Panel\\Colors" /v Background /t REG_SZ /d "93 129 171" /f
-  # Offer the same color in the ChooseColor custom palette (16 COLORREF slots,
-  # little-endian 0x00BBGGRR) so the user can re-select it in desk.cpl.
-  reg_add "HKCU\\Control Panel\\Appearance" /v CustomColors /t REG_BINARY /d "5D81AB00$(printf 'FFFFFF00%.0s' $(seq 15))" /f
+  # Set the CusDeb brand wallpaper as the default desktop background
+  # only once, on prefix creation; the user can change it afterwards.
+  reg_add "HKCU\\Control Panel\\Desktop" /v Wallpaper /t REG_SZ /d "C:\\reactos\\Web\\Wallpaper\\CusDeb Race.bmp" /f
+  reg_add "HKCU\\Control Panel\\Desktop" /v WallpaperStyle /t REG_SZ /d "2" /f
+  reg_add "HKCU\\Control Panel\\Desktop" /v TileWallpaper /t REG_SZ /d "0" /f
+  # Add Web\Wallpaper as an extra wallpaper source for the desk.cpl list.
+  reg_add "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion" /v WallPaperDir /t REG_EXPAND_SZ /d "C:\\reactos\\Web\\Wallpaper" /f
   reg_add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer" /f
   reg_add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /f
   reg_add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v ListviewShadow /t REG_DWORD /d 1 /f

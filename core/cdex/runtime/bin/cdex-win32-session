@@ -260,7 +260,7 @@ else
   start_splash "Loading CDEX..."
 fi
 
-xsetroot -solid '#5D81AB' || true
+xsetroot -solid '#74A7E2' || true
 log_stage "x-root-ready"
 splash_update 5
 
