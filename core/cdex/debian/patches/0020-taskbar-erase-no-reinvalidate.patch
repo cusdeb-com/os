@@ -1,0 +1,30 @@
+Author: CusDeb OS Team
+Description: Break the themed taskbar repaint loop in CTaskSwitchWnd.
+ OnEraseBackground invalidated the TBSTYLE_TRANSPARENT task toolbar on
+ every erase; with an active msstyles theme the builtin comctl32 toolbar
+ forwards WM_ERASEBKGND to its parent on every WM_PAINT, so the invalidate
+ re-triggered the paint and closed an infinite repaint loop (100% CPU,
+ message queue never drained, WM_TIMER starvation froze the taskbar bridge
+ sync and the tray clock). Drop the InvalidateRect; the toolbar repaints
+ itself on its own invalidations and layout/theme changes go through
+ OnSize/UpdateButtonsSize.
+Last-Modified: Tue, 11 Aug 2026 16:34:45 +0300
+
+--- a/src/base/shell/explorer/taskswnd.cpp
++++ b/src/base/shell/explorer/taskswnd.cpp
+@@ -2354,7 +2354,14 @@
+         {
+             DrawThemeParentBackground(m_hWnd, hdc, &rect);
+         }
+-        m_TaskBar.InvalidateRect(NULL, FALSE);
++
++        /* Do NOT invalidate the task toolbar here. The toolbar is created
++           with TBSTYLE_TRANSPARENT, so the builtin comctl32 toolbar forwards
++           WM_ERASEBKGND to us on every WM_PAINT; invalidating it from this
++           handler re-triggers its paint and closes an infinite repaint loop
++           (100% CPU, message queue never drains, WM_TIMER starvation).
++           The toolbar still repaints itself on its own invalidations, and
++           layout/theme changes go through OnSize/UpdateButtonsSize. */
+ 
+         return TRUE;
+     }
