@@ -4,6 +4,18 @@
 
 reg_add() {
   WINEDEBUG=-all wine reg add "$@" >/dev/null
+
+  # The win64 prefix keeps separate 32/64-bit views of HKLM\Software
+  # (the 32-bit view lives under Wow6432Node). reactos-explorer is a
+  # 32-bit process and reads shell registrations only from the 32-bit
+  # view, so mirror the writes it depends on.
+  case "$1" in
+    HKLM\\Software\\Classes\\*|\
+    "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes"|\
+    "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"|\
+    HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Desktop\\NameSpace\\*)
+      WINEDEBUG=-all wine reg add "$@" /reg:32 >/dev/null ;;
+  esac
 }
 
 # Build a Windows LOGFONTW as a REG_BINARY value for wine reg add.
@@ -168,7 +180,12 @@ configure_reactos_registry() {
     reg_add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v SizeName /t REG_SZ /d "Normal Size" /f
   fi
 
-  WINEDEBUG=-all wine regsvr32 /s /i browseui.dll >/dev/null 2>&1 || true
+  # Register the ReactOS browseui.dll. It is a 32-bit native DLL living in
+  # syswow64, so run the 32-bit regsvr32 with the native DLL overrides
+  # scoped to this invocation (a global export would poison 64-bit Wine
+  # processes in the win64 prefix).
+  WINEDEBUG=-all WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b" \
+    wine 'C:\windows\syswow64\regsvr32.exe' /s /i browseui.dll >/dev/null 2>&1 || true
   printf '%s\n' "$(date -Is)" >"$REACTOS_REGISTRY_MARKER"
   WINEDEBUG=-all wineserver -k || true
 }
@@ -190,6 +207,11 @@ ensure_reactos_ui_settings() {
   # caption/message/status -17, menu/icon/smcaption -14.
   local logfont_tail="0000000000000000000000009001000000000000000001005500620075006E007400750020006400650072006900760061007400690076006500200043007500730044006500620000000000000000000000000000000000"
 
+  # reactos-explorer is a 32-bit process, so WOW64 redirects its HKLM\Software
+  # reads to Wow6432Node; reg_add mirrors this key there too (see its case
+  # statement above). Without it, a win64 prefix would leave wine.inf's
+  # default Shell="explorer.exe" in the 32-bit view and reactos-explorer
+  # would refuse the desktop role (opening a "My Documents" window instead).
   reg_add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" /v Shell /t REG_SZ /d "reactos-explorer.exe" /f
 
   reg_add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes" /v "MS Sans Serif" /t REG_SZ /d "$ui_font" /f
