@@ -1,3 +1,25 @@
+cdex (0.0.3-1cd) trixie; urgency=medium
+
+  * add the CusDeb brand wallpaper: the PNG master lives in
+    wallpapers/cusdeb-race.png and is converted to BMP at package build
+    time (the desktop paint path loads the wallpaper via LoadImageW,
+    which only supports BMP); installed to
+    usr/share/cusdeb/cdex/Web/Wallpaper/, following the Web\Wallpaper\
+    convention used by Windows.
+  * cdex-registry: set the new wallpaper as the default desktop
+    background (Wallpaper, WallpaperStyle, TileWallpaper) and drop the
+    custom #5D81AB background-color setup (Control Panel\Colors\Background
+    and the CustomColors palette entry), so that only the wallpaper is
+    installed by default.
+  * cdex-registry: also set HKLM\...\CurrentVersion\WallPaperDir to
+    C:\reactos\Web\Wallpaper (wine.inf never creates it), so that desk.cpl
+    scans the wallpaper directory when filling its background list.
+  * recolor the remaining #5D81AB brand backgrounds (the lightdm greeter
+    and the xsetroot X root color) to #74A7E2 to match the main
+    background of the new wallpaper.
+
+ -- Evgeny Golyshev <eugulixes@cusdeb.com>  Tue, 18 Aug 2026 18:59:59 +0300
+
 cdex (0.0.2-1cd) trixie; urgency=medium
 
   * cdex-taskbar-bridge: minimize a window when its taskbar button is

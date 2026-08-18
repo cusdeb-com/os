@@ -6,6 +6,7 @@ REACTOS_SRC_DIR := $(REPO_DIR)/src
 BUILD_DIR := $(REPO_DIR)/debian/.reactos-build/build
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(REPO_DIR)/debian/.font-build
+WALLPAPER_BUILD_DIR := $(REPO_DIR)/debian/.wallpaper-build
 CDEX_DIR := $(DESTDIR)/usr/share/cusdeb/cdex
 BIN_DIR := $(DESTDIR)/usr/bin
 FONT_DIR := $(DESTDIR)/usr/share/fonts/truetype/cusdeb-ubuntu
@@ -95,7 +96,7 @@ REACTOS_ARTIFACTS := \
 
 all: build
 
-build: $(OUT_DIR)/.build-stamp $(FONT_BUILD_DIR)/.fonts-stamp
+build: $(OUT_DIR)/.build-stamp $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
 
 $(OUT_DIR)/.build-stamp:
 	@echo "=== Configuring ReactOS ==="
@@ -119,6 +120,12 @@ $(FONT_BUILD_DIR)/.fonts-stamp: tools/gasp_patch.py tools/rename_font.py \
 		python3 tools/gasp_patch.py "fonts/ubuntu-font-family-0.83/Ubuntu-$$face.ttf" "$(FONT_BUILD_DIR)/Ubuntu-$$face-gasp.ttf"; \
 		python3 tools/rename_font.py "$(FONT_BUILD_DIR)/Ubuntu-$$face-gasp.ttf" "$(FONT_BUILD_DIR)/Ubuntu-$$face.ttf"; \
 	done
+	@touch "$@"
+
+$(WALLPAPER_BUILD_DIR)/.wallpaper-stamp: wallpapers/cusdeb-race.png
+	@echo "=== Converting the CusDeb wallpaper to BMP ==="
+	mkdir -p "$(WALLPAPER_BUILD_DIR)"
+	convert wallpapers/cusdeb-race.png -alpha off -type TrueColor "BMP3:$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp"
 	@touch "$@"
 
 install: build
@@ -202,5 +209,9 @@ install: build
 	install -m 644 fonts/ubuntu-font-family-0.83/LICENCE.txt \
 		fonts/ubuntu-font-family-0.83/copyright.txt "$(DOC_DIR)/"
 
+	@echo "=== Installing the default wallpaper ==="
+	install -D -m 644 "$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp" "$(CDEX_DIR)/Web/Wallpaper/CusDeb Race.bmp"
+
 clean:
-	rm -rf "$(REPO_DIR)/debian/.reactos-build" "$(REPO_DIR)/debian/.font-build"
+	rm -rf "$(REPO_DIR)/debian/.reactos-build" "$(REPO_DIR)/debian/.font-build" \
+		"$(REPO_DIR)/debian/.wallpaper-build"
