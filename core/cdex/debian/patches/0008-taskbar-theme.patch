@@ -6,13 +6,13 @@ Description: Change base/shell/explorer/taskswnd.cpp in several places. Disable 
  overlapping or stale metrics. Switch the taskbar image list from ILC_COLOR32 |
  ILC_MASK to ILC_COLOR24 | ILC_MASK to work around a Wine comctl32
  alpha-blending issue. Draw the taskbar background explicitly via
- DrawThemeBackground and invalidate the toolbar so inactive buttons become
- visible and ghost buttons are eliminated.
-Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+ DrawThemeBackground, without invalidating the toolbar afterward (which
+ closed an infinite repaint loop with a themed TBSTYLE_TRANSPARENT toolbar).
+Last-Modified: Tue, 18 Aug 2026 18:22:33 +0300
 
 --- a/src/base/shell/explorer/taskswnd.cpp
 +++ b/src/base/shell/explorer/taskswnd.cpp
-@@ -1799,6 +1799,11 @@ public:
+@@ -1509,6 +1509,11 @@
          else
              m_Theme = NULL;
  
@@ -24,7 +24,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          return TRUE;
      }
  
-@@ -1811,7 +1816,7 @@ public:
+@@ -1521,7 +1526,7 @@
  
          m_ImageList = ImageList_Create(GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CXSMICON : SM_CXICON),
                                         GetSystemMetrics(g_TaskbarSettings.bSmallIcons ? SM_CYSMICON : SM_CYICON),
@@ -33,7 +33,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
          m_TaskBar.SetImageList(m_ImageList);
  
          /* Set proper spacing between buttons */
-@@ -2339,7 +2344,17 @@ public:
+@@ -2032,7 +2037,16 @@
  
          RECT rect;
          GetClientRect(&rect);
@@ -48,7 +48,6 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 +        {
 +            DrawThemeParentBackground(m_hWnd, hdc, &rect);
 +        }
-+        m_TaskBar.InvalidateRect(NULL, FALSE);
  
          return TRUE;
      }
