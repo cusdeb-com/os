@@ -5,35 +5,35 @@ Origin: os-packages
 Label: os-packages
 Suite: stable
 Codename: stable
-Date: Wed, 19 Aug 2026 17:28:34 UTC
+Date: Wed, 19 Aug 2026 18:06:00 UTC
 Architectures: amd64
 Components: main
 Description: APT repository for os-packages
 MD5Sum:
- fa268f81b81c048e265ac268ead5d894 6279 main/binary-amd64/Packages
- 4d199fe3183c377e37a3528fc360209c 2376 main/binary-amd64/Packages.gz
+ f084e9bbd4428c2d6a393a86f9d9959b 6279 main/binary-amd64/Packages
+ 93615fd97dde6560cc9a540226a80066 2378 main/binary-amd64/Packages.gz
  330e20963f60f0576a6869ab1e9215e2 135 main/binary-amd64/Release
 SHA1:
- 7227aaa120f53a2357c750a781cc777054366808 6279 main/binary-amd64/Packages
- 23943db34cfff177acbad8edc683abfd9491a626 2376 main/binary-amd64/Packages.gz
+ 4bc98d59fcc26dc97f2ba0698d8a2a1cae2b417a 6279 main/binary-amd64/Packages
+ eaf1489afa62fac064af2dcd94ac7ff4e591682d 2378 main/binary-amd64/Packages.gz
  470bacbdd3b22caffed713e70278d91fbef591e3 135 main/binary-amd64/Release
 SHA256:
- 130da00df443895bf91d4e3d8b372f1aa4b53053099147de437463c0ff696747 6279 main/binary-amd64/Packages
- 143db7c18ba8b81df1adc6056dfd1c4c38ead8a6e1c62a83ea5af0ff59412480 2376 main/binary-amd64/Packages.gz
+ 6cefd8d5864c6437c01121d9b9a8633883afa65a1691e135604df87fa47adbd0 6279 main/binary-amd64/Packages
+ 939f30c839c38d8a9e266a19ecbf077015c8be1d60393720a84b0785b52a4bce 2378 main/binary-amd64/Packages.gz
  22a013ca4d7f477ccd0e1a33e91905d978f53bb9a86775b2e076455713ae495d 135 main/binary-amd64/Release
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEEO8HYiwWv7DZG3gH5/UxAsw+/nEAFAmqF58IACgkQ/UxAsw+/
-nEDDTg//TGrPZ/S2VnLb3OzJHT53XG3xc3qCPc09bXy+nCfwNOHeiADZLS0WqQ0Q
-yRTx6o1KhS2VwjThfT8ZD7D0E5cV+YPUZSzyHOjE1DMp5oQipvSEjEUHcpX5TtIU
-yczhM1+28PgLkQBnNuZapjQ7XBbrS2zkU/cVbi6n9EV7hdHq1wFYApAlgCjC6ZsJ
-T0xNdiN0vWnNrHg0kBvoG01UHV+aJVS/bsOsIZzz7NgQT2t4KQr4jw9YO/db0fY7
-1f1OllNJpN457jBQka2g5vgH8EEkkI+2RVCdTtR2UjGmYPRHyw31FiDKeLJSNmLv
-x9X1UFeGk4424DOJDnNLkE4eYo1g3FCbMxWhoCo+5fTIehZ5r4IefBEm9lUH4iZ5
-3LfmeIFfAw21WPPJXcnq0N1m0XChvK/y6aYp/xPN1ericdvan0Z6PIzAWb3GFFBR
-BxlvdtHlimXkqGiBAI+jfGxWCw7R7nXpmY7k5yL1ZT6oAEO3rySs2RaQYzkiyvx5
-Tn8mbncAtKtD9o92rYDaXGbGyAMSBxqt3BMVvYpcBEtYmFrjH3aUYqjWBk+ELWkr
-WgUapIAA4hyzKpuGSS+r4v0bAAtC6UVg0LXQC9AHHZAFNSlAKvmz9NKkYO/AkeVe
-fNYiU3UPxtU7jPhFbk03rgLfcV8Yv/F4xACjSrOPRaHP2F6h3mo=
-=51po
+iQIzBAEBCgAdFiEEO8HYiwWv7DZG3gH5/UxAsw+/nEAFAmqF8IgACgkQ/UxAsw+/
+nEBVHxAAtqjAbPHw/DynOpcqGo5baSuhb3s0Zk/QyeeskGg4VzE1T1N2HJoWuCbO
+0FWwSpPjdIcDXMFD1cXcL2vtjvvPwLs9a7ToPSqbLrYsHl9DdOcumJWvw+T2mKlQ
+bIcTufomR0UClU20OOJ/IjinSspXQL3nbw+JBujZXzBNy1LG76oHUfr1q8NxnmlE
+7QgN0nIF2xdSpA4veFiXIBpOk5xkH9UCzCMJkR9We34a73lbFKn+V1Tu+pYJIOfR
+vwRsalZOSHzeUE/cpDi/kj9JZV5zB/U5SwCnxt6ej0Z7VDCdvnmiMPd6UYBz1FTh
+Ol85EawD6UVVZ9ZYrL3bbMkWFyBuLu1HNtJZS52kl5VbwHR7qVKpH+M1IZv26bTG
+pLhGiFixyWaFV4/H4rRTQvb/zHCtDTZU3x2d0a+DcADycfbKMuHwBRTjdc7bbWyS
+YO4c7/3XY39AnGEyYWIa8p3luGvUd6GWQzy8z/+u3mUdWtuhtic6dK0EszWODir+
+HtU2ebLaWqpn70mRidCLeZQ1LiGnDtQp4P6rEo7wS917USFPfLdjQ7Nocpp17NGj
+8BE9/8pZb3jfCKhKlQUFEtJpztYdXDKTTf6BjzpZRLaIUILayM2qhcItcrWcjujj
+1ciIBfI6Pr82okHhZOEVZNy2ANLKOzqXAndPjW25KKoaJ0/Ud0w=
+=aKPh
 -----END PGP SIGNATURE-----
