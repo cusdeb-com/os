@@ -1,3 +1,13 @@
+cdex (0.0.6-1cd) trixie; urgency=medium
+
+  * debian/patches: add 0100-shelllink-openfilelocation-filebrowser.patch to fix
+    "Open File Location" on shell shortcuts: launch
+    C:\reactos\filebrowser.exe with a quoted /select path directly instead
+    of a bare "explorer.exe", which routed through the desktop IPC and
+    opened an unusable in-shell browser window (or nothing at all).
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 03 Sep 2026 13:08:25 +0300
+
 cdex (0.0.5-1cd) trixie; urgency=medium
 
   * runtime/bin: migrate the CDEX session to a win64 Wine prefix, matching
