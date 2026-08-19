@@ -1,0 +1,23 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Fix "Open File Location" for shell shortcuts.
+ DoOpenFileLocation ran a bare "explorer.exe" with an unquoted /select
+ path, which in the CDEX session opens an unusable in-shell browser
+ window. Launch C:\reactos\filebrowser.exe with a quoted path directly.
+Last-Modified: Wed, 19 Aug 2026 20:04:02 +0300
+--- a/src/dll/win32/shell32/CShellLink.cpp
++++ b/src/dll/win32/shell32/CShellLink.cpp
+@@ -2576,12 +2576,11 @@
+ 
+ HRESULT CShellLink::DoOpenFileLocation()
+ {
+-    // TODO: SHOpenFolderAndSelectItems
+     WCHAR szParams[MAX_PATH + 64];
+-    StringCbPrintfW(szParams, sizeof(szParams), L"/select,%s", m_sPath);
++    StringCbPrintfW(szParams, sizeof(szParams), L"/select,\"%s\"", m_sPath);
+ 
+     INT_PTR ret;
+-    ret = reinterpret_cast<INT_PTR>(ShellExecuteW(NULL, NULL, L"explorer.exe", szParams,
++    ret = reinterpret_cast<INT_PTR>(ShellExecuteW(NULL, NULL, L"C:\\reactos\\filebrowser.exe", szParams,
+                                                   NULL, m_Header.nShowCommand));
+     if (ret <= 32)
+     {
