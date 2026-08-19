@@ -1,17 +1,17 @@
 Package: cdex-base
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 84833
+Installed-Size: 102165
 Depends: binfmt-support, dbus-x11, fontconfig, gtk2-engines-pixbuf, libnss-myhostname, libnss-resolve, lightdm, lightdm-gtk-greeter, openbox, polkitd, python3, spice-vdagent, systemd-resolved, wine (>= 10.0.1-1cd), wmctrl, x11-utils, x11-xserver-utils, xdotool, xorg, xterm, yad
 Priority: optional
 Section: cdex
-Filename: pool/main/c/cdex/cdex-base_0.0.2-1cd_amd64.deb
-Size: 15066484
-SHA256: 3a2d41e995083f9a641eb0dccd1e2bad1dce56a4078cad45f912ac8c7d97d365
-SHA1: ab08499abd04c0745d6ea138ccda2f34cf4c6a01
-MD5sum: 3c3fee2bf8834e77750215239c2276ba
+Filename: pool/main/c/cdex/cdex-base_0.0.3-1cd_amd64.deb
+Size: 16543728
+SHA256: 677277798bfe2ac6343ce7899c604194aeae697295ed9dbd39da9f47e10e1293
+SHA1: 16df96d02406a752f749de5e54de7b676eca8527
+MD5sum: 78a52e628de6d350ae15aa37d1a45e48
 Description: CDEX, a Windows-like desktop environment (base)
  CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
  experience. It is built on Win32 and uses the PE binary format, but is
@@ -19,18 +19,18 @@ Description: CDEX, a Windows-like desktop environment (base)
 
 Package: cdex-calc
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 556
+Installed-Size: 557
 Depends: cdex-base
 Priority: optional
 Section: cdex
-Filename: pool/main/c/cdex/cdex-calc_0.0.2-1cd_amd64.deb
-Size: 86288
-SHA256: 4b48029b98155118a1d7f64f3e9d3350795dc1331d7a9c2358536486061a3f68
-SHA1: 20af053061ea10e4dcb5ddab86b3aa107acbb11f
-MD5sum: 09390c6e4aa80fad9bba0a2c4ec698a0
+Filename: pool/main/c/cdex/cdex-calc_0.0.3-1cd_amd64.deb
+Size: 86688
+SHA256: e256dbafa4df70ffd245cd6a7a0f40ad3283e116dfcccee83a83402b669fecb0
+SHA1: 2689299dc27d1695f37e0ebaa7d40cec88ccd8fc
+MD5sum: 4a5cf31cf9a85c47c7abb5bdb37e7662
 Description: Simple and scientific calculator
  Calc is a calculator application. It provides:
  .
@@ -43,18 +43,18 @@ Description: Simple and scientific calculator
 
 Package: cdex-full
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 16
+Installed-Size: 17
 Depends: cdex-base, cdex-calc, mspaint, spider, winmine
 Priority: optional
 Section: metapackages
-Filename: pool/main/c/cdex/cdex-full_0.0.2-1cd_amd64.deb
-Size: 5700
-SHA256: 8aee48c8767160042069088714f4b9b2bb57955f474e6b3949d6a6f3e5a905e5
-SHA1: 7b18bac049ed4ebb52b3dafa9dedaa96365dbe73
-MD5sum: 014068dbf4db7ffafd7bda24fdca444e
+Filename: pool/main/c/cdex/cdex-full_0.0.3-1cd_amd64.deb
+Size: 6168
+SHA256: 27ab2a193222a97efe5455d5ebaf008f7b08f58d30ef4b9993571b7885375552
+SHA1: 123706af1b53806103272fbccdd2907219d47daf
+MD5sum: 28259d616e9b1c0e28e1d678cd6fb2cd
 Description: Meta-package for CDEX, a Windows-like desktop environment
  CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
  experience. It is built on Win32 and uses the PE binary format, but is
@@ -65,18 +65,18 @@ Description: Meta-package for CDEX, a Windows-like desktop environment
 
 Package: mspaint
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 1032
+Installed-Size: 1033
 Depends: cdex-base
 Priority: optional
 Section: cdex
-Filename: pool/main/c/cdex/mspaint_0.0.2-1cd_amd64.deb
-Size: 237908
-SHA256: 39c578bfdf80c9eccccbfb2166cf7655d609c9a518cd3dac0d5b204a75fdab42
-SHA1: 188fa107338a306d3dc1917662542805a55a8548
-MD5sum: 5702de326825c05818aef0590f1ecb72
+Filename: pool/main/c/cdex/mspaint_0.0.3-1cd_amd64.deb
+Size: 237584
+SHA256: 7aed926f91981719fa946962964535c2db672ba2fcf676edf8a421dd96d19e50
+SHA1: 01ec125ab1c6f3d55187fc27794e747bd6e25099
+MD5sum: 14ed08fea4aeb5e90e49763f48c308f8
 Description: Simple image editor and drawing application
  Mspaint is a free and open-source reimplementation of MS Paint. It aims to
  be easy to use, offering just enough functionality for everyday tasks such
@@ -86,18 +86,18 @@ Description: Simple image editor and drawing application
 
 Package: spider
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 321
+Installed-Size: 322
 Depends: cdex-base
 Priority: optional
 Section: cdex
-Filename: pool/main/c/cdex/spider_0.0.2-1cd_amd64.deb
-Size: 95732
-SHA256: 4b2b1e995ba613dced8b0707378da566c3ee3ef764306a6758971bc0e9f30010
-SHA1: f1fb07348f128b055ea89e55b0b2805b25131176
-MD5sum: 23a8718888b890efc9130b9862182c98
+Filename: pool/main/c/cdex/spider_0.0.3-1cd_amd64.deb
+Size: 96236
+SHA256: b453a31427955e596bc3c8ea1f184fc57b88864705baa97459bab2a5962e6c60
+SHA1: aa3cd40462afe336275b3ad222f75df3a082b8a7
+MD5sum: 36f585784072bc051d92837ab45d70c2
 Description: Spider solitaire card game
  Spider is a solitaire card game played with two decks. The goal is to arrange
  all cards into descending same-suit sequences from King to Ace.
@@ -131,18 +131,18 @@ Description: Free and open-source Win32 implementation (CusDeb build)
 
 Package: winmine
 Source: cdex
-Version: 0.0.2-1cd
+Version: 0.0.3-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 1169
+Installed-Size: 1170
 Depends: cdex-base
 Priority: optional
 Section: cdex
-Filename: pool/main/c/cdex/winmine_0.0.2-1cd_amd64.deb
-Size: 744520
-SHA256: fc55e463dc9912473d7d6f0e45a72d1874fabdf43493f24fe6c8ea5421ba2177
-SHA1: 22982af2cb0f70cd12ee4c8bf95b01ccaf693746
-MD5sum: a8424c7b696a6f2ea2b5fa2aa6238b2a
+Filename: pool/main/c/cdex/winmine_0.0.3-1cd_amd64.deb
+Size: 745020
+SHA256: 646cab78bcd1030a1acbc90ebd4218c574b0026538127f77d7cb916383427c78
+SHA1: bb6e4b35f20b31d2a2c6403baf0748f974ab0ba7
+MD5sum: d9814604882af3b7acbf73b759a03d7c
 Description: Minesweeper game
  Winmine is a game where the player finds hidden mines without setting them
  off.
