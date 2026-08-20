@@ -1,3 +1,13 @@
+cdex (0.0.4-1cd) trixie; urgency=medium
+
+  * debian/patches: add 0100-shelllink-openfilelocation-filebrowser.patch to fix
+    "Open File Location" on shell shortcuts: launch
+    C:\reactos\filebrowser.exe with a quoted /select path directly instead
+    of a bare "explorer.exe", which routed through the desktop IPC and
+    opened an unusable in-shell browser window (or nothing at all).
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 19 Aug 2026 21:18:10 +0300
+
 cdex (0.0.3-2cd) trixie; urgency=medium
 
   * cdex-win32-session: stop trying to recreate the reactos-explorer.exe
