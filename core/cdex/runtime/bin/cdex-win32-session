@@ -198,6 +198,14 @@ prepare_reactos_payload() {
     done
   fi
 
+  # Expose the ReactOS Marlett font so the shell's owner-drawn menus and
+  # frame controls use ReactOS glyphs instead of Wine's built-in Marlett.
+  if [ -f "$REACTOS_SOURCE_DIR/fonts/Marlett.ttf" ]; then
+    install -d "$REACTOS_PREFIX/drive_c/windows/Fonts"
+    rm -f "$REACTOS_PREFIX/drive_c/windows/Fonts/Marlett.ttf"
+    ln -s "$REACTOS_SOURCE_DIR/fonts/Marlett.ttf" "$REACTOS_PREFIX/drive_c/windows/Fonts/Marlett.ttf"
+  fi
+
   # Ensure the Wine prefix sees a stable C:\cusdeb\launch-request path for
   # shortcuts that ask the taskbar bridge to start native Linux apps.
   install -d "$REACTOS_PREFIX/drive_c/cusdeb"

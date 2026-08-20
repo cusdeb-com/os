@@ -1,3 +1,13 @@
+cdex (0.0.4-1cd) trixie; urgency=medium
+
+  * Ship the ReactOS Marlett.ttf font in usr/share/cusdeb/cdex/fonts/ and
+    symlink it into the Wine prefix at C:\windows\Fonts. The ReactOS shell
+    draws Start Menu submenu arrows and other frame controls via Marlett
+    glyphs; without the ReactOS font Wine's built-in Marlett renders glyph
+    '8' as a thin "×" instead of a right-pointing arrow.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 20 Aug 2026 18:20:51 +0300
+
 cdex (0.0.3-2cd) trixie; urgency=medium
 
   * cdex-win32-session: stop trying to recreate the reactos-explorer.exe

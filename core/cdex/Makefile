@@ -209,6 +209,9 @@ install: build
 	@echo "=== Installing the default wallpaper ==="
 	install -D -m 644 "$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp" "$(CDEX_DIR)/Web/Wallpaper/CusDeb Race.bmp"
 
+	@echo "=== Installing ReactOS Marlett font ==="
+	install -D -m 644 "$(REACTOS_SRC_DIR)/media/fonts/Marlett.ttf" "$(CDEX_DIR)/fonts/Marlett.ttf"
+
 clean:
 	rm -rf "$(REPO_DIR)/debian/.reactos-build" "$(REPO_DIR)/debian/.font-build" \
 		"$(REPO_DIR)/debian/.wallpaper-build"

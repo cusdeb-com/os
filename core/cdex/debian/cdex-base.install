@@ -7,6 +7,7 @@ usr/share/cusdeb/cdex/*.dll
 usr/share/cusdeb/cdex/*.cpl
 usr/share/cusdeb/cdex/mizu.msstyles
 usr/share/cusdeb/cdex/Web/Wallpaper
+usr/share/cusdeb/cdex/fonts
 usr/bin
 usr/share/xsessions
 usr/share/lightdm
