@@ -1,3 +1,12 @@
+cdex (0.0.4-1cd) trixie; urgency=medium
+
+  * Open Start Menu folder items (My Documents, My Pictures) via
+    C:\reactos\filebrowser.exe instead of relying on ShellExecuteW with a
+    NULL verb, which can resolve to the desktop explorer and leave the
+    directory unopened.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 20 Aug 2026 15:30:00 +0300
+
 cdex (0.0.3-2cd) trixie; urgency=medium
 
   * cdex-win32-session: stop trying to recreate the reactos-explorer.exe
