@@ -2,3 +2,4 @@
 /assets-cache
 *.deb
 .idea/
+.worktrees/
