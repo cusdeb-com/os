@@ -1,0 +1,59 @@
+Author: Artem Lavrukhin
+Description: Open Start Menu folder items via filebrowser.exe.
+ ShellExecuteW with a NULL/default verb on a folder path is unreliable in the
+ CDEX session: it may resolve to the desktop explorer instead of the standalone
+ filebrowser, so the directory never appears. Launch C:\reactos\filebrowser.exe
+ /N,"<path>" explicitly for My Documents and My Pictures, matching the approach
+ already used for folders opened from Search results (patch 0019).
+Last-Modified: Wed, 20 Aug 2026 15:30:00 +0300
+
+--- a/src/dll/win32/shell32/shellmenu/CStartMenu.cpp
++++ b/src/dll/win32/shell32/shellmenu/CStartMenu.cpp
+@@ -20,6 +20,7 @@
+ #include "shellmenu.h"
+ 
+ #include "CMergedFolder.h"
++#include <strsafe.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(CStartMenu);
+ 
+@@ -395,6 +396,22 @@
+         return S_FALSE;
+     }
+ 
++    static void OpenFolderInFileBrowser(LPCWSTR pszPath)
++    {
++        static const WCHAR szBrowser[] = L"C:\\reactos\\filebrowser.exe";
++        WCHAR szParams[MAX_PATH + 16];
++
++        if (FAILED(StringCchPrintfW(szParams, _countof(szParams), L"/N,\"%s\"", pszPath)))
++        {
++            ERR("StringCchPrintfW failed for path %s\n", debugstr_w(pszPath));
++            return;
++        }
++
++        HINSTANCE hInst = ShellExecuteW(NULL, NULL, szBrowser, szParams, NULL, SW_SHOWNORMAL);
++        if ((INT_PTR)hInst <= 32)
++            ERR("ShellExecuteW(filebrowser.exe /N,\"%s\") failed, hInstApp=%p\n", debugstr_w(pszPath), hInst);
++    }
++
+     HRESULT OnExec(LPSMDATA psmd)
+     {
+         WCHAR szPath[MAX_PATH];
+@@ -411,14 +428,14 @@
+         else if (psmd->uId == IDM_MYDOCUMENTS)
+         {
+             if (SHGetSpecialFolderPathW(NULL, szPath, CSIDL_PERSONAL, FALSE))
+-                ShellExecuteW(NULL, NULL, szPath, NULL, NULL, SW_SHOWNORMAL);
++                OpenFolderInFileBrowser(szPath);
+             else
+                 ERR("SHGetSpecialFolderPathW failed\n");
+         }
+         else if (psmd->uId == IDM_MYPICTURES)
+         {
+             if (SHGetSpecialFolderPathW(NULL, szPath, CSIDL_MYPICTURES, FALSE))
+-                ShellExecuteW(NULL, NULL, szPath, NULL, NULL, SW_SHOWNORMAL);
++                OpenFolderInFileBrowser(szPath);
+             else
+                 ERR("SHGetSpecialFolderPathW failed\n");
+         }
