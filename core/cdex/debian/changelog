@@ -1,3 +1,12 @@
+cdex (0.0.8-1cd) trixie; urgency=high
+
+  * cdex-shortcut-helper: fix a local root privilege escalation. Root
+    wrote files directly into each user's ~/.wine, letting a planted
+    symlink redirect that write anywhere on disk. Those operations now
+    run as the user via runuser.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 03 Sep 2026 20:36:26 +0300
+
 cdex (0.0.7-1cd) trixie; urgency=medium
 
   * runtime/themes/Chicago95, runtime/icons/SE98 and
