@@ -21,8 +21,9 @@ Usage: ${0##*/} create <desktop-rel> <programs-rel> <target> <workdir> <desc> [i
   desc          Shortcut description.
   icon          Optional IconLocation (e.g. "C:\\windows\\system32\\shell32.dll,15").
 
-The helper loops over /root and /home/*, skipping users without a ~/.wine
-prefix.  Shortcut creation runs as the target user so Wine registry access
+The helper loops over /home/*, skipping users without a ~/.wine prefix
+(the root account is skipped deliberately: Wine must not run as root).
+Shortcut creation runs as the target user so Wine registry access
 and file ownership are correct.  Failures during the Wine call are not
 fatal: shortcuts will be recreated on the next login by cdex-win32-session.
 EOF
@@ -68,14 +69,12 @@ run_jscript_for_user() {
     js_basename="create-one-shortcut-$$.js"
     js_path="$user_home/.wine/drive_c/$js_basename"
 
-    install -d "$user_home/.wine/drive_c"
-    printf '%s\n' "$js_code" > "$js_path"
-    chmod 644 "$js_path"
-    chown "$user:" "$js_path"
+    runuser -u "$user" -- mkdir -p "$user_home/.wine/drive_c"
+    printf '%s\n' "$js_code" | runuser -u "$user" -- sh -c 'cat > "$1"' sh "$js_path"
 
     shift 3
     runuser_wine_env "$user" "$uid" wine cscript.exe //nologo "C:\\$js_basename" "$@"
-    rm -f "$js_path"
+    runuser -u "$user" -- rm -f "$js_path"
 }
 
 # Create one shortcut (Desktop or Programs) inside every existing Wine prefix.
@@ -109,7 +108,7 @@ link.Description = desc;
 if (icon) link.IconLocation = icon;
 link.Save();'
 
-    for user_home in /root /home/*; do
+    for user_home in /home/*; do
         [ -d "$user_home" ] || continue
         [ -d "$user_home/.wine" ] || continue
         local user uid
@@ -131,7 +130,7 @@ remove_one() {
     local rel_linux
     rel_linux=$(printf '%s' "$rel" | tr '\\' '/')
 
-    for user_home in /root /home/*; do
+    for user_home in /home/*; do
         [ -d "$user_home" ] || continue
         [ -d "$user_home/.wine" ] || continue
         local user
@@ -149,7 +148,7 @@ remove_one() {
                 continue ;;
         esac
 
-        rm -f "$base_dir/${rel_linux}.lnk"
+        runuser -u "$user" -- rm -f "$base_dir/${rel_linux}.lnk"
     done
 }
 
