@@ -8,7 +8,7 @@
 @ stub MagGetWindowFilterList
 @ stub MagGetWindowSource
 @ stub MagGetWindowTransform
-@ stub MagInitialize
+@ stdcall MagInitialize()
 @ stub MagSetColorEffect
 @ stub MagSetFullscreenColorEffect
 @ stub MagSetFullscreenTransform
@@ -18,4 +18,4 @@
 @ stub MagSetWindowSource
 @ stub MagSetWindowTransform
 @ stub MagShowSystemCursor
-@ stub MagUninitialize
+@ stdcall MagUninitialize()

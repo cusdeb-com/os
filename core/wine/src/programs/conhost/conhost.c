@@ -26,6 +26,7 @@
 
 #include "wine/server.h"
 #include "wine/debug.h"
+#include "mmsystem.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(console);
 
@@ -774,6 +775,45 @@ static void edit_line_find_in_history( struct console *console )
     while (ctx->history_index != start_pos);
 }
 
+static void edit_line_copy_from_history( struct console *console, int copycount )
+{
+    if (console->edit_line.history_index)
+    {
+        struct edit_line *ctx = &console->edit_line;
+        unsigned int index = ctx->history_index - 1;
+        WCHAR *line = console->history[index]->text;
+        unsigned int len = console->history[index]->len / sizeof(WCHAR);
+
+        if (len > ctx->cursor)
+        {
+            unsigned int ccount = (copycount > 0) ? copycount : len - ctx->cursor;
+
+            if (ctx->cursor == ctx->len)
+            {
+                /* Insert new string. */
+                if (edit_line_grow(console, ccount))
+                {
+                    edit_line_insert( console, &line[ctx->cursor], ccount );
+                }
+            }
+            else
+            {
+                ctx->cursor += ccount;
+            }
+        }
+    }
+}
+
+static void edit_line_copy_one_from_history( struct console *console )
+{
+    edit_line_copy_from_history(console, 1);
+}
+
+static void edit_line_copy_all_from_history( struct console *console )
+{
+    edit_line_copy_from_history(console, -1);
+}
+
 static void edit_line_move_left( struct console *console )
 {
     if (console->edit_line.cursor > 0) console->edit_line.cursor--;
@@ -941,6 +981,13 @@ static void edit_line_kill_prefix( struct console *console )
         edit_line_delete( console, 0, ctx->cursor );
         ctx->cursor = 0;
     }
+}
+
+static void edit_line_clear( struct console *console )
+{
+    struct edit_line *ctx = &console->edit_line;
+    edit_line_delete( console, 0, ctx->len );
+    ctx->cursor = 0;
 }
 
 static void edit_line_kill_marked_zone( struct console *console )
@@ -1130,14 +1177,17 @@ static const struct edit_line_key_map emacs_key_map[] =
 
 static const struct edit_line_key_entry win32_std_key_map[] =
 {
-    { VK_LEFT,   edit_line_move_left         },
-    { VK_RIGHT,  edit_line_move_right        },
-    { VK_HOME,   edit_line_move_home         },
-    { VK_END,    edit_line_move_end          },
-    { VK_UP,     edit_line_move_to_prev_hist },
-    { VK_DOWN,   edit_line_move_to_next_hist },
-    { VK_INSERT, edit_line_toggle_insert     },
-    { VK_F8,     edit_line_find_in_history   },
+    { VK_LEFT,   edit_line_move_left             },
+    { VK_RIGHT,  edit_line_move_right            },
+    { VK_HOME,   edit_line_move_home             },
+    { VK_END,    edit_line_move_end              },
+    { VK_UP,     edit_line_move_to_prev_hist     },
+    { VK_DOWN,   edit_line_move_to_next_hist     },
+    { VK_INSERT, edit_line_toggle_insert         },
+    { VK_F8,     edit_line_find_in_history       },
+    { VK_ESCAPE, edit_line_clear                 },
+    { VK_F1,     edit_line_copy_one_from_history },
+    { VK_F3,     edit_line_copy_all_from_history },
     { 0 }
 };
 
@@ -1468,7 +1518,8 @@ static BOOL map_to_ctrlevent( struct console *console, const INPUT_RECORD *recor
 {
     if (record->EventType == KEY_EVENT)
     {
-        if (record->Event.KeyEvent.uChar.UnicodeChar == 'C' - 64 &&
+        if ((console->mode & ENABLE_PROCESSED_INPUT) &&
+            record->Event.KeyEvent.uChar.UnicodeChar == 'C' - 64 &&
             !(record->Event.KeyEvent.dwControlKeyState & ENHANCED_KEY))
         {
             *event = CTRL_C_EVENT;
@@ -1490,6 +1541,8 @@ static BOOL map_to_ctrlevent( struct console *console, const INPUT_RECORD *recor
 NTSTATUS write_console_input( struct console *console, const INPUT_RECORD *records,
                               unsigned int count, BOOL flush )
 {
+    unsigned int i;
+
     TRACE( "%u\n", count );
 
     if (!count) return STATUS_SUCCESS;
@@ -1502,35 +1555,27 @@ NTSTATUS write_console_input( struct console *console, const INPUT_RECORD *recor
         console->record_size = console->record_size * 2 + count;
     }
 
-    if (console->mode & ENABLE_PROCESSED_INPUT)
+    for (i = 0; i < count; i++)
     {
-        unsigned int i;
-        for (i = 0; i < count; i++)
+        unsigned int event;
+
+        if (map_to_ctrlevent( console, &records[i], &event ))
         {
-            unsigned int event;
-
-            if (map_to_ctrlevent( console, &records[i], &event ))
+            if (records[i].Event.KeyEvent.bKeyDown)
             {
-                if (records[i].Event.KeyEvent.bKeyDown)
-                {
-                    struct condrv_ctrl_event ctrl_event;
-                    IO_STATUS_BLOCK io;
+                struct condrv_ctrl_event ctrl_event;
+                IO_STATUS_BLOCK io;
 
-                    ctrl_event.event = event;
-                    ctrl_event.group_id = 0;
-                    NtDeviceIoControlFile( console->server, NULL, NULL, NULL, &io, IOCTL_CONDRV_CTRL_EVENT,
-                                           &ctrl_event, sizeof(ctrl_event), NULL, 0 );
-                }
+                ctrl_event.event = event;
+                ctrl_event.group_id = 0;
+                NtDeviceIoControlFile( console->server, NULL, NULL, NULL, &io, IOCTL_CONDRV_CTRL_EVENT,
+                                       &ctrl_event, sizeof(ctrl_event), NULL, 0 );
             }
-            else
-                console->records[console->record_count++] = records[i];
         }
+        else
+            console->records[console->record_count++] = records[i];
     }
-    else
-    {
-        memcpy( console->records + console->record_count, records, count * sizeof(INPUT_RECORD) );
-        console->record_count += count;
-    }
+
     return flush ? process_console_input( console ) : STATUS_SUCCESS;
 }
 
@@ -1765,7 +1810,7 @@ static DWORD WINAPI tty_input( void *param )
             switch (ch)
             {
             case 3: /* end of text */
-                if (console->is_unix && (console->mode & ENABLE_PROCESSED_INPUT))
+                if (console->is_unix)
                 {
                     key_press( console, ch, 'C', LEFT_CTRL_PRESSED );
                     break;
@@ -2059,6 +2104,20 @@ static NTSTATUS set_output_info( struct screen_buffer *screen_buffer,
     return STATUS_SUCCESS;
 }
 
+static void play_console_beep( struct console *console )
+{
+    if (console->is_unix)
+    {
+        tty_write( console, "\a", 1 );
+        tty_flush( console );
+    }
+    else
+    {
+        if (!PlaySoundW( L"console_beep", GetModuleHandleW( NULL ), SND_RESOURCE | SND_ASYNC ))
+            ERR( "Failed to play console beep using PlaySoundW\n" );
+    }
+}
+
 static NTSTATUS write_console( struct screen_buffer *screen_buffer, const WCHAR *buffer, size_t len )
 {
     RECT update_rect;
@@ -2094,7 +2153,7 @@ static NTSTATUS write_console( struct screen_buffer *screen_buffer, const WCHAR 
                 }
                 continue;
             case '\a':
-                FIXME( "beep\n" );
+                play_console_beep( screen_buffer->console );
                 continue;
             case '\r':
                 screen_buffer->cursor_x = 0;
@@ -2762,11 +2821,7 @@ static NTSTATUS console_input_ioctl( struct console *console, unsigned int code,
 
     case IOCTL_CONDRV_BEEP:
         if (in_size || *out_size) return STATUS_INVALID_PARAMETER;
-        if (console->is_unix)
-        {
-            tty_write( console, "\a", 1 );
-            tty_sync( console );
-        }
+        play_console_beep( console );
         return STATUS_SUCCESS;
 
     case IOCTL_CONDRV_FLUSH:
@@ -2941,6 +2996,8 @@ static void teardown( struct console *console )
         set_tty_attr( console, empty_char_info.attr );
         tty_flush( console );
     }
+    if (console->win)
+        teardown_window( console );
 }
 
 int __cdecl wmain(int argc, WCHAR *argv[])

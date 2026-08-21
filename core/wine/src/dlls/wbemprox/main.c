@@ -33,8 +33,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wbemprox);
 
-static HINSTANCE instance;
-
 struct list *table_list[WBEMPROX_NAMESPACE_LAST];
 
 typedef HRESULT (*fnCreateInstance)( LPVOID *ppObj, REFIID riid );
@@ -111,11 +109,14 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
     switch (fdwReason)
     {
-        case DLL_PROCESS_ATTACH:
-            instance = hinstDLL;
-            DisableThreadLibraryCalls(hinstDLL);
-            init_table_list();
-            break;
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls(hinstDLL);
+        init_table_list();
+        break;
+    case DLL_PROCESS_DETACH:
+        if (lpvReserved) break;
+        free_dynamic_tables();
+        break;
     }
 
     return TRUE;

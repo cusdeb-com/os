@@ -33,7 +33,6 @@
 #include <gst/audio/audio.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "winternl.h"
 #include "mferror.h"
 #include "mfapi.h"
@@ -42,11 +41,43 @@
 
 #define GST_SAMPLE_FLAG_WG_CAPS_CHANGED (GST_MINI_OBJECT_FLAG_LAST << 0)
 
+/* This GstElement takes buffers and events from its sink pad, instead of pushing them
+ * out the src pad, it keeps them in a internal queue until the step function
+ * is called manually.
+ */
+typedef struct _WgStepper
+{
+    GstElement element;
+    GstPad *src, *sink;
+    GstAtomicQueue *fifo;
+} WgStepper;
+
+typedef struct _WgStepperClass
+{
+    GstElementClass parent_class;
+} WgStepperClass;
+
+#define GST_TYPE_WG_STEPPER (wg_stepper_get_type())
+#define WG_STEPPER(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_WG_STEPPER, WgStepper))
+#define GST_WG_STEPPER_CLASS(klass) (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_WG_STEPPER,WgStepperClass))
+#define GST_IS_WG_STEPPER(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_WG_STEPPER))
+#define GST_IS_WG_STEPPER_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_WG_STEPPER))
+
+G_DEFINE_TYPE (WgStepper, wg_stepper, GST_TYPE_ELEMENT);
+gboolean gst_element_register_winegstreamerstepper(GstPlugin *plugin)
+{
+    return gst_element_register(plugin, "winegstreamerstepper", GST_RANK_NONE, GST_TYPE_WG_STEPPER);
+}
+
+static bool wg_stepper_step(WgStepper *stepper);
+static void wg_stepper_flush(WgStepper *stepper);
+
 struct wg_transform
 {
     struct wg_transform_attrs attrs;
 
     GstElement *container;
+    WgStepper *stepper;
     GstAllocator *allocator;
     GstPad *my_src, *my_sink;
     GstSegment segment;
@@ -64,6 +95,7 @@ struct wg_transform
     GstCaps *input_caps;
 
     bool draining;
+    INT64 ts_offset;
 };
 
 static struct wg_transform *get_transform(wg_transform_t trans)
@@ -71,9 +103,11 @@ static struct wg_transform *get_transform(wg_transform_t trans)
     return (struct wg_transform *)(ULONG_PTR)trans;
 }
 
-static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align,
+static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align, gint stride,
         GstVideoInfo *info, GstVideoAlignment *align)
 {
+    bool fix_nv12 = !plane_align && info->finfo->format == GST_VIDEO_FORMAT_NV12 && (info->width & 3) && (info->width & 3) != 3;
+    bool bottom_up = video_info->VideoFlags & MFVideoFlag_BottomUpLinearRep;
     const MFVideoArea *aperture = &video_info->MinimumDisplayAperture;
 
     gst_video_alignment_reset(align);
@@ -89,21 +123,58 @@ static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align,
         align->padding_left = aperture->OffsetY.value;
     }
 
-    if (video_info->VideoFlags & MFVideoFlag_BottomUpLinearRep)
+    if (stride)
+    {
+        /* The MF sample has a 2D buffer. Set padding_right to match its stride. */
+        guint width = align->padding_left + info->width + align->padding_right;
+        const GstVideoFormatInfo *finfo = info->finfo;
+        gint comp[GST_VIDEO_MAX_COMPONENTS];
+        gint pixel_stride;
+
+        gst_video_format_info_component(finfo, 0, comp);
+        pixel_stride = finfo->pixel_stride[comp[0]];
+
+        bottom_up = stride < 0;
+        if (bottom_up)
+            stride = -stride;
+
+        if (stride % pixel_stride)
+            GST_ERROR("Stride %u not aligned to pixel size", stride);
+        stride /= pixel_stride;
+
+        if (stride < width)
+            GST_ERROR("Invalid stride %u", stride);
+        else
+            align->padding_right += stride - width;
+    }
+
+    if (bottom_up)
     {
         gsize top = align->padding_top;
         align->padding_top = align->padding_bottom;
         align->padding_bottom = top;
     }
 
-    align->stride_align[0] = plane_align;
-    align->stride_align[1] = plane_align;
-    align->stride_align[2] = plane_align;
-    align->stride_align[3] = plane_align;
+    /* TODO: set NV12 GstVideoInfo correctly when padding is present */
+    if (fix_nv12 && !align->padding_left && !align->padding_top && !align->padding_right && !align->padding_bottom)
+    {
+        /* NV12 minimum stride alignment is 2, and Windows expects 2,
+         * but gst_video_info_align() imposes a minimum of 4. */
+        gint aligned_height = GST_ROUND_UP_2(info->height);
+        info->stride[0] = GST_ROUND_UP_2(info->width);
+        info->stride[1] = info->stride[0];
+        info->offset[0] = 0;
+        info->offset[1] = info->stride[0] * aligned_height;
+        info->size = info->offset[1] + info->stride[0] * aligned_height / 2;
+        align->stride_align[0] = 1;
+    }
+    else
+    {
+        align->stride_align[0] = plane_align;
+        gst_video_info_align(info, align);
+    }
 
-    gst_video_info_align(info, align);
-
-    if (video_info->VideoFlags & MFVideoFlag_BottomUpLinearRep)
+    if (bottom_up)
     {
         for (guint i = 0; i < ARRAY_SIZE(info->offset); ++i)
         {
@@ -171,17 +242,21 @@ static void wg_video_buffer_pool_class_init(WgVideoBufferPoolClass *klass)
     pool_class->alloc_buffer = wg_video_buffer_pool_alloc_buffer;
 }
 
-static WgVideoBufferPool *wg_video_buffer_pool_create(GstCaps *caps, gsize plane_align,
+static WgVideoBufferPool *wg_video_buffer_pool_create(GstCaps *caps, gsize plane_align, gsize output_plane_stride,
         GstAllocator *allocator, MFVideoInfo *video_info, GstVideoAlignment *align)
 {
     WgVideoBufferPool *pool;
     GstStructure *config;
+    gsize max_size;
 
     if (!(pool = g_object_new(wg_video_buffer_pool_get_type(), NULL)))
         return NULL;
 
     gst_video_info_from_caps(&pool->info, caps);
-    align_video_info_planes(video_info, plane_align, &pool->info, align);
+    max_size = pool->info.size;
+    align_video_info_planes(video_info, plane_align, output_plane_stride, &pool->info, align);
+    /* GStreamer assumes NV12 pools must accommodate a stride alignment of 4, but we use 2 */
+    max_size = max(max_size, pool->info.size);
 
     if (!(config = gst_buffer_pool_get_config(GST_BUFFER_POOL(pool))))
         GST_ERROR("Failed to get %"GST_PTR_FORMAT" config.", pool);
@@ -191,7 +266,7 @@ static WgVideoBufferPool *wg_video_buffer_pool_create(GstCaps *caps, gsize plane
         gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
         gst_buffer_pool_config_set_video_alignment(config, align);
 
-        gst_buffer_pool_config_set_params(config, caps, pool->info.size, 0, 0);
+        gst_buffer_pool_config_set_params(config, caps, max_size, 0, 0);
         gst_buffer_pool_config_set_allocator(config, allocator, NULL);
         if (!gst_buffer_pool_set_config(GST_BUFFER_POOL(pool), config))
             GST_ERROR("Failed to set %"GST_PTR_FORMAT" config.", pool);
@@ -263,7 +338,7 @@ static gboolean transform_sink_query_allocation(struct wg_transform *transform, 
         return false;
 
     if (!(pool = wg_video_buffer_pool_create(caps, transform->attrs.output_plane_align,
-            transform->allocator, &transform->output_info, &align)))
+            transform->attrs.output_plane_stride, transform->allocator, &transform->output_info, &align)))
         return false;
 
     if ((params = gst_structure_new("video-meta",
@@ -474,8 +549,11 @@ static bool transform_create_decoder_elements(struct wg_transform *transform,
         const gchar *input_mime, const gchar *output_mime, GstElement **first, GstElement **last)
 {
     GstCaps *parsed_caps = NULL, *sink_caps = NULL;
-    GstElement *element;
+    GstElement *element, *capsfilter;
+    const char *shortname = NULL;
+    GstElementFactory *factory;
     bool ret = false;
+    char *str;
 
     if (!strcmp(input_mime, "audio/x-raw") || !strcmp(input_mime, "video/x-raw"))
         return true;
@@ -493,14 +571,55 @@ static bool transform_create_decoder_elements(struct wg_transform *transform,
     if ((element = find_element(GST_ELEMENT_FACTORY_TYPE_PARSER, transform->input_caps, parsed_caps))
             && !append_element(transform->container, element, first, last))
         goto done;
-    else if (!element)
+
+    if (element)
+    {
+        /* We try to intercept buffers produced by the parser, so if we push a large buffer into the
+         * parser, it won't push everything into the decoder all in one go.
+         */
+        if ((element = create_element("winegstreamerstepper", NULL)) &&
+                append_element(transform->container, element, first, last))
+            /* element is owned by the container */
+            transform->stepper = WG_STEPPER(element);
+    }
+    else
     {
         gst_caps_unref(parsed_caps);
         parsed_caps = gst_caps_ref(transform->input_caps);
     }
 
-    if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, parsed_caps, sink_caps))
-            || !append_element(transform->container, element, first, last))
+    if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, parsed_caps, sink_caps)))
+        goto done;
+
+    /* h264parse currently has a bug where it will send an avc caps without codec_data when it
+     * has received an SPS but not PPS. As a result, when a drain request is made, the caps is fixated
+     * to avc but no codec_data is provided to the decoder. This results in libav rejecting every
+     * packet it receives.
+     * As a workaround, we need to insert a capsfilter for avdec_h264 in order for it to use
+     * the byte-stream stream-format.
+     */
+    if ((factory = gst_element_get_factory(element)) &&
+            (shortname = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory))) &&
+            !strcmp(shortname, "avdec_h264"))
+    {
+        if (!(capsfilter = create_element("capsfilter", "good")) ||
+                !append_element(transform->container, capsfilter, first, last))
+        {
+            g_object_unref(element);
+            goto done;
+        }
+
+        gst_caps_set_simple(parsed_caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
+        gst_caps_set_simple(parsed_caps, "alignment", G_TYPE_STRING, "au", NULL);
+
+        if ((str = gst_caps_to_string(parsed_caps)))
+        {
+            gst_util_set_object_arg(G_OBJECT(capsfilter), "caps", str);
+            free(str);
+        }
+    }
+
+    if (!append_element(transform->container, element, first, last))
         goto done;
 
     set_max_threads(element);
@@ -780,6 +899,7 @@ NTSTATUS wg_transform_push_data(void *args)
     struct wg_transform_push_data_params *params = args;
     struct wg_transform *transform = get_transform(params->transform);
     struct wg_sample *sample = params->sample;
+    GstCaps *transform_timestamp;
     const gchar *input_mime;
     GstVideoInfo video_info;
     GstBuffer *buffer;
@@ -801,7 +921,7 @@ NTSTATUS wg_transform_push_data(void *args)
     }
 
     if (!(buffer = gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY, wg_sample_data(sample), sample->max_size,
-            0, sample->size, sample, wg_sample_free_notify)))
+            0, sample->stride ? sample->max_size : sample->size, sample, wg_sample_free_notify)))
     {
         GST_ERROR("Failed to allocate input buffer");
         return STATUS_NO_MEMORY;
@@ -816,26 +936,46 @@ NTSTATUS wg_transform_push_data(void *args)
     if (!strcmp(input_mime, "video/x-raw") && gst_video_info_from_caps(&video_info, transform->input_caps))
     {
         GstVideoAlignment align;
-        align_video_info_planes(&transform->input_info, 0, &video_info, &align);
+        align_video_info_planes(&transform->input_info, 0, sample->stride, &video_info, &align);
         buffer_add_video_meta(buffer, &video_info);
     }
 
     if (sample->flags & WG_SAMPLE_FLAG_HAS_PTS)
-        GST_BUFFER_PTS(buffer) = sample->pts * 100;
+    {
+        if (sample->pts < transform->ts_offset)
+        {
+            if (transform->ts_offset)
+                GST_FIXME("ts_offset is already set to %"GST_TIME_FORMAT", overwriting",
+                        GST_TIME_ARGS(-transform->ts_offset));
+
+            GST_TRACE("Setting ts_offset to %"GST_TIME_FORMAT, GST_TIME_ARGS(-sample->pts));
+            transform->ts_offset = sample->pts;
+        }
+
+        GST_BUFFER_PTS(buffer) = (sample->pts - transform->ts_offset) * 100;
+    }
     if (sample->flags & WG_SAMPLE_FLAG_HAS_DURATION)
         GST_BUFFER_DURATION(buffer) = sample->duration * 100;
     if (!(sample->flags & WG_SAMPLE_FLAG_SYNC_POINT))
         GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
     if (sample->flags & WG_SAMPLE_FLAG_DISCONTINUITY)
         GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DISCONT);
+
+    if (transform->attrs.preserve_timestamps && (sample->flags & WG_SAMPLE_FLAG_HAS_PTS)
+            && (transform_timestamp = gst_caps_new_empty_simple("timestamp/x-wg-transform")))
+    {
+        gst_buffer_add_reference_timestamp_meta(buffer, transform_timestamp, GST_BUFFER_PTS(buffer), GST_BUFFER_DURATION(buffer));
+        gst_caps_unref(transform_timestamp);
+    }
+
     gst_atomic_queue_push(transform->input_queue, buffer);
 
     params->result = S_OK;
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS copy_video_buffer(GstBuffer *buffer, const GstVideoInfo *src_video_info,
-        const GstVideoInfo *dst_video_info, struct wg_sample *sample, gsize *total_size)
+static NTSTATUS copy_video_buffer(GstBuffer *buffer, GstVideoInfo *src_video_info,
+        GstVideoInfo *dst_video_info, struct wg_sample *sample, gsize *total_size)
 {
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     GstVideoFrame src_frame, dst_frame;
@@ -904,22 +1044,43 @@ static NTSTATUS copy_buffer(GstBuffer *buffer, struct wg_sample *sample, gsize *
 
 static void set_sample_flags_from_buffer(struct wg_sample *sample, GstBuffer *buffer, gsize total_size)
 {
-    if (GST_BUFFER_PTS_IS_VALID(buffer))
+    GstReferenceTimestampMeta *timestamps;
+    GstCaps *transform_timestamp;
+
+    transform_timestamp = gst_caps_new_empty_simple("timestamp/x-wg-transform");
+    timestamps = gst_buffer_get_reference_timestamp_meta(buffer, transform_timestamp);
+    gst_caps_unref(transform_timestamp);
+
+    if (timestamps)
     {
-        sample->flags |= WG_SAMPLE_FLAG_HAS_PTS;
-        sample->pts = GST_BUFFER_PTS(buffer) / 100;
+        /* GStreamer can overwrite our timestamps, so we use the wg-transform timestamps instead */
+        sample->flags |= WG_SAMPLE_FLAG_HAS_PTS | WG_SAMPLE_FLAG_PRESERVE_TIMESTAMPS;
+        sample->pts = timestamps->timestamp / 100;
+        if (timestamps->duration != GST_CLOCK_TIME_NONE)
+        {
+            sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+            sample->duration = timestamps->duration / 100;
+        }
     }
-    if (GST_BUFFER_DURATION_IS_VALID(buffer))
+    else
     {
-        GstClockTime duration = GST_BUFFER_DURATION(buffer) / 100;
-
-        duration = (duration * sample->size) / total_size;
-        GST_BUFFER_DURATION(buffer) -= duration * 100;
         if (GST_BUFFER_PTS_IS_VALID(buffer))
-            GST_BUFFER_PTS(buffer) += duration * 100;
+        {
+            sample->flags |= WG_SAMPLE_FLAG_HAS_PTS;
+            sample->pts = GST_BUFFER_PTS(buffer) / 100;
+        }
+        if (GST_BUFFER_DURATION_IS_VALID(buffer))
+        {
+            GstClockTime duration = GST_BUFFER_DURATION(buffer) / 100;
 
-        sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
-        sample->duration = duration;
+            duration = (duration * sample->size) / total_size;
+            GST_BUFFER_DURATION(buffer) -= duration * 100;
+            if (GST_BUFFER_PTS_IS_VALID(buffer))
+                GST_BUFFER_PTS(buffer) += duration * 100;
+
+            sample->flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+            sample->duration = duration;
+        }
     }
     if (!GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT))
         sample->flags |= WG_SAMPLE_FLAG_SYNC_POINT;
@@ -946,7 +1107,7 @@ static bool sample_needs_buffer_copy(struct wg_sample *sample, GstBuffer *buffer
 }
 
 static NTSTATUS read_transform_output_video(struct wg_sample *sample, GstBuffer *buffer,
-        const GstVideoInfo *src_video_info, const GstVideoInfo *dst_video_info)
+        GstVideoInfo *src_video_info, GstVideoInfo *dst_video_info)
 {
     gsize total_size;
     NTSTATUS status;
@@ -1008,7 +1169,8 @@ static NTSTATUS read_transform_output(struct wg_sample *sample, GstBuffer *buffe
 
 static NTSTATUS complete_drain(struct wg_transform *transform)
 {
-    if (transform->draining && gst_atomic_queue_length(transform->input_queue) == 0)
+    bool stepper_empty = transform->stepper == NULL || gst_atomic_queue_length(transform->stepper->fifo) == 0;
+    if (transform->draining && gst_atomic_queue_length(transform->input_queue) == 0 && stepper_empty)
     {
         GstEvent *event;
         transform->draining = false;
@@ -1035,14 +1197,23 @@ error:
 
 static bool get_transform_output(struct wg_transform *transform, struct wg_sample *sample)
 {
-    GstBuffer *input_buffer;
     GstFlowReturn ret;
 
     wg_allocator_provide_sample(transform->allocator, sample);
 
-    while (!(transform->output_sample = gst_atomic_queue_pop(transform->output_queue))
-            && (input_buffer = gst_atomic_queue_pop(transform->input_queue)))
+    while (!(transform->output_sample = gst_atomic_queue_pop(transform->output_queue)))
     {
+        GstBuffer *input_buffer;
+        if (transform->stepper && wg_stepper_step(transform->stepper))
+        {
+            /* If we pushed anything from the stepper, we don't need to dequeue more buffers. */
+            complete_drain(transform);
+            continue;
+        }
+
+        if (!(input_buffer = gst_atomic_queue_pop(transform->input_queue)))
+            break;
+
         if ((ret = gst_pad_push(transform->my_src, input_buffer)))
             GST_WARNING("Failed to push transform input, error %d", ret);
 
@@ -1068,6 +1239,13 @@ NTSTATUS wg_transform_read_data(void *args)
     bool discard_data;
     NTSTATUS status;
 
+    if (sample->stride != transform->attrs.output_plane_stride)
+    {
+        GST_INFO("Reconfiguring to stride %u", sample->stride);
+        transform->attrs.output_plane_stride = sample->stride;
+        push_event(transform->my_sink, gst_event_new_reconfigure());
+    }
+
     if (!transform->output_sample && !get_transform_output(transform, sample))
     {
         sample->size = 0;
@@ -1091,7 +1269,7 @@ NTSTATUS wg_transform_read_data(void *args)
         dst_video_info = src_video_info;
 
         /* set the desired output buffer alignment and stride on the dest video info */
-        align_video_info_planes(&transform->output_info, plane_align, &dst_video_info, &align);
+        align_video_info_planes(&transform->output_info, plane_align, sample->stride, &dst_video_info, &align);
 
         /* copy the actual output buffer alignment and stride to the src video info */
         if ((meta = gst_buffer_get_video_meta(output_buffer)))
@@ -1115,6 +1293,10 @@ NTSTATUS wg_transform_read_data(void *args)
                 &src_video_info, &dst_video_info);
     else
         status = read_transform_output(sample, output_buffer);
+
+    if ((sample->flags & (WG_SAMPLE_FLAG_PRESERVE_TIMESTAMPS | WG_SAMPLE_FLAG_HAS_PTS)) ==
+            (WG_SAMPLE_FLAG_PRESERVE_TIMESTAMPS | WG_SAMPLE_FLAG_HAS_PTS))
+        sample->pts += transform->ts_offset;
 
     if (status)
     {
@@ -1175,12 +1357,23 @@ NTSTATUS wg_transform_flush(void *args)
     struct wg_transform *transform = get_transform(*(wg_transform_t *)args);
     GstBuffer *input_buffer;
     GstSample *sample;
+    GstEvent *event;
     NTSTATUS status;
 
     GST_LOG("transform %p", transform);
 
+    /* this ensures no messages are travelling through the pipeline whilst we flush */
+    event = gst_event_new_flush_start();
+    gst_pad_push_event(transform->my_src, event);
+
     while ((input_buffer = gst_atomic_queue_pop(transform->input_queue)))
         gst_buffer_unref(input_buffer);
+
+    if (transform->stepper)
+        wg_stepper_flush(transform->stepper);
+
+    event = gst_event_new_flush_stop(true);
+    gst_pad_push_event(transform->my_src, event);
 
     if ((status = wg_transform_drain(args)))
         return status;
@@ -1220,4 +1413,125 @@ NTSTATUS wg_transform_notify_qos(void *args)
     push_event(transform->my_sink, event);
 
     return S_OK;
+}
+
+/* Move events and at most one buffer from the internal fifo queue to the output src pad.
+ * Returns true if anything is moved, or false if the fifo is empty.
+ */
+static bool wg_stepper_step(WgStepper *stepper)
+{
+    bool pushed = false;
+    gpointer ptr;
+    while ((ptr = gst_atomic_queue_pop(stepper->fifo)))
+    {
+        if (GST_IS_BUFFER(ptr))
+        {
+            GST_TRACE("Forwarding buffer %"GST_PTR_FORMAT" from fifo", ptr);
+            gst_pad_push(stepper->src, GST_BUFFER(ptr));
+            pushed = true;
+            break;
+        }
+
+        if (GST_IS_EVENT(ptr))
+        {
+            GST_TRACE("Processing event %"GST_PTR_FORMAT" from fifo", ptr);
+            gst_pad_event_default(stepper->sink, GST_OBJECT(stepper), GST_EVENT(ptr));
+            pushed = true;
+        }
+    }
+    return pushed;
+}
+
+static void wg_stepper_flush(WgStepper *stepper)
+{
+    gpointer ptr;
+    GST_TRACE("Discarding all objects in the fifo");
+    while ((ptr = gst_atomic_queue_pop(stepper->fifo)))
+    {
+        if (GST_IS_EVENT(ptr))
+            gst_event_unref(ptr);
+        else if (GST_IS_BUFFER(ptr))
+            gst_buffer_unref(ptr);
+    }
+}
+
+static GstStateChangeReturn wg_stepper_change_state(GstElement *element, GstStateChange transition)
+{
+    WgStepper *this = WG_STEPPER(element);
+    if (transition == GST_STATE_CHANGE_READY_TO_NULL)
+        wg_stepper_flush(this);
+    return GST_STATE_CHANGE_SUCCESS;
+}
+
+static void wg_stepper_class_init(WgStepperClass *klass)
+{
+    gst_element_class_set_metadata(GST_ELEMENT_CLASS(klass), "winegstreamer buffer stepper", "Connector",
+        "Hold incoming buffer for manual pushing", "Yuxuan Shui <yshui@codeweavers.com>");
+    klass->parent_class.change_state = wg_stepper_change_state;
+}
+
+static GstFlowReturn wg_stepper_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *buf)
+{
+    WgStepper *this = WG_STEPPER(parent);
+    GST_TRACE("Pushing buffer %"GST_PTR_FORMAT" into fifo", buf);
+    gst_atomic_queue_push(this->fifo, buf);
+    return GST_FLOW_OK;
+}
+
+static gboolean wg_stepper_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
+{
+    WgStepper *this = WG_STEPPER(parent);
+    if (gst_atomic_queue_length(this->fifo) == 0)
+    {
+        GST_TRACE("Processing event %"GST_PTR_FORMAT" immediately", event);
+        gst_pad_event_default(pad, parent, event);
+    }
+    else
+    {
+        GST_TRACE("Pushing event %"GST_PTR_FORMAT" into fifo", event);
+        gst_atomic_queue_push(this->fifo, event);
+    }
+    return true;
+}
+
+static gboolean wg_stepper_src_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
+{
+    WgStepper *this = WG_STEPPER(parent);
+    GstPad *peer = gst_pad_get_peer(this->sink);
+    if (!peer) return gst_pad_query_default(pad, parent, query);
+    GST_TRACE("Forwarding query %"GST_PTR_FORMAT" to upstream", query);
+    return gst_pad_query(peer, query);
+}
+
+static void wg_stepper_init(WgStepper *stepper)
+{
+    static GstStaticPadTemplate sink_factory =
+        GST_STATIC_PAD_TEMPLATE (
+            "sink",
+            GST_PAD_SINK,
+            GST_PAD_ALWAYS,
+            GST_STATIC_CAPS ("ANY")
+        );
+    static GstStaticPadTemplate src_factory =
+        GST_STATIC_PAD_TEMPLATE(
+            "src",
+            GST_PAD_SRC,
+            GST_PAD_ALWAYS,
+            GST_STATIC_CAPS("ANY")
+        );
+    stepper->sink = gst_pad_new_from_static_template(&sink_factory, "sink");
+    gst_element_add_pad(GST_ELEMENT(stepper), stepper->sink);
+    gst_pad_set_chain_function(stepper->sink, wg_stepper_chain_cb);
+    gst_pad_set_event_function(stepper->sink, wg_stepper_event_cb);
+    GST_PAD_SET_PROXY_CAPS(stepper->sink);
+    gst_pad_set_active(stepper->sink, true);
+
+    stepper->src = gst_pad_new_from_static_template(&src_factory, "src");
+    gst_element_add_pad(GST_ELEMENT(stepper), stepper->src);
+    gst_pad_set_query_function(stepper->src, wg_stepper_src_query_cb);
+    gst_pad_set_active(stepper->src, true);
+
+    stepper->fifo = gst_atomic_queue_new(4);
+
+    GST_DEBUG("Created new stepper element %"GST_PTR_FORMAT, stepper);
 }

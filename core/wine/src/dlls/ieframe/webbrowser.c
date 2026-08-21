@@ -326,7 +326,7 @@ static HRESULT WINAPI WebBrowser_Navigate(IWebBrowser2 *iface, BSTR szUrl,
           debugstr_variant(TargetFrameName), debugstr_variant(PostData),
           debugstr_variant(Headers));
 
-    return navigate_url(&This->doc_host, szUrl, Flags, TargetFrameName, PostData, Headers);
+    return szUrl ? navigate_url(&This->doc_host, szUrl, Flags, TargetFrameName, PostData, Headers) : S_FALSE;
 }
 
 static HRESULT WINAPI WebBrowser_Refresh(IWebBrowser2 *iface)
@@ -612,13 +612,11 @@ static HRESULT WINAPI WebBrowser_GetProperty(IWebBrowser2 *iface, BSTR szPropert
 
 static HRESULT WINAPI WebBrowser_get_Name(IWebBrowser2 *iface, BSTR *Name)
 {
-    static const WCHAR sName[] = {'M','i','c','r','o','s','o','f','t',' ','W','e','b',
-                                  ' ','B','r','o','w','s','e','r',' ','C','o','n','t','r','o','l',0};
     WebBrowser *This = impl_from_IWebBrowser2(iface);
 
     TRACE("(%p)->(%p)\n", This, Name);
 
-    *Name = SysAllocString(sName);
+    *Name = SysAllocString(L"Microsoft Web Browser Control");
 
     return S_OK;
 }

@@ -21,7 +21,6 @@
 #include <png.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "winbase.h"
@@ -349,6 +348,12 @@ static HRESULT CDECL png_decoder_get_frame_info(struct decoder *iface, UINT fram
     return S_OK;
 }
 
+static HRESULT CDECL png_decoder_get_decoder_palette(struct decoder *iface, UINT frame, WICColor *colors,
+        UINT *num_colors)
+{
+    return WINCODEC_ERR_PALETTEUNAVAILABLE;
+}
+
 static HRESULT CDECL png_decoder_copy_pixels(struct decoder *iface, UINT frame,
     const WICRect *prc, UINT stride, UINT buffersize, BYTE *buffer)
 {
@@ -377,10 +382,12 @@ static HRESULT CDECL png_decoder_get_metadata_blocks(struct decoder* iface,
     do
     {
         hr = stream_seek(This->stream, seek, STREAM_SEEK_SET, &chunk_start);
-        if (FAILED(hr)) goto end;
+        if (FAILED(hr))
+            break;
 
         hr = read_png_chunk(This->stream, chunk_type, NULL, &chunk_size);
-        if (FAILED(hr)) goto end;
+        if (FAILED(hr))
+            break;
 
         if (chunk_type[0] >= 'a' && chunk_type[0] <= 'z' &&
             memcmp(chunk_type, "tRNS", 4) && memcmp(chunk_type, "pHYs", 4))
@@ -389,23 +396,17 @@ static HRESULT CDECL png_decoder_get_metadata_blocks(struct decoder* iface,
             if (*count == metadata_blocks_size)
             {
                 struct decoder_block *new_metadata_blocks;
-                ULONG new_metadata_blocks_size;
 
-                new_metadata_blocks_size = 4 + metadata_blocks_size * 2;
-                new_metadata_blocks = malloc(new_metadata_blocks_size * sizeof(*new_metadata_blocks));
+                metadata_blocks_size = 4 + metadata_blocks_size * 2;
+                new_metadata_blocks = realloc(result, metadata_blocks_size * sizeof(*new_metadata_blocks));
 
                 if (!new_metadata_blocks)
                 {
                     hr = E_OUTOFMEMORY;
-                    goto end;
+                    break;
                 }
 
-                memcpy(new_metadata_blocks, result,
-                    *count * sizeof(*new_metadata_blocks));
-
-                free(result);
                 result = new_metadata_blocks;
-                metadata_blocks_size = new_metadata_blocks_size;
             }
 
             result[*count].offset = chunk_start;
@@ -417,7 +418,6 @@ static HRESULT CDECL png_decoder_get_metadata_blocks(struct decoder* iface,
         seek = chunk_start + chunk_size + 12; /* skip data and CRC */
     } while (memcmp(chunk_type, "IEND", 4));
 
-end:
     if (SUCCEEDED(hr))
     {
         *blocks = result;
@@ -459,6 +459,7 @@ static void CDECL png_decoder_destroy(struct decoder* iface)
 static const struct decoder_funcs png_decoder_vtable = {
     png_decoder_initialize,
     png_decoder_get_frame_info,
+    png_decoder_get_decoder_palette,
     png_decoder_copy_pixels,
     png_decoder_get_metadata_blocks,
     png_decoder_get_color_context,
@@ -643,10 +644,6 @@ static HRESULT CDECL png_encoder_create_frame(struct encoder *encoder, const str
             return E_OUTOFMEMORY;
     }
 
-    /* Tell PNG we need to byte swap if writing a >8-bpp image */
-    if (This->format->bit_depth > 8)
-        png_set_swap(This->png_ptr);
-
     png_set_IHDR(This->png_ptr, This->info_ptr, encoder_frame->width, encoder_frame->height,
         This->format->bit_depth, This->format->color_type,
         encoder_frame->interlace ? PNG_INTERLACE_ADAM7 : PNG_INTERLACE_NONE,
@@ -686,6 +683,9 @@ static HRESULT CDECL png_encoder_create_frame(struct encoder *encoder, const str
     }
 
     png_write_info(This->png_ptr, This->info_ptr);
+
+    if (This->format->bit_depth > 8)
+        png_set_swap(This->png_ptr);
 
     if (This->format->remove_filler)
         png_set_filler(This->png_ptr, 0, PNG_FILLER_AFTER);

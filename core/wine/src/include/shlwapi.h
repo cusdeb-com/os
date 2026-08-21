@@ -29,7 +29,7 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
-#include <pshpack8.h>
+#pragma pack(push,8)
 
 #ifndef WINSHLWAPI
 #ifndef _SHLWAPI_
@@ -406,6 +406,10 @@ WINSHLWAPI BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR,DWORD*);
 WINSHLWAPI BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR,DWORD*);
 #define PathFileExistsAndAttributes WINELIB_NAME_AW(PathFileExistsAndAttributes)
 
+WINSHLWAPI BOOL WINAPI PathFileExistsDefExtA(LPSTR,DWORD);
+WINSHLWAPI BOOL WINAPI PathFileExistsDefExtW(LPWSTR,DWORD);
+#define PathFileExistsDefExt WINELIB_NAME_AW(PathFileExistsDefExt)
+
 WINSHLWAPI LPSTR  WINAPI PathFindExtensionA(LPCSTR);
 WINSHLWAPI LPWSTR WINAPI PathFindExtensionW(LPCWSTR);
 #define PathFindExtension WINELIB_NAME_AW(PathFindExtension)
@@ -421,6 +425,10 @@ WINSHLWAPI LPWSTR WINAPI PathFindNextComponentW(LPCWSTR);
 WINSHLWAPI BOOL WINAPI PathFindOnPathA(LPSTR,LPCSTR*);
 WINSHLWAPI BOOL WINAPI PathFindOnPathW(LPWSTR,LPCWSTR*);
 #define PathFindOnPath WINELIB_NAME_AW(PathFindOnPath)
+
+WINSHLWAPI BOOL WINAPI PathFindOnPathExA(LPSTR,LPCSTR*,DWORD);
+WINSHLWAPI BOOL WINAPI PathFindOnPathExW(LPWSTR,LPCWSTR*,DWORD);
+#define PathFindOnPathEx WINELIB_NAME_AW(PathFindOnPathEx)
 
 WINSHLWAPI LPSTR  WINAPI PathGetArgsA(LPCSTR);
 WINSHLWAPI LPWSTR WINAPI PathGetArgsW(LPCWSTR);
@@ -1095,7 +1103,7 @@ HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *);
 typedef struct _DLLVERSIONINFO2 {
     DLLVERSIONINFO info1;
     DWORD          dwFlags;    /* Reserved */
-    ULONGLONG DECLSPEC_ALIGN(8) ullVersion; /* 16 bits each for Major, Minor, Build, QFE */
+    ULONGLONG      ullVersion; /* 16 bits each for Major, Minor, Build, QFE */
 } DLLVERSIONINFO2;
 
 #define DLLVER_MAJOR_MASK 0xFFFF000000000000
@@ -1202,7 +1210,7 @@ WINSHLWAPI HRESULT WINAPI SHGetViewStatePropertyBag(PCIDLIST_ABSOLUTE pidl, PCWS
 
 WINSHLWAPI BOOL WINAPI SHIsLowMemoryMachine(DWORD type);
 
-#include <poppack.h>
+#pragma pack(pop)
 
 WINSHLWAPI HANDLE WINAPI SHAllocShared(const void *data, DWORD size, DWORD pid);
 WINSHLWAPI BOOL WINAPI SHFreeShared(HANDLE handle, DWORD pid);

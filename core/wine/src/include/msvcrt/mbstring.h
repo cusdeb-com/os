@@ -22,7 +22,7 @@
 
 #include <corecrt.h>
 
-#include <pshpack8.h>
+#pragma pack(push,8)
 
 #ifndef _NLSCMP_DEFINED
 #define _NLSCMPERROR               ((unsigned int)0x7fffffff)
@@ -110,6 +110,7 @@ _ACRTIMP unsigned char* __cdecl _mbsspnp(const unsigned char*,const unsigned cha
 _ACRTIMP unsigned char* __cdecl _mbsstr(const unsigned char*,const unsigned char*);
 _ACRTIMP unsigned char* __cdecl _mbstok(unsigned char*,const unsigned char*);
 _ACRTIMP unsigned char* __cdecl _mbstok_l(unsigned char*,const unsigned char*,_locale_t);
+_ACRTIMP unsigned char* __cdecl _mbstok_s(unsigned char*,const unsigned char*,unsigned char**);
 _ACRTIMP unsigned char* __cdecl _mbsupr(unsigned char*);
 _ACRTIMP errno_t        __cdecl _mbsupr_s(unsigned char*, size_t);
 
@@ -126,6 +127,6 @@ _ACRTIMP int __cdecl _ismbstrail(const unsigned char*,const unsigned char*);
 }
 #endif
 
-#include <poppack.h>
+#pragma pack(pop)
 
 #endif /* __WINE_MBSTRING_H */

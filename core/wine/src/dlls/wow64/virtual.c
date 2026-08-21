@@ -21,7 +21,6 @@
 #include <stdarg.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnt.h"
@@ -230,6 +229,36 @@ NTSTATUS WINAPI wow64_NtAreMappedFilesTheSame( UINT *args )
 
 
 /**********************************************************************
+ *           wow64_NtCreateSectionEx
+ */
+NTSTATUS WINAPI wow64_NtCreateSectionEx( UINT *args )
+{
+    ULONG *handle_ptr = get_ptr( &args );
+    ACCESS_MASK access = get_ulong( &args );
+    OBJECT_ATTRIBUTES32 *attr32 = get_ptr( &args );
+    const LARGE_INTEGER *size = get_ptr( &args );
+    ULONG protect = get_ulong( &args );
+    ULONG flags = get_ulong( &args );
+    HANDLE file = get_handle( &args );
+    MEM_EXTENDED_PARAMETER32 *params32 = get_ptr( &args );
+    ULONG count = get_ulong( &args );
+
+    MEM_EXTENDED_PARAMETER *params64;
+    struct object_attr64 attr;
+    HANDLE handle = 0;
+    NTSTATUS status;
+
+    if ((status = mem_extended_parameters_32to64( &params64, params32, &count, FALSE ))) return status;
+
+    *handle_ptr = 0;
+    status = NtCreateSectionEx( &handle, access, objattr_32to64( &attr, attr32 ),
+                                size, protect, flags, file, params64, count );
+    put_handle( handle_ptr, handle );
+    return status;
+}
+
+
+/**********************************************************************
  *           wow64_NtFlushInstructionCache
  */
 NTSTATUS WINAPI wow64_NtFlushInstructionCache( UINT *args )
@@ -256,14 +285,15 @@ NTSTATUS WINAPI wow64_NtFlushVirtualMemory( UINT *args )
     HANDLE process = get_handle( &args );
     ULONG *addr32 = get_ptr( &args );
     ULONG *size32 = get_ptr( &args );
-    ULONG unknown = get_ulong( &args );
+    IO_STATUS_BLOCK32 *io32 = get_ptr( &args );
+    IO_STATUS_BLOCK io;
 
     void *addr;
     SIZE_T size;
     NTSTATUS status;
 
     status = NtFlushVirtualMemory( process, (const void **)addr_32to64( &addr, addr32 ),
-                                   size_32to64( &size, size32 ), unknown );
+                                   size_32to64( &size, size32 ), iosb_32to64( &io, io32 ) );
     if (!status)
     {
         put_addr( addr32, addr );
@@ -661,11 +691,24 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
         break;
     }
 
-    case MemoryWineUnixWow64Funcs:
+    case MemoryWineLoadUnixLibWow64:
+    case MemoryWineLoadUnixLibByNameWow64:
         return STATUS_INVALID_INFO_CLASS;
 
-    case MemoryWineUnixFuncs:
-        status = NtQueryVirtualMemory( handle, addr, MemoryWineUnixWow64Funcs, ptr, len, &res_len );
+    case MemoryWineLoadUnixLib:
+        status = NtQueryVirtualMemory( handle, addr, MemoryWineLoadUnixLibWow64, ptr, len, &res_len );
+        break;
+    case MemoryWineLoadUnixLibByName:
+    {
+        UNICODE_STRING32 *str32 = addr;
+        UNICODE_STRING str;
+
+        status = NtQueryVirtualMemory( handle, unicode_str_32to64( &str, str32 ),
+                                       MemoryWineLoadUnixLibByNameWow64, ptr, len, &res_len );
+        break;
+    }
+    case MemoryWineUnloadUnixLib:
+        status = NtQueryVirtualMemory( handle, addr, class, ptr, len, &res_len );
         break;
 
     default:
@@ -753,9 +796,7 @@ NTSTATUS WINAPI wow64_NtSetLdtEntries( UINT *args )
     ULONG entry2_low = get_ulong( &args );
     ULONG entry2_high = get_ulong( &args );
 
-    FIXME( "%04lx %08lx %08lx %04lx %08lx %08lx: stub\n",
-           sel1, entry1_low, entry1_high, sel2, entry2_low, entry2_high );
-    return STATUS_NOT_IMPLEMENTED;
+    return NtSetLdtEntries( sel1, entry1_low, entry1_high, sel2, entry2_low, entry2_high );
 }
 
 

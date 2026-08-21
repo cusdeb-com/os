@@ -3046,11 +3046,9 @@ static void test_process_security(void)
                           STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL );
     TEST_GRANTED_ACCESS2( info.hThread, THREAD_ALL_ACCESS_NT4,
                           STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL );
-    wait_child_process( info.hProcess );
+    wait_child_process( &info );
 
     FreeSid(EveryoneSid);
-    CloseHandle( info.hProcess );
-    CloseHandle( info.hThread );
     CloseHandle( event );
     free(group);
     free(owner);
@@ -3240,8 +3238,6 @@ static void test_SetEntriesInAclW(void)
     SID_IDENTIFIER_AUTHORITY SIDAuthWorld = { SECURITY_WORLD_SID_AUTHORITY };
     SID_IDENTIFIER_AUTHORITY SIDAuthNT = { SECURITY_NT_AUTHORITY };
     EXPLICIT_ACCESSW ExplicitAccess;
-    static const WCHAR wszEveryone[] = {'E','v','e','r','y','o','n','e',0};
-    static const WCHAR wszCurrentUser[] = { 'C','U','R','R','E','N','T','_','U','S','E','R','\0'};
 
     NewAcl = (PACL)0xdeadbeef;
     res = SetEntriesInAclW(0, NULL, NULL, &NewAcl);
@@ -3297,7 +3293,7 @@ static void test_SetEntriesInAclW(void)
     else
     {
         ExplicitAccess.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-        ExplicitAccess.Trustee.ptstrName = (LPWSTR)wszEveryone;
+        ExplicitAccess.Trustee.ptstrName = (WCHAR *)L"Everyone";
         res = SetEntriesInAclW(1, &ExplicitAccess, OldAcl, &NewAcl);
         ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %lu\n", res);
         ok(NewAcl != NULL, "returned acl was NULL\n");
@@ -3327,7 +3323,7 @@ static void test_SetEntriesInAclW(void)
     }
 
     ExplicitAccess.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-    ExplicitAccess.Trustee.ptstrName = (LPWSTR)wszCurrentUser;
+    ExplicitAccess.Trustee.ptstrName = (WCHAR *)L"CURRENT_USER";
     res = SetEntriesInAclW(1, &ExplicitAccess, OldAcl, &NewAcl);
     ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %lu\n", res);
     ok(NewAcl != NULL, "returned acl was NULL\n");
@@ -3354,8 +3350,6 @@ static void test_SetEntriesInAclA(void)
     SID_IDENTIFIER_AUTHORITY SIDAuthWorld = { SECURITY_WORLD_SID_AUTHORITY };
     SID_IDENTIFIER_AUTHORITY SIDAuthNT = { SECURITY_NT_AUTHORITY };
     EXPLICIT_ACCESSA ExplicitAccess;
-    static const CHAR szEveryone[] = {'E','v','e','r','y','o','n','e',0};
-    static const CHAR szCurrentUser[] = { 'C','U','R','R','E','N','T','_','U','S','E','R','\0'};
 
     NewAcl = (PACL)0xdeadbeef;
     res = SetEntriesInAclA(0, NULL, NULL, &NewAcl);
@@ -3417,7 +3411,7 @@ static void test_SetEntriesInAclA(void)
     else
     {
         ExplicitAccess.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-        ExplicitAccess.Trustee.ptstrName = (LPSTR)szEveryone;
+        ExplicitAccess.Trustee.ptstrName = (char*)"Everyone";
         res = SetEntriesInAclA(1, &ExplicitAccess, OldAcl, &NewAcl);
         ok(res == ERROR_SUCCESS, "SetEntriesInAclA failed: %lu\n", res);
         ok(NewAcl != NULL, "returned acl was NULL\n");
@@ -3447,7 +3441,7 @@ static void test_SetEntriesInAclA(void)
     }
 
     ExplicitAccess.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-    ExplicitAccess.Trustee.ptstrName = (LPSTR)szCurrentUser;
+    ExplicitAccess.Trustee.ptstrName = (char *)"CURRENT_USER";
     res = SetEntriesInAclA(1, &ExplicitAccess, OldAcl, &NewAcl);
     ok(res == ERROR_SUCCESS, "SetEntriesInAclA failed: %lu\n", res);
     ok(NewAcl != NULL, "returned acl was NULL\n");
@@ -4275,6 +4269,16 @@ static void test_ConvertStringSecurityDescriptor(void)
         "D:P(A;;GRGW;;;BA)(A;;GRGW;;;S-1-5-21-0-0-0-1000)S:(ML;;NWNR;;;S-1-16-12288)", SDDL_REVISION_1, &pSD, NULL);
     ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_DATATYPE) /* win2k */,
        "ConvertStringSecurityDescriptorToSecurityDescriptor failed with error %lu\n", GetLastError());
+    if (ret) LocalFree(pSD);
+
+    SetLastError(0xdeadbeef);
+    ret = ConvertStringSecurityDescriptorToSecurityDescriptorA(
+        "D: (D;OICI;GA;;;BG) (D;OICI;GA;;;AN) (A;OICI;GAGRGWGX;;;AU) (A;OICI;GA;;;BA)", SDDL_REVISION_1, &pSD, NULL);
+    ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_DATATYPE) /* win2k */,
+       "ConvertStringSecurityDescriptorToSecurityDescriptor failed with error %lu\n", GetLastError());
+    acl = (ACL *)((char *)pSD + sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+    ok(acl->AclSize == sizeof(*acl) * 12 /* 96 */, "got %u\n", acl->AclSize);
+    ok(acl->AceCount == 4, "got %u\n", acl->AceCount);
     if (ret) LocalFree(pSD);
 
     /* empty DACL */
@@ -5542,9 +5546,7 @@ static void test_mutex_security(HANDLE token)
 
         SetLastError(0xdeadbeef);
         dup = OpenMutexA(0, FALSE, "WineTestMutex");
-        todo_wine
         ok(!dup, "OpenMutex should fail\n");
-        todo_wine
         ok(GetLastError() == ERROR_ACCESS_DENIED, "wrong error %lu\n", GetLastError());
     }
 
@@ -5599,9 +5601,7 @@ static void test_event_security(HANDLE token)
 
         SetLastError(0xdeadbeef);
         dup = OpenEventA(0, FALSE, "WineTestEvent");
-        todo_wine
         ok(!dup, "OpenEvent should fail\n");
-        todo_wine
         ok(GetLastError() == ERROR_ACCESS_DENIED, "wrong error %lu\n", GetLastError());
     }
 
@@ -6757,8 +6757,7 @@ static void test_AddMandatoryAce(void)
 
 static void test_system_security_access(void)
 {
-    static const WCHAR testkeyW[] =
-        {'S','O','F','T','W','A','R','E','\\','W','i','n','e','\\','S','A','C','L','t','e','s','t',0};
+    static const WCHAR testkeyW[] = L"SOFTWARE\\Wine\\SACLtest";
     LONG res;
     HKEY hkey;
     PSECURITY_DESCRIPTOR sd;
@@ -7379,9 +7378,7 @@ static void test_token_security_descriptor(void)
     sprintf(buffer, "%s security test_token_sd", myARGV[0]);
     ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info);
     ok(ret, "CreateProcess failed with error %lu\n", GetLastError());
-    wait_child_process(info.hProcess);
-    CloseHandle(info.hProcess);
-    CloseHandle(info.hThread);
+    wait_child_process(&info);
 
     LocalFree(acl_child);
     free(sd2);
@@ -7475,7 +7472,6 @@ static void test_child_token_sd(void)
 
 static void test_GetExplicitEntriesFromAclW(void)
 {
-    static const WCHAR wszCurrentUser[] = { 'C','U','R','R','E','N','T','_','U','S','E','R','\0'};
     SID_IDENTIFIER_AUTHORITY SIDAuthWorld = { SECURITY_WORLD_SID_AUTHORITY };
     SID_IDENTIFIER_AUTHORITY SIDAuthNT = { SECURITY_NT_AUTHORITY };
     PSID everyone_sid = NULL, users_sid = NULL;
@@ -7557,7 +7553,7 @@ static void test_GetExplicitEntriesFromAclW(void)
     LocalFree(new_acl);
 
     access.Trustee.TrusteeForm = TRUSTEE_IS_NAME;
-    access.Trustee.ptstrName = (LPWSTR)wszCurrentUser;
+    access.Trustee.ptstrName = (WCHAR *)L"CURRENT_USER";
     res = SetEntriesInAclW(1, &access, old_acl, &new_acl);
     ok(res == ERROR_SUCCESS, "SetEntriesInAclW failed: %lu\n", res);
     ok(new_acl != NULL, "returned acl was NULL\n");
@@ -8571,6 +8567,46 @@ static void test_elevation(void)
     CloseHandle(token);
 }
 
+static void test_admin_elevation(void)
+{
+    /* Tokens with elevation type TokenElevationTypeDefault should still come
+       back as elevated from a TokenElevation query if they belong to the admin
+       group. The owner of the desktop window should have such a token. */
+    DWORD tid, pid;
+    HANDLE hproc, htok;
+    TOKEN_ELEVATION_TYPE elevation_type;
+    TOKEN_ELEVATION elevation;
+    DWORD size;
+    BOOL ret;
+
+    tid = GetWindowThreadProcessId(GetDesktopWindow(), &pid);
+    ok(tid, "got error %lu\n", GetLastError());
+
+    hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hproc)
+    {
+        skip("could not open process, error %lu\n", GetLastError());
+        return;
+    }
+
+    ret = OpenProcessToken(hproc, TOKEN_READ, &htok);
+    ok(ret, "got error %lu\n", GetLastError());
+
+    CloseHandle(hproc);
+
+    size = sizeof(elevation_type);
+    ret = GetTokenInformation(htok, TokenElevationType, &elevation_type, size, &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(elevation_type == TokenElevationTypeDefault, "unexpected elevation type %d\n", elevation_type);
+
+    size = sizeof(elevation);
+    ret = GetTokenInformation(htok, TokenElevation, &elevation, size, &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(elevation.TokenIsElevated, "expected token to be elevated\n");
+
+    CloseHandle(htok);
+}
+
 static void test_group_as_file_owner(void)
 {
     char sd_buffer[200], sid_buffer[100];
@@ -8757,6 +8793,7 @@ START_TEST(security)
     test_duplicate_token();
     test_GetKernelObjectSecurity();
     test_elevation();
+    test_admin_elevation();
     test_group_as_file_owner();
     test_IsValidSecurityDescriptor();
     test_window_security();

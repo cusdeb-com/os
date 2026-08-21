@@ -27,6 +27,10 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <ws2spi.h>
+#include <bthsdpdef.h>
+#include <bluetoothapis.h>
+#include <bthdef.h>
+#include <ws2bth.h>
 #include <mswsock.h>
 #include <iphlpapi.h>
 
@@ -40,7 +44,6 @@ static int (WINAPI *pGetAddrInfoExW)(const WCHAR *name, const WCHAR *servname, D
 static int   (WINAPI *pGetAddrInfoExOverlappedResult)(OVERLAPPED *overlapped);
 static int (WINAPI *pGetHostNameW)(WCHAR *name, int len);
 static const char *(WINAPI *p_inet_ntop)(int family, void *addr, char *string, ULONG size);
-static const WCHAR *(WINAPI *pInetNtopW)(int family, void *addr, WCHAR *string, ULONG size);
 static int (WINAPI *p_inet_pton)(int family, const char *string, void *addr);
 static int (WINAPI *pInetPtonW)(int family, WCHAR *string, void *addr);
 static int (WINAPI *pWSCGetApplicationCategory)(LPCWSTR path, DWORD path_len, LPCWSTR extra, DWORD extra_len, DWORD *category, INT *err);
@@ -1270,6 +1273,23 @@ static void test_WSAAddressToString(void)
         { { 0xab20, 0, 0, 0, 0, 0, 0, 0x120 }, 0x1234, 0xfa81, "[20ab::2001%4660]:33274" },
         { { 0xab20, 0, 0, 0, 0, 0, 0, 0x120 }, 0x1234, 0, "20ab::2001%4660" },
     };
+    static struct
+    {
+        BTH_ADDR address;
+        ULONG port;
+        char output[30];
+    }
+    bluetooth_tests[] =
+    {
+        { 0, 0, "(00:00:00:00:00:00)" },
+        { 0, 200, "(00:00:00:00:00:00):200" },
+        { 0xdeadbeefcafe, 0, "(DE:AD:BE:EF:CA:FE)" },
+        { 0xdeadbeefcafe, 4294967295, "(DE:AD:BE:EF:CA:FE):4294967295" },
+        /* BTH_ADDR values consisting of 8 bytes. */
+        { 0xdeadbeefdeadbeef, 0, "(BE:EF:DE:AD:BE:EF)" },
+        { 0xdeadbeefdeadbeef, 4294967295, "(BE:EF:DE:AD:BE:EF):4294967295" }
+    };
+
     SOCKADDR_IN sockaddr;
     SOCKADDR_IN6 sockaddr6;
     char output[64];
@@ -1363,6 +1383,40 @@ static void test_WSAAddressToString(void)
         ok( !ret, "got error %d\n", WSAGetLastError() );
         ok( !wcscmp( outputW, expected_outputW ), "got string %s\n", debugstr_w(outputW) );
         ok( len == wcslen(expected_outputW) + 1, "got len %lu\n", len );
+
+        winetest_pop_context();
+    }
+
+    for (i = 0; i < ARRAY_SIZE(bluetooth_tests); ++i)
+    {
+        SOCKADDR_BTH addr = {0};
+        const char *exp_outputA = bluetooth_tests[i].output;
+
+        addr.addressFamily = AF_BTH;
+        addr.btAddr = bluetooth_tests[i].address;
+        addr.port = bluetooth_tests[i].port;
+
+        winetest_push_context( "Test %u", i );
+
+        len = sizeof(output);
+        ret = WSAAddressToStringA( (SOCKADDR *)&addr, sizeof(addr), NULL, output, &len );
+        ok( !ret ||
+            broken(WSAGetLastError() == WSAEINVAL), /* before Win10 1809 */
+            "got error %d\n", WSAGetLastError() );
+        if (WSAGetLastError() == WSAEINVAL)
+        {
+            winetest_pop_context();
+            continue;
+        }
+        ok( !strcmp( output, exp_outputA ), "got string %s\n", debugstr_a( output ) );
+        ok( len == strlen( exp_outputA ) + 1, "got len %lu\n", len );
+
+        len = sizeof(outputW);
+        ret = WSAAddressToStringW( (SOCKADDR *)&addr, sizeof(addr), NULL, outputW, &len );
+        MultiByteToWideChar( CP_ACP, 0, exp_outputA, -1, expected_outputW, ARRAY_SIZE(expected_outputW) );
+        ok( !ret, "got error %d\n", WSAGetLastError() );
+        ok( !wcscmp( outputW, expected_outputW ), "got string %s\n", debugstr_w( outputW ) );
+        ok( len == wcslen( expected_outputW ) + 1, "got len %lu\n", len );
 
         winetest_pop_context();
     }
@@ -2582,7 +2636,7 @@ static void test_gethostbyname(void)
     for (count = 0; addr_list[count] != NULL; count++)
     {
         char *ip = inet_ntoa(*addr_list[count]);
-        if (!strcmp(ip, "127.0.0.1"))
+        if (!strcmp(ip, "127.0.0.1") || !strcmp(ip, "127.12.34.56") /* Wine hack loopback addr substitute */)
             local_ip = TRUE;
         if (winetest_debug > 1) trace("%s\n", ip);
     }
@@ -3080,6 +3134,34 @@ static void test_startup(void)
     }
 }
 
+static void test_WSAProviderConfigChange(void)
+{
+    SOCKET sock;
+    OVERLAPPED ov = { 0 };
+    int ret;
+    HANDLE port, port2, change;
+    DWORD bytes;
+
+    change = 0;
+    ret = WSAProviderConfigChange(&change, NULL, NULL);
+    ok(ret != SOCKET_ERROR, "WSAProviderConfigChange() error %u\n", WSAGetLastError());
+
+    port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
+    ok(!!port, "CreateIoCompletionPort() error %lu\n", GetLastError());
+    sock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    ok(sock != SOCKET_ERROR, "WSASocketW() error %u\n", WSAGetLastError());
+    port2 = CreateIoCompletionPort((HANDLE)sock, port, 123, 0);
+    ok(port2 == port, "got %p/%p\n", port, port2);
+    port2 = CreateIoCompletionPort(change, port, 456, 0);
+    ok(port2 == port, "got %p/%p\n", port, port2);
+    ret = WSAIoctl(sock, SIO_ADDRESS_LIST_CHANGE, NULL, 0, NULL, 0, &bytes, &ov, NULL);
+    ok(ret, "WSAIoctl() error %u\n", WSAGetLastError());
+
+    closesocket(sock);
+    CloseHandle(port);
+    CloseHandle(change);
+}
+
 START_TEST( protocol )
 {
     WSADATA data;
@@ -3090,7 +3172,6 @@ START_TEST( protocol )
     pGetAddrInfoExW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "GetAddrInfoExW");
     pGetHostNameW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "GetHostNameW");
     p_inet_ntop = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "inet_ntop");
-    pInetNtopW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "InetNtopW");
     p_inet_pton = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "inet_pton");
     pInetPtonW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "InetPtonW");
     pWSCGetApplicationCategory = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "WSCGetApplicationCategory");
@@ -3129,6 +3210,7 @@ START_TEST( protocol )
     test_WSCGetApplicationCategory();
     test_WSCGetProviderInfo();
     test_WSCGetProviderPath();
+    test_WSAProviderConfigChange();
 
     WSACleanup();
 

@@ -760,8 +760,9 @@ static void input_context_init( INPUTCONTEXT *ctx )
 static void IMM_FreeThreadData(void)
 {
     struct coinit_spy *spy;
+    HIMC default_imc = (HIMC)NtUserGetThreadState( UserThreadStateDefaultInputContext );
 
-    free_input_context_data( UlongToHandle( NtUserGetThreadInfo()->default_imc ) );
+    free_input_context_data( default_imc );
     if ((spy = get_thread_coinit_spy())) IInitializeSpy_Release( &spy->IInitializeSpy_iface );
 }
 
@@ -932,9 +933,8 @@ static struct imc *get_imc_data( HIMC handle )
 
 static struct imc *default_input_context(void)
 {
-    UINT *himc = &NtUserGetThreadInfo()->default_imc;
-    if (!*himc) *himc = (UINT_PTR)NtUserCreateInputContext( 0 );
-    return get_imc_data( (HIMC)(UINT_PTR)*himc );
+    HIMC himc = (HIMC)NtUserGetThreadState( UserThreadStateDefaultInputContext );
+    return get_imc_data( himc );
 }
 
 static HWND get_ime_ui_window(void)
@@ -948,6 +948,7 @@ static HWND get_ime_ui_window(void)
     {
         imc->ui_hwnd = CreateWindowExW( WS_EX_TOOLWINDOW, ime->ui_class, NULL, WS_POPUP, 0, 0, 1, 1,
                                         ImmGetDefaultIMEWnd( 0 ), 0, ime->module, 0 );
+        SetWindowPos( imc->ui_hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
         SetWindowLongPtrW( imc->ui_hwnd, IMMGWL_IMC, (LONG_PTR)NtUserGetWindowInputContext( GetFocus() ) );
     }
     return imc->ui_hwnd;
@@ -983,7 +984,9 @@ static BOOL IMM_DestroyContext(HIMC hIMC)
  */
 BOOL WINAPI ImmDestroyContext(HIMC hIMC)
 {
-    if ((UINT_PTR)hIMC == NtUserGetThreadInfo()->default_imc) return FALSE;
+    HIMC default_imc = (HIMC)NtUserGetThreadState( UserThreadStateDefaultInputContext );
+
+    if (hIMC == default_imc) return FALSE;
     if (NtUserQueryInputContext( hIMC, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
     return IMM_DestroyContext(hIMC);
 }
@@ -3072,13 +3075,18 @@ BOOL WINAPI ImmGenerateMessage( HIMC himc )
     while (ctx->dwNumMsgBuf--)
     {
         TRANSMSG *msgs, msg;
-        if (!(msgs = ImmLockIMCC( ctx->hMsgBuf ))) return FALSE;
+        if (!(msgs = ImmLockIMCC( ctx->hMsgBuf )))
+        {
+            ImmUnlockIMC( himc );
+            return FALSE;
+        }
         msg = msgs[0];
         memmove( msgs, msgs + 1, ctx->dwNumMsgBuf * sizeof(*msgs) );
         ImmUnlockIMCC( ctx->hMsgBuf );
         SendMessageW( ctx->hWnd, msg.message, msg.wParam, msg.lParam );
     }
     ctx->dwNumMsgBuf++;
+    ImmUnlockIMC( himc );
 
     return TRUE;
 }
@@ -3340,4 +3348,24 @@ BOOL WINAPI CtfImmIsCiceroEnabled(void)
     FIXME("(): stub\n");
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
+}
+
+/***********************************************************************
+ *      CtfImmHideToolbarWnd (IMM32.@)
+ */
+DWORD WINAPI CtfImmHideToolbarWnd(void)
+{
+    FIXME("(): stub\n");
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+/***********************************************************************
+ *      CtfImmRestoreToolbarWnd (IMM32.@)
+ */
+DWORD WINAPI CtfImmRestoreToolbarWnd(DWORD unknown)
+{
+    FIXME("%lx: stub\n", unknown);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
 }

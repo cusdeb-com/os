@@ -84,18 +84,6 @@ HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL *opaque_blend)
 }
 
 /**********************************************************************
- *                  DwmFlush              (DWMAPI.@)
- */
-HRESULT WINAPI DwmFlush(void)
-{
-    static BOOL once;
-
-    if (!once++) FIXME("() stub\n");
-
-    return S_OK;
-}
-
-/**********************************************************************
  *        DwmInvalidateIconicBitmaps      (DWMAPI.@)
  */
 HRESULT WINAPI DwmInvalidateIconicBitmaps(HWND hwnd)
@@ -302,6 +290,31 @@ HRESULT WINAPI DwmGetCompositionTimingInfo(HWND hwnd, DWM_TIMING_INFO *info)
 }
 
 /**********************************************************************
+ *                  DwmFlush              (DWMAPI.@)
+ */
+HRESULT WINAPI DwmFlush(void)
+{
+    LARGE_INTEGER qpf, qpc, delay;
+    LONG64 qpc_refresh_period;
+    int display_frequency;
+    static BOOL once;
+
+    if (!once++)
+        FIXME("stub.\n");
+    else
+        TRACE("stub.\n");
+
+    display_frequency = get_display_frequency();
+    NtQueryPerformanceCounter(&qpc, &qpf);
+    qpc_refresh_period = qpf.QuadPart / display_frequency;
+    delay.QuadPart = (qpc.QuadPart - ((qpc.QuadPart + qpc_refresh_period - 1) / qpc_refresh_period) * qpc_refresh_period)
+            * 10000000 / qpf.QuadPart;
+    NtDelayExecution(FALSE, &delay);
+
+    return S_OK;
+}
+
+/**********************************************************************
  *           DwmAttachMilContent         (DWMAPI.@)
  */
 HRESULT WINAPI DwmAttachMilContent(HWND hwnd)
@@ -362,4 +375,13 @@ HRESULT WINAPI DwmpGetColorizationParameters(void *params)
 {
     FIXME("(%p) stub\n", params);
     return E_NOTIMPL;
+}
+
+/**********************************************************************
+ *           DwmShowContact         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmShowContact(DWORD pointer_id, enum DWM_SHOWCONTACT showcontact)
+{
+    FIXME("pointer_id %#lx, showcontact %#x stub\n", pointer_id, showcontact);
+    return S_OK;
 }

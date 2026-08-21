@@ -51,16 +51,29 @@ typedef enum _WAIT_TYPE {
 #define NT_WARNING(status)      ((((NTSTATUS)(status)) & 0xc0000000) == 0x80000000)
 #define NT_ERROR(status)        ((((NTSTATUS)(status)) & 0xc0000000) == 0xc0000000)
 
+#define InitializeObjectAttributes(p,n,a,r,s) \
+    do { \
+        (p)->Length = sizeof(OBJECT_ATTRIBUTES); \
+        (p)->RootDirectory = r; \
+        (p)->Attributes = a; \
+        (p)->ObjectName = n; \
+        (p)->SecurityDescriptor = s; \
+        (p)->SecurityQualityOfService = NULL; \
+    } while (0)
+
 #ifndef BASETYPES
 #define BASETYPES
 typedef unsigned char UCHAR, *PUCHAR;
 typedef unsigned short USHORT, *PUSHORT;
-#if !defined(__LP64__) && !defined(WINE_NO_LONG_TYPES)
+#if !defined(__LP64__) && !defined(WINE_NO_LONG_TYPES) && !defined(WINE_UNIX_LIB)
 typedef unsigned long ULONG, *PULONG;
 #else
 typedef unsigned int ULONG, *PULONG;
 #endif
 #endif
+
+typedef ULONG CLONG;
+typedef CLONG *PCLONG;
 
 typedef struct _RTL_BALANCED_NODE
 {

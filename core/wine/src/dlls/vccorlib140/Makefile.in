@@ -1,0 +1,7 @@
+MODULE = vccorlib140.dll
+IMPORTS = combase oleaut32
+
+SOURCES = \
+	delegate.c \
+	except.c \
+	vccorlib.c

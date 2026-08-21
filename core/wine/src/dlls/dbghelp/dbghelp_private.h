@@ -31,6 +31,7 @@
 #include "winnls.h"
 #include "wine/list.h"
 #include "wine/rbtree.h"
+#include "wine/debug.h"
 
 #include "cvconst.h"
 
@@ -45,6 +46,7 @@ void*    pool_alloc(struct pool* a, size_t len) __WINE_ALLOC_SIZE(2) __WINE_MALL
 void*    pool_realloc(struct pool* a, void* ptr, size_t len) __WINE_ALLOC_SIZE(3);
 char*    pool_strdup(struct pool* a, const char* str) __WINE_MALLOC;
 WCHAR*   pool_wcsdup(struct pool* a, const WCHAR* str) __WINE_MALLOC;
+void     pool_free(struct pool* a, void* ptr);
 
 struct vector
 {
@@ -181,11 +183,13 @@ static inline BOOL symt_check_tag(const struct symt* s, enum SymTagEnum tag)
     return s && s->tag == tag;
 }
 
+typedef ULONG_PTR symref_t;
+
 /* lexical tree */
 struct symt_block
 {
     struct symt                 symt;
-    struct symt*                container;      /* block, or func */
+    symref_t                    container;      /* block, or func */
     struct vector               vchildren;      /* sub-blocks & local variables */
     unsigned                    num_ranges;
     struct addr_range           ranges[];
@@ -201,9 +205,9 @@ struct symt_module /* in fact any of .exe, .dll... */
 struct symt_compiland
 {
     struct symt                 symt;
-    struct symt_module*         container;      /* symt_module */
+    symref_t                    container;      /* symt_module */
     ULONG_PTR                   address;
-    unsigned                    source;
+    const char                 *filename;
     struct vector               vchildren;      /* global variables & functions */
     void*                       user;           /* when debug info provider needs to store information */
 };
@@ -213,8 +217,8 @@ struct symt_data
     struct symt                 symt;
     struct hash_table_elt       hash_elt;       /* if global symbol */
     enum DataKind               kind;
-    struct symt*                container;
-    struct symt*                type;
+    symref_t                    container;
+    symref_t                    type;
     union                                       /* depends on kind */
     {
         /* DataIs{Global, FileStatic, StaticLocal}:
@@ -290,11 +294,12 @@ struct symt_function
 {
     struct symt                 symt;           /* SymTagFunction or SymTagInlineSite */
     struct hash_table_elt       hash_elt;       /* if global symbol, inline site */
-    struct symt*                container;      /* compiland (for SymTagFunction) or function (for SymTagInlineSite) */
-    struct symt*                type;           /* points to function_signature */
+    symref_t                    container;      /* compiland (for SymTagFunction) or function (for SymTagInlineSite) */
+    symref_t                    type;           /* points to function_signature */
     struct vector               vlines;
     struct vector               vchildren;      /* locals, params, blocks, start/end, labels, inline sites */
     struct symt_function*       next_inlinesite;/* linked list of inline sites in this function */
+    DWORD_PTR                   user;           /* free to use by debug info backends */
     unsigned                    num_ranges;
     struct addr_range           ranges[];
 };
@@ -303,7 +308,7 @@ struct symt_hierarchy_point
 {
     struct symt                 symt;           /* either SymTagFunctionDebugStart, SymTagFunctionDebugEnd, SymTagLabel */
     struct hash_table_elt       hash_elt;       /* if label (and in compiland's hash table if global) */
-    struct symt*                parent;         /* symt_function or symt_compiland */
+    symref_t                    container;      /* symt_function or symt_compiland */
     struct location             loc;
 };
 
@@ -311,8 +316,8 @@ struct symt_public
 {
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
-    struct symt*                container;      /* compiland */
-    BOOL is_function;
+    symref_t                    container;      /* compiland */
+    BOOL                        is_function;
     ULONG_PTR                   address;
     ULONG_PTR                   size;
 };
@@ -321,7 +326,7 @@ struct symt_thunk
 {
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
-    struct symt*                container;      /* compiland */
+    symref_t                    container;      /* compiland */
     ULONG_PTR                   address;
     ULONG_PTR                   size;
     THUNK_ORDINAL               ordinal;        /* FIXME: doesn't seem to be accessible */
@@ -385,7 +390,7 @@ struct symt_typedef
 {
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
-    struct symt*                type;
+    symref_t                    type;
 };
 
 struct symt_udt
@@ -410,23 +415,71 @@ enum format_info
     DFI_MACHO,
     DFI_DWARF,
     DFI_PDB,
+    DFI_OLD_PDB,
     DFI_LAST
+};
+
+struct lineinfo_t
+{
+    BOOL                        unicode;
+    PVOID                       key;
+    DWORD                       line_number;
+    union
+    {
+        CHAR*                   file_nameA;
+        WCHAR*                  file_nameW;
+    };
+    DWORD64                     address;
+};
+
+struct module_format;
+enum method_result {MR_SUCCESS, MR_FAILURE, MR_NOT_FOUND};
+struct module_format_vtable
+{
+    /* module handling */
+    void                        (*remove)(struct module_format* modfmt);
+
+    /* index management */
+    enum method_result          (*request_symref_t)(struct module_format *modfmt, symref_t ref, IMAGEHLP_SYMBOL_TYPE_INFO req, void *data);
+    enum method_result          (*lookup_by_address)(struct module_format *modfmt, DWORD_PTR address, symref_t *symref);
+    enum method_result          (*lookup_by_name)(struct module_format *modfmt, const char *name, symref_t *symref);
+    enum method_result          (*enumerate_symbols)(struct module_format *modfmt, const WCHAR *match, BOOL (*cb)(symref_t, const char *, void *), void *user);
+
+    /* types management */
+    enum method_result          (*find_type)(struct module_format *modfmt, const char *name, symref_t *ref);
+    enum method_result          (*enumerate_types)(struct module_format *modfmt, BOOL (*cb)(symref_t, const char *, void*), void *user);
+
+    /* stack walk */
+    void                        (*loc_compute)(const struct module_format* modfmt,
+                                               const struct symt_function* func,
+                                               struct location* loc);
+    /* line information */
+    enum method_result          (*get_line_from_address)(struct module_format *modfmt,
+                                                         DWORD64 address, struct lineinfo_t *line_info);
+    enum method_result          (*advance_line_info)(struct module_format *modfmt,
+                                                     struct lineinfo_t *line_info, BOOL forward);
+    enum method_result          (*enumerate_lines)(struct module_format *modfmt, const WCHAR* compiland_regex,
+                                                   const WCHAR *source_file_regex, PSYM_ENUMLINES_CALLBACK cb, void *user);
+    enum method_result          (*get_line_from_inlined_address)(struct module_format *modfmt, struct symt_function *inlined,
+                                                                 DWORD64 address, struct lineinfo_t *line_info);
+
+    /* source files information */
+    enum method_result          (*enumerate_sources)(struct module_format *modfmt, const WCHAR *sourcefile_regex,
+                                                     PSYM_ENUMSOURCEFILES_CALLBACKW cb, void *user);
 };
 
 struct module_format
 {
-    struct module*              module;
-    void                        (*remove)(struct process* pcs, struct module_format* modfmt);
-    void                        (*loc_compute)(struct process* pcs,
-                                               const struct module_format* modfmt,
-                                               const struct symt_function* func,
-                                               struct location* loc);
+    struct module*                      module;
+    const struct module_format_vtable*  vtable;
+
     union
     {
         struct elf_module_info*         elf_info;
         struct dwarf2_module_info_s*    dwarf2_info;
         struct pe_module_info*          pe_info;
-        struct macho_module_info*	macho_info;
+        struct macho_module_info*       macho_info;
+        struct old_pdb_module_info*     old_pdb_info;
         struct pdb_module_info*         pdb_info;
     } u;
 };
@@ -452,6 +505,12 @@ struct module
     /* specific information for debug types */
     struct module_format*       format_info[DFI_LAST];
     unsigned                    debug_format_bitmask;
+    /* Hack for fast symdef deref...
+     * Note: if ever we need another backend with dedicated symref_t support,
+     * we could always use the 3 non-zero lower bits of symref_t to match a
+     * debug backend.
+     */
+    struct module_format       *ops_symref_modfmt;
 
     /* memory allocation pool */
     struct pool                 pool;
@@ -469,7 +528,6 @@ struct module
 
     /* types */
     struct hash_table           ht_types;
-    struct vector               vtypes;
 
     /* source files */
     unsigned                    sources_used;
@@ -477,6 +535,29 @@ struct module
     char*                       sources;
     struct wine_rb_tree         sources_offsets_tree;
 };
+
+struct module_format_vtable_iterator
+{
+    int dfi;
+    struct module_format *modfmt;
+};
+
+#define MODULE_FORMAT_VTABLE_INDEX(f) (offsetof(struct module_format_vtable, f) / sizeof(void*))
+
+static inline BOOL module_format_vtable_iterator_next(struct module *module, struct module_format_vtable_iterator *iter, size_t method_index)
+{
+    for ( ; iter->dfi < DFI_LAST; iter->dfi++)
+    {
+        iter->modfmt = module->format_info[iter->dfi];
+        if (iter->modfmt && ((const void**)iter->modfmt->vtable)[method_index])
+        {
+            iter->dfi++;
+            return TRUE;
+        }
+    }
+    iter->modfmt = NULL;
+    return FALSE;
+}
 
 typedef BOOL (*enum_modules_cb)(const WCHAR*, ULONG_PTR addr, void* user);
 
@@ -741,30 +822,25 @@ extern void         module_reset_debug_info(struct module* module);
 extern BOOL         module_remove(struct process* pcs,
                                   struct module* module);
 extern void         module_set_module(struct module* module, const WCHAR* name);
-extern WCHAR*       get_wine_loader_name(struct process *pcs) __WINE_DEALLOC(HeapFree, 3) __WINE_MALLOC;
+extern const WCHAR *get_wine_loader_name(struct process *pcs);
 extern BOOL         module_is_wine_host(const WCHAR* module_name, const WCHAR* ext);
 extern BOOL         module_refresh_list(struct process *pcs);
 
 /* msc.c */
-extern BOOL         pe_load_debug_directory(const struct process* pcs,
-                                            struct module* module,
+extern BOOL         pdb_load_debug_info(struct module *module, const SYMSRV_INDEX_INFOW *info, BOOL unmatched);
+extern BOOL         pe_load_debug_directory(struct module* module,
                                             const BYTE* mapping,
                                             const IMAGE_SECTION_HEADER* sectp, DWORD nsect,
                                             const IMAGE_DEBUG_DIRECTORY* dbg, int nDbg);
 extern DWORD        msc_get_file_indexinfo(void* image, const IMAGE_DEBUG_DIRECTORY* dbgdir, DWORD size,
                                            SYMSRV_INDEX_INFOW* info);
-struct pdb_cmd_pair {
-    const char*         name;
-    DWORD*              pvalue;
-};
-extern BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
-    union ctx *context, struct pdb_cmd_pair *cpair);
-extern DWORD pdb_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
-extern DWORD dbg_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
+extern DWORD        pdb_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
+extern DWORD        dbg_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
+extern BOOL         old_pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip, union ctx *context);
 
 /* path.c */
-extern BOOL         path_find_symbol_file(const struct process *pcs, const struct module *module,
-                                          PCSTR full_path, BOOL is_pdb, const GUID* guid, DWORD dw1, DWORD dw2,
+extern BOOL         path_find_symbol_file(const struct module *module,
+                                          const WCHAR *full_path, BOOL is_pdb, const GUID* guid, DWORD dw1, DWORD dw2,
                                           SYMSRV_INDEX_INFOW *info, BOOL *unmatched);
 extern WCHAR *get_dos_file_name(const WCHAR *filename) __WINE_DEALLOC(HeapFree, 3) __WINE_MALLOC;
 extern BOOL         search_dll_path(const struct process* process, const WCHAR *name, WORD machine,
@@ -773,7 +849,16 @@ extern BOOL search_unix_path(const WCHAR *name, const WCHAR *path, BOOL (*match)
 extern const WCHAR* file_name(const WCHAR* str);
 extern const char* file_nameA(const char* str);
 
+/* pdb.c */
+extern BOOL         pdb_init_modfmt(const struct msc_debug_info *msc_dbg,
+                                    const WCHAR *filename, BOOL *has_linenumber_info);
+extern BOOL         pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip, union ctx *context);
+struct _PDB_FPO_DATA;
+extern BOOL         pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, struct _PDB_FPO_DATA* fpoext,
+                                                    const char* cmd, WOW64_CONTEXT *context);
+
 /* pe_module.c */
+extern unsigned     pe_clone_sections_table(struct module *module, IMAGE_SECTION_HEADER **sections);
 extern BOOL         pe_load_nt_header(HANDLE hProc, DWORD64 base, IMAGE_NT_HEADERS* nth, BOOL* is_builtin);
 extern struct module*
                     pe_load_native_module(struct process* pcs, const WCHAR* name,
@@ -781,8 +866,7 @@ extern struct module*
 extern struct module*
                     pe_load_builtin_module(struct process* pcs, const WCHAR* name,
                                            DWORD64 base, DWORD64 size);
-extern BOOL         pe_load_debug_info(const struct process* pcs,
-                                       struct module* module);
+extern BOOL         pe_load_debug_info(struct module* module);
 extern const char*  pe_map_directory(struct module* module, int dirno, DWORD* size);
 extern BOOL         pe_unmap_directory(struct module* module, int dirno, const char*);
 extern DWORD        pe_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
@@ -795,6 +879,7 @@ extern BOOL         pe_has_buildid_debug(struct image_file_map *fmap, GUID *guid
 extern unsigned     source_new(struct module* module, const char* basedir, const char* source);
 extern const char*  source_get(const struct module* module, unsigned idx);
 extern int          source_rb_compare(const void *key, const struct wine_rb_entry *entry);
+extern char        *source_build_path(const char *base, const char *name);
 
 /* stabs.c */
 typedef void (*stabs_def_cb)(struct module* module, ULONG_PTR load_offset,
@@ -827,54 +912,55 @@ extern BOOL         symt_get_address(const struct symt* type, ULONG64* addr);
 extern int __cdecl  symt_cmp_addr(const void* p1, const void* p2);
 extern void         copy_symbolW(SYMBOL_INFOW* siw, const SYMBOL_INFO* si);
 extern void         symbol_setname(SYMBOL_INFO* si, const char* name);
-extern struct symt_ht*
-                    symt_find_nearest(struct module* module, DWORD_PTR addr);
+extern BOOL         symt_match_stringAW(const char *string, const WCHAR *re, BOOL _case);
+extern symref_t     symt_find_nearest(struct module* module, DWORD_PTR addr);
 extern struct symt_ht*
                     symt_find_symbol_at(struct module* module, DWORD_PTR addr);
 extern struct symt_module*
                     symt_new_module(struct module* module);
 extern struct symt_compiland*
-                    symt_new_compiland(struct module* module, unsigned src_idx);
+                    symt_new_compiland(struct module* module, symref_t parent, const char *filename);
 extern struct symt_public*
-                    symt_new_public(struct module* module, 
-                                    struct symt_compiland* parent, 
+                    symt_new_public(struct module* module,
+                                    struct symt_compiland* parent,
                                     const char* typename,
                                     BOOL is_function,
                                     ULONG_PTR address,
                                     unsigned size);
 extern struct symt_data*
-                    symt_new_global_variable(struct module* module, 
+                    symt_new_global_variable(struct module* module,
                                              struct symt_compiland* parent,
                                              const char* name, unsigned is_static,
                                              struct location loc, ULONG_PTR size,
-                                             struct symt* type);
+                                             symref_t type);
 extern struct symt_function*
                     symt_new_function(struct module* module,
-                                      struct symt_compiland* parent,
+                                      symref_t compiland,
                                       const char* name,
                                       ULONG_PTR addr, ULONG_PTR size,
-                                      struct symt* type);
+                                      symref_t type, DWORD_PTR user);
 extern struct symt_function*
                     symt_new_inlinesite(struct module* module,
                                         struct symt_function* func,
                                         struct symt* parent,
                                         const char* name,
-                                        struct symt* type,
+                                        symref_t type,
+                                        DWORD_PTR user,
                                         unsigned num_ranges);
 extern void         symt_add_func_line(struct module* module,
                                        struct symt_function* func, 
                                        unsigned source_idx, int line_num, 
                                        ULONG_PTR offset);
 extern struct symt_data*
-                    symt_add_func_local(struct module* module, 
-                                        struct symt_function* func, 
+                    symt_add_func_local(struct module* module,
+                                        struct symt_function* func,
                                         enum DataKind dt, const struct location* loc,
                                         struct symt_block* block,
-                                        struct symt* type, const char* name);
+                                        symref_t, const char* name);
 extern struct symt_data*
                     symt_add_func_constant(struct module* module,
                                            struct symt_function* func, struct symt_block* block,
-                                           struct symt* type, const char* name, VARIANT* v);
+                                           symref_t, const char* name, VARIANT* v);
 extern struct symt_block*
                     symt_open_func_block(struct module* module,
                                          struct symt_function* func,
@@ -898,22 +984,46 @@ extern struct symt_thunk*
 extern struct symt_data*
                     symt_new_constant(struct module* module,
                                       struct symt_compiland* parent,
-                                      const char* name, struct symt* type,
+                                      const char* name, symref_t type,
                                       const VARIANT* v);
 extern struct symt_hierarchy_point*
                     symt_new_label(struct module* module,
                                    struct symt_compiland* compiland,
                                    const char* name, ULONG_PTR address);
-extern struct symt* symt_index2ptr(struct module* module, DWORD id);
-extern DWORD        symt_ptr2index(struct module* module, const struct symt* sym);
+static inline BOOL  symt_is_symref_ptr(symref_t ref) {return (ref & 3) == 0;}
+static inline symref_t
+                    symt_ptr_to_symref(const struct symt *symt) {return (ULONG_PTR)symt;}
+static inline struct symt*
+                    _symt_symref_to_ptr(const char *file, unsigned lineno, symref_t symref)
+{
+    if (!symt_is_symref_ptr(symref))
+    {
+        MESSAGE("%s:%u can't convert symref to ptr\n", file, lineno);
+        return NULL;
+    }
+    return (struct symt*)symref;
+}
+/* this function shall be used with care as not all symref:s are actual pointers */
+#define SYMT_SYMREF_TO_PTR(s) _symt_symref_to_ptr(__FILE__, __LINE__, (s))
+extern symref_t     symt_index_to_symref(struct module* module, DWORD id);
+extern DWORD        symt_symref_to_index(struct module* module, symref_t sym);
+static inline DWORD symt_ptr_to_index(struct module *module, const struct symt *symt) {return symt_symref_to_index(module, symt_ptr_to_symref(symt));}
+
 extern struct symt_custom*
                     symt_new_custom(struct module* module, const char* name,
                                     DWORD64 addr, DWORD size);
+extern BOOL         lineinfo_set_nameA(struct process* pcs, struct lineinfo_t* intl, char* str);
 
 /* type.c */
 extern void         symt_init_basic(struct module* module);
+extern BOOL         symt_get_info_raw(struct module* module, const struct symt* type,
+                                      IMAGEHLP_SYMBOL_TYPE_INFO req, void* pInfo);
 extern BOOL         symt_get_info(struct module* module, const struct symt* type,
                                   IMAGEHLP_SYMBOL_TYPE_INFO req, void* pInfo);
+extern BOOL         symt_get_info_from_index(struct module* module, DWORD index,
+                                             IMAGEHLP_SYMBOL_TYPE_INFO req, void* pInfo);
+extern BOOL         symt_get_info_from_symref(struct module* module, symref_t type,
+                                              IMAGEHLP_SYMBOL_TYPE_INFO req, void* pInfo);
 extern struct symt_basic*
                     symt_get_basic(enum BasicType, unsigned size);
 extern struct symt_udt*
@@ -921,17 +1031,17 @@ extern struct symt_udt*
                                  unsigned size, enum UdtKind kind);
 extern BOOL         symt_set_udt_size(struct module* module,
                                       struct symt_udt* type, unsigned size);
-extern BOOL         symt_add_udt_element(struct module* module, 
-                                         struct symt_udt* udt_type, 
+extern BOOL         symt_add_udt_element(struct module* module,
+                                         struct symt_udt* udt_type,
                                          const char* name,
-                                         struct symt* elt_type, unsigned offset, 
+                                         symref_t elt_type, unsigned offset,
                                          unsigned bit_offset, unsigned bit_size);
 extern struct symt_enum*
                     symt_new_enum(struct module* module, const char* typename,
                                   struct symt* basetype);
-extern BOOL         symt_add_enum_element(struct module* module, 
-                                          struct symt_enum* enum_type, 
-                                          const char* name, int value);
+extern BOOL         symt_add_enum_element(struct module* module,
+                                          struct symt_enum* enum_type,
+                                          const char* name, const VARIANT *value);
 extern struct symt_array*
                     symt_new_array(struct module* module, int min, DWORD count,
                                    struct symt* base, struct symt* index);
@@ -943,11 +1053,11 @@ extern BOOL         symt_add_function_signature_parameter(struct module* module,
                                                           struct symt_function_signature* sig,
                                                           struct symt* param);
 extern struct symt_pointer*
-                    symt_new_pointer(struct module* module, 
+                    symt_new_pointer(struct module* module,
                                      struct symt* ref_type,
                                      ULONG_PTR size);
 extern struct symt_typedef*
-                    symt_new_typedef(struct module* module, struct symt* ref, 
+                    symt_new_typedef(struct module* module, symref_t ref,
                                      const char* name);
 extern struct symt_function*
                     symt_find_lowest_inlined(struct symt_function* func, DWORD64 addr);

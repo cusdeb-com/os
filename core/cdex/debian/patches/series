@@ -17,3 +17,6 @@
 0017-save-resolution-on-displaychange.patch
 0018-start-menu-global-unfocus.patch
 0019-search-folder-contextmenu-pidl.patch
+0020-taskbar-erase-no-reinvalidate.patch
+0021-uxtheme-export-openthemedatafordpi.patch
+0022-external-task-icons.patch

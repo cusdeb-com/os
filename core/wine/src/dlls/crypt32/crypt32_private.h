@@ -26,6 +26,11 @@ BOOL CNG_ImportPubKey(CERT_PUBLIC_KEY_INFO *pubKeyInfo, BCRYPT_KEY_HANDLE *key);
 BOOL cng_prepare_signature(const char *alg_oid, BYTE *encoded_sig, DWORD encoded_sig_len,
     BYTE **sig_value, DWORD *sig_len);
 
+/* Returns a freshly-allocated, NUL-terminated UUID string suitable for use
+ * as a CSP key container name. Caller frees with CryptMemFree.  Returns
+ * NULL on failure. */
+WCHAR *CRYPT32_AllocateUniqueContainerName(void);
+
 /* a few asn.1 tags we need */
 #define ASN_BOOL            (ASN_UNIVERSAL | ASN_PRIMITIVE | 0x01)
 #define ASN_BITSTRING       (ASN_UNIVERSAL | ASN_PRIMITIVE | 0x03)
@@ -185,6 +190,7 @@ typedef struct {
 struct _context_t {
     const context_vtbl_t *vtbl;
     LONG ref;
+    BOOL deleted_from_store;
     struct WINE_CRYPTCERTSTORE *store;
     struct _context_t *linked;
     CONTEXT_PROPERTY_LIST *properties;
@@ -253,7 +259,10 @@ typedef BOOL (WINAPI *SetContextPropertyFunc)(const void *context,
  DWORD dwPropID, DWORD dwFlags, const void *pvData);
 typedef BOOL (WINAPI *SerializeElementFunc)(const void *context, DWORD dwFlags,
  BYTE *pbElement, DWORD *pcbElement);
-typedef BOOL (WINAPI *DeleteContextFunc)(const void *contex);
+typedef BOOL (WINAPI *DeleteContextFromStoreFunc)(const void *contex);
+typedef const void * (*FindContextByContextFunc)(HCERTSTORE store, const void *context);
+typedef const void * (WINAPI *DuplicateContextFunc)(const void *context);
+typedef void (WINAPI *FreeContextFunc)(const void *context);
 
 /* An abstract context (certificate, CRL, or CTL) interface */
 typedef struct _WINE_CONTEXT_INTERFACE
@@ -266,7 +275,10 @@ typedef struct _WINE_CONTEXT_INTERFACE
     GetContextPropertyFunc       getProp;
     SetContextPropertyFunc       setProp;
     SerializeElementFunc         serialize;
-    DeleteContextFunc            deleteFromStore;
+    DeleteContextFromStoreFunc   deleteFromStore;
+    FindContextByContextFunc     findContextByContext;
+    DuplicateContextFunc         duplicateContext;
+    FreeContextFunc              freeContext;
 } WINE_CONTEXT_INTERFACE;
 
 extern const WINE_CONTEXT_INTERFACE *pCertInterface;
@@ -349,10 +361,12 @@ WINECRYPT_CERTSTORE *CRYPT_FileNameOpenStoreW(HCRYPTPROV hCryptProv,
  DWORD dwFlags, const void *pvPara);
 
 void CRYPT_ImportSystemRootCertsToReg(void);
-BOOL CRYPT_SerializeContextsToReg(HKEY key, DWORD flags, const WINE_CONTEXT_INTERFACE *contextInterface,
-    HCERTSTORE memStore);
+BOOL CRYPT_SerializeContextToReg(HKEY key, DWORD flags, const WINE_CONTEXT_INTERFACE *context_iface,
+    const void *context);
 void CRYPT_RegReadSerializedFromReg(HKEY key, DWORD contextType,
     HCERTSTORE store, DWORD disposition);
+void CRYPT_RegDeleteFromReg(HKEY key, const BYTE *sha1_hash);
+void CRYPT_HashToStr(const BYTE *hash, LPWSTR asciiHash);
 
 DWORD CRYPT_IsCertificateSelfSigned(const CERT_CONTEXT *cert);
 
@@ -415,6 +429,8 @@ context_t *Context_CreateDataContext(size_t contextSize, const context_vtbl_t *v
  */
 context_t *Context_CreateLinkContext(unsigned contextSize, context_t *linked, struct WINE_CRYPTCERTSTORE*);
 
+BOOL CRYPT_DeleteCertificateFromStore(PCCERT_CONTEXT pCertContext);
+
 /* Copies properties from fromContext to toContext. */
 void Context_CopyProperties(const void *to, const void *from);
 
@@ -472,6 +488,7 @@ struct open_cert_store_params
     CRYPT_DATA_BLOB *pfx;
     const WCHAR *password;
     cert_store_data_t *data_ret;
+    unsigned int *key_count_ret;
 };
 
 struct import_store_key_params
@@ -501,6 +518,17 @@ struct enum_root_certs_params
     DWORD *needed;
 };
 
+struct export_cert_store_params
+{
+    const BYTE *cert_data;
+    DWORD       cert_size;
+    const BYTE *key_blob;
+    DWORD       key_blob_size;
+    const WCHAR *password;
+    BYTE        *pfx_data;
+    DWORD       *pfx_size;
+};
+
 enum unix_funcs
 {
     unix_process_attach,
@@ -510,6 +538,7 @@ enum unix_funcs
     unix_import_store_cert,
     unix_close_cert_store,
     unix_enum_root_certs,
+    unix_export_cert_store,
     unix_funcs_count,
 };
 

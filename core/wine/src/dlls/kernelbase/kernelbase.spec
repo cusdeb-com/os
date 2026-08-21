@@ -162,8 +162,10 @@
 @ stdcall CompareStringW(long long wstr long wstr long)
 @ stdcall ConnectNamedPipe(long ptr)
 @ stdcall ContinueDebugEvent(long long long)
+@ stdcall ConvertAuxiliaryCounterToPerformanceCounter(int64 ptr ptr)
 @ stdcall ConvertDefaultLocale(long)
 @ stdcall ConvertFiberToThread()
+@ stdcall ConvertPerformanceCounterToAuxiliaryCounter(int64 ptr ptr)
 @ stdcall ConvertThreadToFiber(ptr)
 @ stdcall ConvertThreadToFiberEx(ptr long)
 @ stdcall ConvertToAutoInheritPrivateObjectSecurity(ptr ptr ptr ptr long ptr)
@@ -190,6 +192,7 @@
 @ stdcall CreateFiberEx(long long long ptr ptr)
 @ stdcall CreateFile2(wstr long long long ptr)
 @ stdcall CreateFileA(str long long ptr long long long)
+@ stdcall CreateFileMapping2(long ptr long long long int64 wstr ptr long)
 @ stdcall CreateFileMappingFromApp(long ptr long int64 wstr)
 @ stdcall CreateFileMappingNumaW(long ptr long long long wstr long)
 @ stdcall CreateFileMappingW(long ptr long long long wstr)
@@ -241,6 +244,7 @@
 @ stdcall CtrlRoutine(ptr)
 # @ stub CveEventWrite
 @ stdcall DeactivateActCtx(long long)
+@ stdcall DeriveCapabilitySidsFromName(ptr ptr ptr ptr ptr)
 @ stdcall DebugActiveProcess(long)
 @ stdcall DebugActiveProcessStop(long)
 @ stdcall DebugBreak()
@@ -260,7 +264,7 @@
 # @ stub DeleteStateAtomValue
 # @ stub DeleteStateContainer
 # @ stub DeleteStateContainerValue
-# @ stub DeleteSynchronizationBarrier
+@ stdcall DeleteSynchronizationBarrier(ptr)
 @ stdcall DeleteTimerQueueEx(long long)
 @ stdcall DeleteTimerQueueTimer(long long long)
 @ stdcall DeleteVolumeMountPointW(wstr)
@@ -293,7 +297,7 @@
 @ stdcall EncodeSystemPointer(ptr) ntdll.RtlEncodeSystemPointer
 # @ stub EnterCriticalPolicySectionInternal
 @ stdcall EnterCriticalSection(ptr) ntdll.RtlEnterCriticalSection
-# @ stub EnterSynchronizationBarrier
+@ stdcall EnterSynchronizationBarrier(ptr long)
 @ stdcall EnumCalendarInfoExEx(ptr wstr long wstr long long)
 @ stdcall EnumCalendarInfoExW(ptr long long long)
 @ stdcall EnumCalendarInfoW(ptr long long long)
@@ -338,7 +342,7 @@
 @ stdcall EventSetInformation(int64 long ptr long) ntdll.EtwEventSetInformation
 @ stdcall EventUnregister(int64) ntdll.EtwEventUnregister
 @ stdcall EventWrite(int64 ptr long ptr) ntdll.EtwEventWrite
-# @ stub EventWriteEx
+@ stdcall EventWriteEx(int64 ptr int64 long ptr ptr long ptr) ntdll.EtwEventWriteEx
 @ stdcall EventWriteString(int64 long int64 ptr) ntdll.EtwEventWriteString
 @ stdcall EventWriteTransfer(int64 ptr ptr ptr long ptr) ntdll.EtwEventWriteTransfer
 @ stdcall ExitProcess(long) ntdll.RtlExitUserProcess
@@ -372,7 +376,7 @@
 @ stdcall FindNLSStringEx(wstr long wstr long wstr long ptr ptr ptr long)
 @ stdcall FindNextChangeNotification(long)
 @ stdcall FindNextFileA(long ptr)
-# @ stub FindNextFileNameW
+@ stdcall FindNextFileNameW(ptr ptr ptr)
 @ stdcall FindNextFileW(long ptr)
 @ stdcall FindNextStreamW(long ptr)
 @ stdcall FindNextVolumeW(long ptr long)
@@ -478,7 +482,7 @@
 @ stdcall GetCurrencyFormatEx(wstr long wstr ptr ptr long)
 @ stdcall GetCurrencyFormatW(long long wstr ptr ptr long)
 @ stdcall GetCurrentActCtx(ptr)
-# @ stub GetCurrentApplicationUserModelId
+@ stdcall GetCurrentApplicationUserModelId(ptr ptr)
 @ stdcall GetCurrentConsoleFont(long long ptr)
 @ stdcall GetCurrentConsoleFontEx(long long ptr)
 @ stdcall GetCurrentDirectoryA(long ptr)
@@ -512,6 +516,8 @@
 @ stdcall GetDiskFreeSpaceExA(str ptr ptr ptr)
 @ stdcall GetDiskFreeSpaceExW(wstr ptr ptr ptr)
 @ stdcall GetDiskFreeSpaceW(wstr ptr ptr ptr ptr)
+@ stdcall GetDiskSpaceInformationA(str ptr)
+@ stdcall GetDiskSpaceInformationW(wstr ptr)
 @ stdcall GetDriveTypeA(str)
 @ stdcall GetDriveTypeW(wstr)
 # @ stub GetDurationFormatEx
@@ -563,7 +569,7 @@
 @ stdcall GetGeoInfoEx(ptr long ptr long)
 @ stdcall GetHandleInformation(long ptr)
 # @ stub GetHivePath
-# @ stub GetIntegratedDisplaySize
+@ stdcall GetIntegratedDisplaySize(ptr)
 # @ stub GetIsEdpEnabled
 @ stdcall GetKernelObjectSecurity(long long ptr long ptr)
 @ stdcall GetLargePageMinimum()
@@ -581,6 +587,7 @@
 @ stdcall GetLogicalProcessorInformationEx(long ptr ptr)
 @ stdcall GetLongPathNameA(str ptr long)
 @ stdcall GetLongPathNameW(wstr ptr long)
+@ stdcall GetMachineTypeAttributes(long ptr)
 @ stdcall GetMappedFileNameA(long ptr ptr long)
 @ stdcall GetMappedFileNameW(long ptr ptr long)
 # @ stub GetMemoryErrorHandlingCapabilities
@@ -815,7 +822,7 @@
 @ stdcall HeapReAlloc(long long ptr long) ntdll.RtlReAllocateHeap
 @ stdcall HeapSetInformation(ptr long ptr long)
 @ stdcall HeapSize(long long ptr) ntdll.RtlSizeHeap
-@ stub HeapSummary
+@ stdcall HeapSummary(long long ptr)
 @ stdcall HeapUnlock(long)
 @ stdcall HeapValidate(long long ptr)
 @ stdcall HeapWalk(long ptr)
@@ -845,7 +852,7 @@
 @ stdcall InitializeSRWLock(ptr) ntdll.RtlInitializeSRWLock
 @ stdcall InitializeSecurityDescriptor(ptr long)
 @ stdcall InitializeSid(ptr ptr long)
-# @ stub InitializeSynchronizationBarrier
+@ stdcall InitializeSynchronizationBarrier(ptr long long)
 # @ stub InstallELAMCertificateInfo
 @ stdcall -arch=i386 InterlockedCompareExchange(ptr long long)
 @ stdcall -arch=i386 -ret64 InterlockedCompareExchange64(ptr int64 int64) ntdll.RtlInterlockedCompareExchange64
@@ -1190,8 +1197,8 @@
 # @ stub PerfQueryInstance
 @ stdcall PerfSetCounterRefValue(long ptr long ptr)
 @ stdcall PerfSetCounterSetInfo(long ptr long)
-# @ stub PerfSetULongCounterValue
-# @ stub PerfSetULongLongCounterValue
+@ stdcall PerfSetULongCounterValue(long ptr long long)
+@ stdcall PerfSetULongLongCounterValue(long ptr long int64)
 @ stdcall PerfStartProvider(ptr ptr ptr)
 @ stdcall PerfStartProviderEx(ptr ptr ptr)
 @ stdcall PerfStopProvider(long)
@@ -1214,10 +1221,10 @@
 # @ stub PsmIsChildKey
 # @ stub PsmIsDynamicKey
 # @ stub PsmIsValidKey
-# @ stub PssCaptureSnapshot
+@ stdcall PssCaptureSnapshot(ptr long long ptr)
 # @ stub PssDuplicateSnapshot
-# @ stub PssFreeSnapshot
-# @ stub PssQuerySnapshot
+@ stdcall PssFreeSnapshot(ptr ptr)
+@ stdcall PssQuerySnapshot(ptr long ptr long)
 # @ stub PssWalkMarkerCreate
 # @ stub PssWalkMarkerFree
 # @ stub PssWalkMarkerGetPosition
@@ -1258,6 +1265,7 @@
 @ stdcall QueryWorkingSet(long ptr long)
 @ stdcall QueryWorkingSetEx(long ptr long)
 @ stdcall QueueUserAPC(ptr long long)
+@ stdcall QueueUserAPC2(ptr long long long)
 @ stdcall QueueUserWorkItem(ptr ptr long)
 # @ stub QuirkGetData
 # @ stub QuirkGetData2
@@ -1723,7 +1731,7 @@
 @ stdcall VirtualLock(ptr long)
 @ stdcall VirtualProtect(ptr long long ptr)
 @ stdcall VirtualProtectEx(long ptr long long ptr)
-# @ stub VirtualProtectFromApp
+@ stdcall VirtualProtectFromApp(ptr long long ptr)
 @ stdcall VirtualQuery(ptr ptr long)
 @ stdcall VirtualQueryEx(long ptr ptr long)
 @ stdcall VirtualUnlock(ptr long)
@@ -1749,10 +1757,12 @@
 @ stdcall WakeByAddressSingle(ptr) ntdll.RtlWakeAddressSingle
 @ stdcall WakeConditionVariable(ptr) ntdll.RtlWakeConditionVariable
 @ stdcall WerGetFlags(ptr ptr)
+@ stdcall WerRegisterCustomMetadata(wstr wstr)
 @ stdcall WerRegisterFile(wstr long long)
 @ stdcall WerRegisterMemoryBlock(ptr long)
 @ stdcall WerRegisterRuntimeExceptionModule(wstr ptr)
 @ stdcall WerSetFlags(long)
+@ stdcall WerUnregisterCustomMetadata(wstr)
 @ stdcall WerUnregisterFile(wstr)
 @ stdcall WerUnregisterMemoryBlock(ptr)
 @ stdcall WerUnregisterRuntimeExceptionModule(wstr ptr)

@@ -108,7 +108,7 @@ typedef struct {
 #define EVENT_CANCELABLE         0x0008
 /* Event may have default handler (so we always have to register Gecko listener). */
 #define EVENT_HASDEFAULTHANDLERS 0x0020
-/* Ecent is not supported properly, print FIXME message when it's used. */
+/* Event is not supported properly, print FIXME message when it's used. */
 #define EVENT_FIXME              0x0040
 
 /* mouse event flags for fromElement and toElement implementation */
@@ -161,6 +161,8 @@ static const event_info_t event_info[] = {
         EVENT_BUBBLES | EVENT_CANCELABLE},
     {L"input",             EVENT_TYPE_EVENT,     DISPID_UNKNOWN,
         EVENT_DEFAULTLISTENER | EVENT_BUBBLES},
+    {L"invalid",           EVENT_TYPE_EVENT,     DISPID_EVPROP_INVALID,
+        EVENT_BIND_TO_TARGET | EVENT_CANCELABLE},
     {L"keydown",           EVENT_TYPE_KEYBOARD,  DISPID_EVMETH_ONKEYDOWN,
         EVENT_DEFAULTLISTENER | EVENT_HASDEFAULTHANDLERS | EVENT_BUBBLES | EVENT_CANCELABLE },
     {L"keypress",          EVENT_TYPE_KEYBOARD,  DISPID_EVMETH_ONKEYPRESS,
@@ -1809,7 +1811,7 @@ static const tid_t MSEventObj_iface_tids[] = {
 };
 
 dispex_static_data_t MSEventObj_dispex = {
-    .id         = PROT_MSEventObj,
+    .id         = OBJID_MSEventObj,
     .vtbl       = &HTMLEventObj_dispex_vtbl,
     .disp_tid   = DispCEventObj_tid,
     .iface_tids = MSEventObj_iface_tids,
@@ -3582,7 +3584,7 @@ static const tid_t Event_iface_tids[] = {
 };
 
 dispex_static_data_t Event_dispex = {
-    .id         = PROT_Event,
+    .id         = OBJID_Event,
     .vtbl       = &DOMEvent_dispex_vtbl,
     .disp_tid   = DispDOMEvent_tid,
     .iface_tids = Event_iface_tids,
@@ -3602,8 +3604,8 @@ static const tid_t UIEvent_iface_tids[] = {
 };
 
 dispex_static_data_t UIEvent_dispex = {
-    .id           = PROT_UIEvent,
-    .prototype_id = PROT_Event,
+    .id           = OBJID_UIEvent,
+    .prototype_id = OBJID_Event,
     .vtbl         = &DOMUIEvent_dispex_vtbl,
     .disp_tid     = DispDOMUIEvent_tid,
     .iface_tids   = UIEvent_iface_tids,
@@ -3624,8 +3626,8 @@ static const tid_t MouseEvent_iface_tids[] = {
 };
 
 dispex_static_data_t MouseEvent_dispex = {
-    .id           = PROT_MouseEvent,
-    .prototype_id = PROT_UIEvent,
+    .id           = OBJID_MouseEvent,
+    .prototype_id = OBJID_UIEvent,
     .vtbl         = &DOMMouseEvent_dispex_vtbl,
     .disp_tid     = DispDOMMouseEvent_tid,
     .iface_tids   = MouseEvent_iface_tids,
@@ -3654,8 +3656,8 @@ static const tid_t KeyboardEvent_iface_tids[] = {
 };
 
 dispex_static_data_t KeyboardEvent_dispex = {
-    .id           = PROT_KeyboardEvent,
-    .prototype_id = PROT_UIEvent,
+    .id           = OBJID_KeyboardEvent,
+    .prototype_id = OBJID_UIEvent,
     .vtbl         = &DOMKeyboardEvent_dispex_vtbl,
     .disp_tid     = DispDOMKeyboardEvent_tid,
     .iface_tids   = KeyboardEvent_iface_tids,
@@ -3675,8 +3677,8 @@ static const dispex_static_data_vtbl_t DOMPageTransitionEvent_dispex_vtbl = {
 };
 
 dispex_static_data_t PageTransitionEvent_dispex = {
-    .id              = PROT_PageTransitionEvent,
-    .prototype_id    = PROT_Event,
+    .id              = OBJID_PageTransitionEvent,
+    .prototype_id    = OBJID_Event,
     .vtbl            = &DOMPageTransitionEvent_dispex_vtbl,
     .disp_tid        = DispDOMEvent_tid,
     .iface_tids      = Event_iface_tids,
@@ -3698,8 +3700,8 @@ static const tid_t CustomEvent_iface_tids[] = {
 };
 
 dispex_static_data_t CustomEvent_dispex = {
-    .id           = PROT_CustomEvent,
-    .prototype_id = PROT_Event,
+    .id           = OBJID_CustomEvent,
+    .prototype_id = OBJID_Event,
     .vtbl         = &DOMCustomEvent_dispex_vtbl,
     .disp_tid     = DispDOMCustomEvent_tid,
     .iface_tids   = CustomEvent_iface_tids,
@@ -3713,8 +3715,8 @@ static const dispex_static_data_vtbl_t DOMMessageEvent_dispex_vtbl = {
 };
 
 dispex_static_data_t MessageEvent_dispex = {
-    .id           = PROT_MessageEvent,
-    .prototype_id = PROT_Event,
+    .id           = OBJID_MessageEvent,
+    .prototype_id = OBJID_Event,
     .vtbl         = &DOMMessageEvent_dispex_vtbl,
     .disp_tid     = DispDOMMessageEvent_tid,
     .iface_tids   = Event_iface_tids,
@@ -3735,8 +3737,8 @@ static const tid_t ProgressEvent_iface_tids[] = {
 };
 
 dispex_static_data_t ProgressEvent_dispex = {
-    .id              = PROT_ProgressEvent,
-    .prototype_id    = PROT_Event,
+    .id              = OBJID_ProgressEvent,
+    .prototype_id    = OBJID_Event,
     .vtbl            = &DOMProgressEvent_dispex_vtbl,
     .disp_tid        = DispDOMProgressEvent_tid,
     .iface_tids      = ProgressEvent_iface_tids,
@@ -3757,8 +3759,8 @@ static const tid_t StorageEvent_iface_tids[] = {
 };
 
 dispex_static_data_t StorageEvent_dispex = {
-    .id           = PROT_StorageEvent,
-    .prototype_id = PROT_Event,
+    .id           = OBJID_StorageEvent,
+    .prototype_id = OBJID_Event,
     .vtbl         = &DOMStorageEvent_dispex_vtbl,
     .disp_tid     = DispDOMStorageEvent_tid,
     .iface_tids   = StorageEvent_iface_tids,
@@ -4746,10 +4748,11 @@ HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var
         return set_event_handler_disp(event_target, eid, V_DISPATCH(var));
 
     case VT_BSTR: {
+        compat_mode_t compat_mode = dispex_compat_mode(&event_target->dispex);
         VARIANT *v;
         HRESULT hres;
 
-        if(!use_event_quirks(event_target))
+        if(compat_mode == COMPAT_MODE_IE8)
             FIXME("Setting to string %s not supported\n", debugstr_w(V_BSTR(var)));
 
         /*
@@ -4759,6 +4762,8 @@ HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var
          * properties.
          */
         remove_event_handler(event_target, eid);
+        if(compat_mode >= COMPAT_MODE_IE9)
+            return S_OK;
 
         hres = get_event_dispex_ref(event_target, eid, TRUE, &v);
         if(FAILED(hres))
@@ -4879,6 +4884,45 @@ void update_doc_cp_events(HTMLDocumentNode *doc, cp_static_data_t *cp)
     }
 }
 
+void event_attr_changed(HTMLDocumentNode *doc, nsIDOMElement *nselem, const WCHAR *name)
+{
+    nsAString name_str, value_str;
+    const PRUnichar *value;
+    HTMLDOMNode *node;
+    IDispatch *disp;
+    eventid_t eid;
+    nsresult nsres;
+    HRESULT hres;
+
+    eid = attr_to_eid(name);
+    if(eid == EVENTID_LAST)
+        return;
+
+    hres = get_node((nsIDOMNode*)nselem, TRUE, &node);
+    if(FAILED(hres))
+        return;
+
+    nsAString_InitDepend(&name_str, name);
+    nsAString_InitDepend(&value_str, NULL);
+
+    nsres = nsIDOMElement_GetAttribute(nselem, &name_str, &value_str);
+    if(NS_SUCCEEDED(nsres)) {
+        nsAString_GetData(&value_str, &value);
+
+        TRACE("%p.%s = %s\n", nselem, debugstr_w(name), debugstr_w(value));
+
+        disp = script_parse_event(doc->window, value);
+        if(disp) {
+            set_event_handler_disp(get_node_event_prop_target(node, eid), eid, disp);
+            IDispatch_Release(disp);
+        }
+    }
+
+    node_release(node);
+    nsAString_Finish(&name_str);
+    nsAString_Finish(&value_str);
+}
+
 void check_event_attr(HTMLDocumentNode *doc, nsIDOMElement *nselem)
 {
     nsIDOMMozNamedAttrMap *attr_map;
@@ -4964,8 +5008,9 @@ HRESULT doc_init_events(HTMLDocumentNode *doc)
     unsigned i;
     HRESULT hres;
 
-    doc->event_vector = calloc(EVENTID_LAST, sizeof(BOOL));
-    if(!doc->event_vector)
+    if(doc->event_vector)
+        memset(doc->event_vector, 0, EVENTID_LAST * sizeof(BOOL));
+    else if(!(doc->event_vector = calloc(EVENTID_LAST, sizeof(BOOL))))
         return E_OUTOFMEMORY;
 
     init_nsevents(doc);

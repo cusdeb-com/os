@@ -29,6 +29,7 @@
 #include "winuser.h"
 #include "winreg.h"
 #include "ole2.h"
+#include "pathcch.h"
 #include "ks.h"
 #include "ksmedia.h"
 #include "amvideo.h"
@@ -42,6 +43,7 @@
 #include "evr.h"
 #include "mfmediaengine.h"
 #include "codecapi.h"
+#include "rtworkq.h"
 
 #include "wine/test.h"
 
@@ -59,6 +61,23 @@
 #include "mfd3d12.h"
 #include "wmcodecdsp.h"
 #include "dvdmedia.h"
+
+static void run_child_test(const char *name)
+{
+    char path_name[MAX_PATH];
+    PROCESS_INFORMATION info;
+    STARTUPINFOA startup;
+    char **argv;
+
+    winetest_get_mainargs(&argv);
+
+    memset(&startup, 0, sizeof(startup));
+    startup.cb = sizeof(startup);
+    sprintf(path_name, "%s mfplat %s", argv[0], name);
+    ok(CreateProcessA( NULL, path_name, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info),
+            "CreateProcess failed.\n" );
+    wait_child_process(&info);
+}
 
 DEFINE_GUID(DUMMY_CLSID, 0x12345678,0x1234,0x1234,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19);
 DEFINE_GUID(DUMMY_GUID1, 0x12345678,0x1234,0x1234,0x21,0x21,0x21,0x21,0x21,0x21,0x21,0x21);
@@ -101,6 +120,8 @@ DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_wmvr,MAKEFOURCC('w','m','v','r'));
 DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_wvp2,MAKEFOURCC('w','v','p','2'));
 DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_X264,MAKEFOURCC('X','2','6','4'));
 DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_x264,MAKEFOURCC('x','2','6','4'));
+
+DEFINE_GUID(MF_XVP_PLAYBACK_MODE, 0x3c5d293f, 0xad67, 0x4e29, 0xaf, 0x12, 0xcf, 0x3e, 0x23, 0x8a, 0xcc, 0xe9);
 
 static BOOL is_win8_plus;
 
@@ -217,6 +238,46 @@ static void check_attributes_(const char *file, int line, IMFAttributes *attribu
                 debugstr_a(desc[i].name), value.vt, buffer);
         PropVariantClear(&value);
     }
+}
+
+#define check_platform_lock_count(a) check_platform_lock_count_(__LINE__, a)
+static void check_platform_lock_count_(unsigned int line, unsigned int expected)
+{
+    int i, count = 0;
+    BOOL unexpected;
+    DWORD queue;
+    HRESULT hr;
+
+    for (;;)
+    {
+        if (FAILED(hr = MFAllocateWorkQueue(&queue)))
+        {
+            unexpected = hr != MF_E_SHUTDOWN;
+            break;
+        }
+        MFUnlockWorkQueue(queue);
+
+        hr = MFUnlockPlatform();
+        if ((unexpected = FAILED(hr)))
+            break;
+
+        ++count;
+    }
+
+    for (i = 0; i < count; ++i)
+        MFLockPlatform();
+
+    if (unexpected)
+        count = -1;
+
+    ok_(__FILE__, line)(count == expected, "Unexpected lock count %d.\n", count);
+}
+
+static void path_copy_replace_filename(WCHAR *dst_path, size_t size, const WCHAR *src_path, const WCHAR *filename)
+{
+    lstrcpyW(dst_path, src_path);
+    PathCchRemoveFileSpec(dst_path, size);
+    PathCchAppend(dst_path, size, filename);
 }
 
 struct d3d9_surface_readback
@@ -508,6 +569,12 @@ static HRESULT (WINAPI *pMFLockSharedWorkQueue)(const WCHAR *name, LONG base_pri
 static HRESULT (WINAPI *pMFLockDXGIDeviceManager)(UINT *token, IMFDXGIDeviceManager **manager);
 static HRESULT (WINAPI *pMFUnlockDXGIDeviceManager)(void);
 static HRESULT (WINAPI *pMFInitVideoFormat_RGB)(MFVIDEOFORMAT *format, DWORD width, DWORD height, DWORD d3dformat);
+static HRESULT (WINAPI *pMFCreateD3D12SynchronizationObject)(ID3D12Device *device, REFIID riid, void **obj);
+
+static HRESULT (WINAPI *pRtwqStartup)(void);
+static HRESULT (WINAPI *pRtwqShutdown)(void);
+static HRESULT (WINAPI *pRtwqLockPlatform)(void);
+static HRESULT (WINAPI *pRtwqUnlockPlatform)(void);
 
 static HWND create_window(void)
 {
@@ -573,6 +640,10 @@ static WCHAR *load_resource(const WCHAR *name)
 static BOOL is_MEDIASUBTYPE_RGB(const GUID *subtype)
 {
     return IsEqualGUID(subtype, &MEDIASUBTYPE_RGB8)
+            || IsEqualGUID(subtype, &MEDIASUBTYPE_RGB1)
+            || IsEqualGUID(subtype, &MEDIASUBTYPE_RGB4)
+            || IsEqualGUID(subtype, &MEDIASUBTYPE_ARGB1555)
+            || IsEqualGUID(subtype, &MEDIASUBTYPE_ARGB32)
             || IsEqualGUID(subtype, &MEDIASUBTYPE_RGB555)
             || IsEqualGUID(subtype, &MEDIASUBTYPE_RGB565)
             || IsEqualGUID(subtype, &MEDIASUBTYPE_RGB24)
@@ -831,8 +902,8 @@ static HRESULT WINAPI test_create_from_url_callback_Invoke(IMFAsyncCallback *ifa
 {
     struct test_callback *callback = impl_from_IMFAsyncCallback(iface);
     IMFSourceResolver *resolver;
-    IUnknown *object, *object2;
     MF_OBJECT_TYPE obj_type;
+    IUnknown *object;
     HRESULT hr;
 
     ok(!!result, "Unexpected result object.\n");
@@ -843,13 +914,8 @@ static HRESULT WINAPI test_create_from_url_callback_Invoke(IMFAsyncCallback *ifa
     hr = IMFSourceResolver_EndCreateObjectFromURL(resolver, result, &obj_type, &object);
     ok(hr == S_OK, "Failed to create an object, hr %#lx.\n", hr);
 
-    hr = IMFAsyncResult_GetObject(result, &object2);
-    ok(hr == S_OK, "Failed to get result object, hr %#lx.\n", hr);
-    ok(object2 == object, "Unexpected object.\n");
-
     if (object)
         IUnknown_Release(object);
-    IUnknown_Release(object2);
 
     SetEvent(callback->event);
 
@@ -988,6 +1054,9 @@ static BOOL get_event(IMFMediaEventGenerator *generator, MediaEventType expected
 
             break;
         }
+
+        IMFMediaEvent_Release(callback->media_event);
+        callback->media_event = NULL;
     }
 
     if (callback->media_event)
@@ -1034,6 +1103,34 @@ static void test_compressed_media_types(IMFSourceResolver *resolver)
                 ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1, .todo = TRUE),
                 ATTR_UINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High, .todo = TRUE),
                 ATTR_UINT32(MF_MT_MPEG2_LEVEL, eAVEncH264VLevel2, .todo = TRUE),
+            },
+        },
+        {
+            L"test-h264-par.mp4",
+            L"video/mp4",
+            {
+                ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+                ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_H264, .todo_value = TRUE),
+                ATTR_GUID(MF_MT_AM_FORMAT_TYPE, FORMAT_MPEG2Video, .todo = TRUE),
+                ATTR_RATIO(MF_MT_FRAME_SIZE, 128, 96),
+                ATTR_RATIO(MF_MT_FRAME_RATE, 25, 1),
+                ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 3, 4, .todo = TRUE),
+                ATTR_UINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High, .todo = TRUE),
+                ATTR_UINT32(MF_MT_MPEG2_LEVEL, eAVEncH264VLevel1, .todo = TRUE),
+            },
+        },
+        {
+            L"test-h264-wrong-par.mp4",
+            L"video/mp4",
+            {
+                ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+                ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_H264, .todo_value = TRUE),
+                ATTR_GUID(MF_MT_AM_FORMAT_TYPE, FORMAT_MPEG2Video, .todo = TRUE),
+                ATTR_RATIO(MF_MT_FRAME_SIZE, 128, 96),
+                ATTR_RATIO(MF_MT_FRAME_RATE, 25, 1),
+                ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 15, 16, .todo = TRUE),
+                ATTR_UINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High, .todo = TRUE),
+                ATTR_UINT32(MF_MT_MPEG2_LEVEL, eAVEncH264VLevel1, .todo = TRUE),
             },
         },
         {
@@ -1172,6 +1269,7 @@ static void test_compressed_media_types(IMFSourceResolver *resolver)
         IMFStreamDescriptor_Release(sd);
 
         IMFPresentationDescriptor_Release(descriptor);
+        IMFMediaSource_Shutdown(source);
         IMFMediaSource_Release(source);
         IMFByteStream_Release(stream);
 
@@ -1214,6 +1312,30 @@ static void test_source_resolver(void)
     UINT32 rotation;
     ULONG refcount;
     BOOL ret;
+
+    static const struct
+    {
+        const WCHAR *chars;
+        UINT win_error;
+        BOOL todo;
+    }
+    leading_char_tests[] =
+    {
+        {L"/",            ERROR_SUCCESS},
+        {L"//",           ERROR_SUCCESS},
+        {L"///",          ERROR_SUCCESS},
+        {L"/////",        ERROR_SUCCESS},
+        {L":",            ERROR_INVALID_NAME, TRUE},
+        {L"::",           ERROR_PATH_NOT_FOUND},
+        {L":::::",        ERROR_PATH_NOT_FOUND},
+        {L"/file://",     ERROR_INVALID_NAME, TRUE},
+        {L"//file://",    ERROR_BAD_NETPATH, TRUE},
+        {L"///file://",   ERROR_INVALID_NAME, TRUE},
+        {L"/////file://", ERROR_BAD_NETPATH, TRUE},
+        {L":file://",     ERROR_INVALID_NAME, TRUE},
+        {L"::file://",    ERROR_PATH_NOT_FOUND},
+        {L":::::file://", ERROR_PATH_NOT_FOUND},
+    };
 
     if (!pMFCreateSourceResolver)
     {
@@ -1279,6 +1401,24 @@ static void test_source_resolver(void)
     if (SUCCEEDED(hr))
         WaitForSingleObject(callback->event, INFINITE);
 
+    /* With leading forward slashes or colons. */
+    for (i = 0; i < ARRAY_SIZE(leading_char_tests); ++i)
+    {
+        winetest_push_context("test %d", i);
+
+        lstrcpyW(pathW, leading_char_tests[i].chars);
+        lstrcatW(pathW, filename);
+
+        hr = IMFSourceResolver_CreateObjectFromURL(resolver, pathW, MF_RESOLUTION_BYTESTREAM, NULL, &obj_type,
+                (IUnknown **)&stream);
+        todo_wine_if(leading_char_tests[i].todo)
+        ok(hr == HRESULT_FROM_WIN32(leading_char_tests[i].win_error), "Unexpected hr %#lx.\n", hr);
+        if (SUCCEEDED(hr))
+            IMFByteStream_Release(stream);
+
+        winetest_pop_context();
+    }
+
     /* With explicit scheme. */
     lstrcpyW(pathW, fileschemeW);
     lstrcatW(pathW, filename);
@@ -1290,6 +1430,71 @@ static void test_source_resolver(void)
 
     /* We have to create a new bytestream here, because all following
      * calls to CreateObjectFromByteStream will fail. */
+    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    path_copy_replace_filename(pathW, ARRAY_SIZE(pathW), filename, L"noextension");
+
+    hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, pathW, MF_RESOLUTION_MEDIASOURCE, NULL,
+            &obj_type, (IUnknown **)&mediasource);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
+    IMFByteStream_Release(stream);
+
+    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* MF_RESOLUTION_CONTENT_DOES_NOT_HAVE_TO_MATCH_EXTENSION_OR_MIME_TYPE is not required if mime mismatches. */
+    hr = IMFByteStream_QueryInterface(stream, &IID_IMFAttributes, (void **)&attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_SetString(attributes, &MF_BYTESTREAM_CONTENT_TYPE, L"video/avi");
+    ok(hr == S_OK, "Failed to set string value, hr %#lx.\n", hr);
+    IMFAttributes_Release(attributes);
+
+    hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, pathW, MF_RESOLUTION_MEDIASOURCE, NULL,
+            &obj_type, (IUnknown **)&mediasource);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
+    IMFByteStream_Release(stream);
+
+    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    path_copy_replace_filename(pathW, ARRAY_SIZE(pathW), filename, L"temp.foo");
+
+    hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, pathW, MF_RESOLUTION_MEDIASOURCE, NULL,
+            &obj_type, (IUnknown **)&mediasource);
+    todo_wine
+    ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
+    IMFByteStream_Release(stream);
+
+    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, pathW,
+            MF_RESOLUTION_MEDIASOURCE | MF_RESOLUTION_CONTENT_DOES_NOT_HAVE_TO_MATCH_EXTENSION_OR_MIME_TYPE,
+            NULL, &obj_type, (IUnknown **)&mediasource);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
+    IMFByteStream_Release(stream);
+
     hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
@@ -1319,8 +1524,8 @@ static void test_source_resolver(void)
     ok(mediasource != NULL, "got %p\n", mediasource);
     ok(obj_type == MF_OBJECT_MEDIASOURCE, "got %d\n", obj_type);
 
+    IMFMediaSource_Shutdown(mediasource);
     refcount = IMFMediaSource_Release(mediasource);
-    todo_wine
     ok(!refcount, "Unexpected refcount %ld\n", refcount);
     IMFByteStream_Release(stream);
 
@@ -1332,7 +1537,11 @@ static void test_source_resolver(void)
     hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, NULL, MF_RESOLUTION_MEDIASOURCE, NULL,
             &obj_type, (IUnknown **)&mediasource);
     ok(hr == S_OK || broken(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE) /* w7 || w8 */, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK) IMFMediaSource_Release(mediasource);
+    if (hr == S_OK)
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
     IMFByteStream_Release(stream);
 
     hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
@@ -1344,7 +1553,11 @@ static void test_source_resolver(void)
     hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, NULL, MF_RESOLUTION_MEDIASOURCE, NULL,
             &obj_type, (IUnknown **)&mediasource);
     ok(hr == S_OK || broken(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE) /* w7 || w8 */, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK) IMFMediaSource_Release(mediasource);
+    if (hr == S_OK)
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
     IMFByteStream_Release(stream);
 
     /* stream must have a valid header, media cannot start in the middle of a stream */
@@ -1638,6 +1851,8 @@ static void test_source_resolver(void)
             (void **)&scheme_handler);
     ok(hr == S_OK, "Failed to create handler object, hr %#lx.\n", hr);
 
+    lstrcpyW(pathW, fileschemeW);
+    lstrcatW(pathW, filename);
     cancel_cookie = NULL;
     hr = IMFSchemeHandler_BeginCreateObject(scheme_handler, pathW, MF_RESOLUTION_MEDIASOURCE, NULL, &cancel_cookie,
             &callback2->IMFAsyncCallback_iface, (IUnknown *)scheme_handler);
@@ -1705,6 +1920,7 @@ static void init_functions(void)
     X(MFTUnregisterLocal);
     X(MFTUnregisterLocalByCLSID);
     X(MFUnlockDXGIDeviceManager);
+    X(MFCreateD3D12SynchronizationObject);
 
     if ((mod = LoadLibraryA("d3d11.dll")))
     {
@@ -1719,6 +1935,14 @@ static void init_functions(void)
     mod = GetModuleHandleA("ole32.dll");
 
     X(CoGetApartmentType);
+
+    if ((mod = LoadLibraryA("rtworkq.dll")))
+    {
+        X(RtwqStartup);
+        X(RtwqShutdown);
+        X(RtwqUnlockPlatform);
+        X(RtwqLockPlatform);
+    }
 #undef X
 
     is_win8_plus = pMFPutWaitingWorkItem != NULL;
@@ -2899,7 +3123,6 @@ static void test_MFCreateMFByteStreamOnStream(void)
 
 static void test_file_stream(void)
 {
-    static const WCHAR newfilename[] = L"new.mp4";
     IMFByteStream *bytestream, *bytestream2;
     QWORD bytestream_length, position;
     IMFAttributes *attributes = NULL;
@@ -2997,8 +3220,11 @@ static void test_file_stream(void)
 
     IMFByteStream_Release(bytestream);
 
+    GetTempPathW(ARRAY_SIZE(pathW), pathW);
+    lstrcatW(pathW, L"new.mp4");
+
     hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST,
-                      MF_FILEFLAGS_NONE, newfilename, &bytestream);
+                      MF_FILEFLAGS_NONE, pathW, &bytestream);
     ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Unexpected hr %#lx.\n", hr);
 
     hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_EXIST,
@@ -3006,31 +3232,32 @@ static void test_file_stream(void)
     ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_EXISTS), "Unexpected hr %#lx.\n", hr);
 
     hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_EXIST,
-                      MF_FILEFLAGS_NONE, newfilename, &bytestream);
+                      MF_FILEFLAGS_NONE, pathW, &bytestream);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
-    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, newfilename, &bytestream2);
+    hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, pathW, &bytestream2);
     ok(hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION), "Unexpected hr %#lx.\n", hr);
 
-    hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, newfilename, &bytestream2);
+    hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, pathW, &bytestream2);
     ok(hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION), "Unexpected hr %#lx.\n", hr);
 
     hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_ALLOW_WRITE_SHARING,
-            newfilename, &bytestream2);
+            pathW, &bytestream2);
     ok(hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION), "Unexpected hr %#lx.\n", hr);
 
     IMFByteStream_Release(bytestream);
 
     hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_NOT_EXIST,
-                      MF_FILEFLAGS_ALLOW_WRITE_SHARING, newfilename, &bytestream);
+                      MF_FILEFLAGS_ALLOW_WRITE_SHARING, pathW, &bytestream);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     /* Opening the file again fails even though MF_FILEFLAGS_ALLOW_WRITE_SHARING is set. */
     hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_ALLOW_WRITE_SHARING,
-            newfilename, &bytestream2);
+            pathW, &bytestream2);
     ok(hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION), "Unexpected hr %#lx.\n", hr);
 
     IMFByteStream_Release(bytestream);
+    DeleteFileW(pathW);
 
     /* Explicit file: scheme */
     lstrcpyW(pathW, fileschemeW);
@@ -3045,8 +3272,6 @@ static void test_file_stream(void)
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
-
-    DeleteFileW(newfilename);
 }
 
 static void test_system_memory_buffer(void)
@@ -3825,6 +4050,8 @@ static void test_MFCreateAsyncResult(void)
 
 static void test_startup(void)
 {
+    struct test_callback *callback;
+    IMFAsyncResult *result;
     DWORD queue;
     HRESULT hr;
 
@@ -3834,10 +4061,7 @@ static void test_startup(void)
     hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
     ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
 
-    hr = MFAllocateWorkQueue(&queue);
-    ok(hr == S_OK, "Failed to allocate a queue, hr %#lx.\n", hr);
-    hr = MFUnlockWorkQueue(queue);
-    ok(hr == S_OK, "Failed to unlock the queue, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
@@ -3852,10 +4076,7 @@ static void test_startup(void)
     hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
     ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
 
-    hr = MFAllocateWorkQueue(&queue);
-    ok(hr == S_OK, "Failed to allocate a queue, hr %#lx.\n", hr);
-    hr = MFUnlockWorkQueue(queue);
-    ok(hr == S_OK, "Failed to unlock the queue, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
@@ -3864,10 +4085,7 @@ static void test_startup(void)
     hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
     ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
 
-    hr = MFAllocateWorkQueue(&queue);
-    ok(hr == S_OK, "Failed to allocate a queue, hr %#lx.\n", hr);
-    hr = MFUnlockWorkQueue(queue);
-    ok(hr == S_OK, "Failed to unlock the queue, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
 
     /* Unlocking implies shutdown. */
     hr = MFUnlockPlatform();
@@ -3879,13 +4097,250 @@ static void test_startup(void)
     hr = MFLockPlatform();
     ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
 
-    hr = MFAllocateWorkQueue(&queue);
-    ok(hr == S_OK, "Failed to allocate a queue, hr %#lx.\n", hr);
-    hr = MFUnlockWorkQueue(queue);
-    ok(hr == S_OK, "Failed to unlock the queue, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    if (!pRtwqStartup)
+    {
+        win_skip("RtwqStartup() not found.\n");
+        return;
+    }
+
+    /* Rtwq equivalence */
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    hr = pRtwqStartup();
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+    hr = pRtwqShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
+
+    /* Matching MFStartup() with RtwqShutdown() causes shutdown. */
+    hr = pRtwqShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Failed to allocate a queue, hr %#lx.\n", hr);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    /* RtwqStartup() enables MF functions */
+    hr = pRtwqStartup();
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    check_platform_lock_count(1);
+
+    callback = create_test_callback(NULL);
+
+    /* MF platform lock is the Rtwq lock */
+    hr = pRtwqUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock platform, hr %#lx.\n", hr);
+
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Failed to allocate a queue, hr %#lx.\n", hr);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
+
+    hr = pRtwqLockPlatform();
+    ok(hr == S_OK, "Failed to lock platform, hr %#lx.\n", hr);
+    check_platform_lock_count(2);
+
+    IMFAsyncResult_Release(result);
+
+    hr = pRtwqShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
+}
+
+void test_startup_counts(void)
+{
+    IMFAsyncResult *result, *result2, *callback_result;
+    struct test_callback *callback;
+    MFWORKITEM_KEY key, key2;
+    DWORD res, queue;
+    LONG refcount;
+    HRESULT hr;
+
+    hr = MFLockPlatform();
+    ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    hr = MFUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock, %#lx.\n", hr);
+
+    callback = create_test_callback(&test_async_callback_result_vtbl);
+
+    /* Create async results without startup. */
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result2);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    IMFAsyncResult_Release(result);
+    IMFAsyncResult_Release(result2);
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+    /* Before startup the platform lock count does not track the maximum AsyncResult count. */
+    check_platform_lock_count(1);
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+    /* Startup only locks once. */
+    check_platform_lock_count(1);
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    /* Platform locked by the AsyncResult object. */
+    check_platform_lock_count(2);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result2);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    check_platform_lock_count(3);
+
+    IMFAsyncResult_Release(result);
+    IMFAsyncResult_Release(result2);
+    /* Platform lock count for AsyncResult objects does not decrease
+     * unless the platform is in shutdown state. */
+    check_platform_lock_count(3);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    /* Platform lock count tracks the maximum AsyncResult count plus one for startup. */
+    check_platform_lock_count(3);
+    IMFAsyncResult_Release(result);
+
+    hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    res = wait_async_callback_result(&callback->IMFAsyncCallback_iface, 100, &callback_result);
+    ok(res == 0, "got %#lx\n", res);
+    refcount = IMFAsyncResult_Release(callback_result);
+    /* Release of an internal lock occurs in a worker thread. */
+    flaky_wine
+    ok(!refcount, "Unexpected refcount %ld.\n", refcount);
+    check_platform_lock_count(3);
+
+    hr = MFLockPlatform();
+    ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
+    hr = MFLockPlatform();
+    ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
+    check_platform_lock_count(5);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    /* Platform is in shutdown state if either the lock count or the startup count is <= 0. */
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    /* Platform can be unlocked after shutdown. */
+    hr = MFUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock, %#lx.\n", hr);
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    /* Platform locks for AsyncResult objects were released on shutdown, but the explicit lock was not. */
+    check_platform_lock_count(2);
+    hr = MFUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock, %#lx.\n", hr);
+    check_platform_lock_count(1);
+
+    hr = MFUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock, %#lx.\n", hr);
+    /* Zero lock count. */
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    hr = MFUnlockPlatform();
+    ok(hr == S_OK, "Failed to unlock, %#lx.\n", hr);
+    /* Negative lock count. */
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    hr = MFLockPlatform();
+    ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
+    hr = MFLockPlatform();
+    ok(hr == S_OK, "Failed to lock, %#lx.\n", hr);
+    check_platform_lock_count(1);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    check_platform_lock_count(2);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    /* Release an AsyncResult object after shutdown. Lock count tracks the AsyncResult count.
+     * It's not possible to show if unlock occurs immedately or on the next startup. */
+    IMFAsyncResult_Release(result);
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+    check_platform_lock_count(1);
+
+    hr = MFCreateAsyncResult(NULL, &callback->IMFAsyncCallback_iface, NULL, &result);
+    ok(hr == S_OK, "Failed to create result, hr %#lx.\n", hr);
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+    check_platform_lock_count(2);
+    /* Release an AsyncResult object after shutdown and startup */
+    IMFAsyncResult_Release(result);
+    check_platform_lock_count(2);
+
+    hr = MFScheduleWorkItem(&callback->IMFAsyncCallback_iface, NULL, -5000, &key);
+    ok(hr == S_OK, "Failed to schedule item, hr %#lx.\n", hr);
+    /* The AsyncResult created for the item locks the platform */
+    check_platform_lock_count(2);
+
+    hr = MFScheduleWorkItem(&callback->IMFAsyncCallback_iface, NULL, -5000, &key2);
+    ok(hr == S_OK, "Failed to schedule item, hr %#lx.\n", hr);
+    check_platform_lock_count(3);
+
+    /* Platform locks for scheduled items are not released */
+    hr = MFCancelWorkItem(key);
+    ok(hr == S_OK, "Failed to cancel item, hr %#lx.\n", hr);
+    hr = MFCancelWorkItem(key2);
+    ok(hr == S_OK, "Failed to cancel item, hr %#lx.\n", hr);
+    check_platform_lock_count(3);
+
+    hr = MFScheduleWorkItem(&callback->IMFAsyncCallback_iface, NULL, -5000, &key);
+    ok(hr == S_OK, "Failed to schedule item, hr %#lx.\n", hr);
+    check_platform_lock_count(3);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    hr = MFAllocateWorkQueue(&queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFCancelWorkItem(key);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    res = wait_async_callback_result(&callback->IMFAsyncCallback_iface, 0, &result);
+    ok(res == WAIT_TIMEOUT, "got res %#lx\n", res);
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    /* Shutdown while a scheduled item is pending leaks the internal AsyncResult. */
+    check_platform_lock_count(2);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
 }
 
 static void test_allocate_queue(void)
@@ -4135,8 +4590,6 @@ static void test_scheduled_items(void)
     hr = MFCancelWorkItem(key2);
     ok(hr == S_OK, "Failed to cancel item, hr %#lx.\n", hr);
 
-    IMFAsyncResult_Release(result);
-
     hr = MFScheduleWorkItem(&callback->IMFAsyncCallback_iface, NULL, -5000, &key);
     ok(hr == S_OK, "Failed to schedule item, hr %#lx.\n", hr);
 
@@ -4145,6 +4598,12 @@ static void test_scheduled_items(void)
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    Sleep(20);
+    /* A callback invocation with RTWQ_E_OPERATION_CANCELLED may have been pending
+     * when MFShutdown() was called. Release depends upon its execution. */
+    refcount = IMFAsyncResult_Release(result);
+    ok(refcount == 0, "Unexpected refcount %lu.\n", refcount);
 
     IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
 }
@@ -4340,12 +4799,26 @@ static void test_event_queue(void)
     hr = IMFMediaEventQueue_EndGetEvent(queue, result, &event);
     ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
 
+
     /* Shutdown behavior. */
+    hr = MFCreateMediaEvent(MEError, &GUID_NULL, E_FAIL, NULL, &event);
+    ok(hr == S_OK, "Failed to create event object, hr %#lx.\n", hr);
+    hr = IMFMediaEventQueue_QueueEvent(queue, event);
+    ok(hr == S_OK, "Failed to queue event, hr %#lx.\n", hr);
+    IMFMediaEvent_Release(event);
+
     hr = IMFMediaEventQueue_Shutdown(queue);
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
 
+    event = (void *)0xdeadbeef;
+    hr = IMFMediaEventQueue_GetEvent(queue, 0, &event);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    ok(event == (void *)0xdeadbeef, "Unexpected event %p.\n", event);
+    event = (void *)0xdeadbeef;
     hr = IMFMediaEventQueue_GetEvent(queue, MF_EVENT_FLAG_NO_WAIT, &event);
     ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    ok(event == (void *)0xdeadbeef, "Unexpected event %p.\n", event);
+
 
     hr = MFCreateMediaEvent(MEError, &GUID_NULL, E_FAIL, NULL, &event);
     ok(hr == S_OK, "Failed to create event object, hr %#lx.\n", hr);
@@ -4391,6 +4864,34 @@ static void test_event_queue(void)
     ok(ret == 1 || broken(ret == 2) /* Vista */,
        "Unexpected refcount %ld, expected 1.\n", ret);
     IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
+    IMFAsyncCallback_Release(&callback2->IMFAsyncCallback_iface);
+
+
+    callback = create_test_callback(&test_async_callback_result_vtbl);
+
+    hr = MFCreateEventQueue(&queue);
+    ok(hr == S_OK, "Failed to create event queue, hr %#lx.\n", hr);
+    hr = IMFMediaEventQueue_BeginGetEvent(queue, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "Failed to Begin*, hr %#lx.\n", hr);
+    hr = IMFMediaEventQueue_QueueEventParamVar(queue, MEError, &GUID_NULL, E_FAIL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaEventQueue_Shutdown(queue);
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    ret = WaitForSingleObject(callback->event, 500);
+    ok(ret == WAIT_OBJECT_0, "Unexpected return value %#lx.\n", ret);
+    result = callback->result;
+    callback->result = NULL;
+
+    event = (void *)0xdeadbeef;
+    hr = IMFMediaEventQueue_EndGetEvent(queue, result, &event);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    ok(event == (void *)0xdeadbeef, "Unexpected event %p.\n", event);
+    IMFAsyncResult_Release(result);
+
+    IMFMediaEventQueue_Release(queue);
+    IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
+
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
@@ -5316,6 +5817,7 @@ image_size_tests[] =
     { &MFVideoFormat_NV12, 3, 2, 12, 9, 192, 9, 64 },
     { &MFVideoFormat_NV12, 4, 2, 12, 0, 192, 12, 64 },
     { &MFVideoFormat_NV12, 320, 240, 115200, 0, 115200, 115200, 320 },
+    { &MFVideoFormat_NV12, 650, 850, 828750, 0, 897600, 828750, 704 },
 
     /* YUV 4:2:0, 12 bpp, planar, half stride (the secondary plane has
      * the same height, half the width and half the stride of the
@@ -5388,6 +5890,13 @@ image_size_tests[] =
     { &MFVideoFormat_IYUV, 4, 2, 12, 0, 384, 12, 128 },
     { &MFVideoFormat_IYUV, 4, 3, 18, 0, 576, 18, 128 },
     { &MFVideoFormat_IYUV, 320, 240, 115200, 0, 138240, 115200, 384 },
+
+    { &MFVideoFormat_P010, 1, 2, 12, 6, 192, 6, 64 },
+    { &MFVideoFormat_P010, 2, 2, 12, 0, 192, 12, 64 },
+    { &MFVideoFormat_P010, 2, 4, 24, 0, 384, 24, 64 },
+    { &MFVideoFormat_P010, 3, 2, 24, 18, 192, 18, 64 },
+    { &MFVideoFormat_P010, 4, 2, 24, 0, 192, 24, 64 },
+    { &MFVideoFormat_P010, 320, 240, 230400, 0, 230400, 230400, 640 },
 };
 
 static void test_MFCalculateImageSize(void)
@@ -5648,11 +6157,15 @@ static void test_MFCreateWaveFormatExFromMFMediaType(void)
     {
         const GUID *subtype;
         WORD format_tag;
+        UINT32 size;
+        WORD size_field;
     }
     wave_fmt_tests[] =
     {
-        { &MFAudioFormat_PCM,   WAVE_FORMAT_PCM, },
-        { &MFAudioFormat_Float, WAVE_FORMAT_IEEE_FLOAT, },
+        { &MFAudioFormat_PCM, WAVE_FORMAT_PCM, sizeof(WAVEFORMATEX), 0, },
+        { &MFAudioFormat_Float, WAVE_FORMAT_IEEE_FLOAT, sizeof(WAVEFORMATEX), 0, },
+        { &MFAudioFormat_MP3, WAVE_FORMAT_MPEGLAYER3, sizeof(WAVEFORMATEX), 0, },
+        { &DUMMY_GUID3, WAVE_FORMAT_EXTENSIBLE, sizeof(WAVEFORMATEXTENSIBLE), 22, },
     };
     WAVEFORMATEXTENSIBLE *format_ext;
     IMFMediaType *mediatype;
@@ -5680,20 +6193,21 @@ static void test_MFCreateWaveFormatExFromMFMediaType(void)
 
     for (i = 0; i < ARRAY_SIZE(wave_fmt_tests); ++i)
     {
+        winetest_push_context("test %d", i);
         hr = IMFMediaType_SetGUID(mediatype, &MF_MT_SUBTYPE, wave_fmt_tests[i].subtype);
         ok(hr == S_OK, "Failed to set attribute, hr %#lx.\n", hr);
 
         hr = MFCreateWaveFormatExFromMFMediaType(mediatype, &format, &size, MFWaveFormatExConvertFlag_Normal);
         ok(hr == S_OK, "Failed to create format, hr %#lx.\n", hr);
         ok(format != NULL, "Expected format structure.\n");
-        ok(size == sizeof(*format), "Unexpected size %u.\n", size);
+        ok(size == wave_fmt_tests[i].size, "Unexpected size %u.\n", size);
         ok(format->wFormatTag == wave_fmt_tests[i].format_tag, "Expected tag %u, got %u.\n", wave_fmt_tests[i].format_tag, format->wFormatTag);
         ok(format->nChannels == 0, "Unexpected number of channels, %u.\n", format->nChannels);
         ok(format->nSamplesPerSec == 0, "Unexpected sample rate, %lu.\n", format->nSamplesPerSec);
         ok(format->nAvgBytesPerSec == 0, "Unexpected average data rate rate, %lu.\n", format->nAvgBytesPerSec);
         ok(format->nBlockAlign == 0, "Unexpected alignment, %u.\n", format->nBlockAlign);
         ok(format->wBitsPerSample == 0, "Unexpected sample size, %u.\n", format->wBitsPerSample);
-        ok(format->cbSize == 0, "Unexpected size field, %u.\n", format->cbSize);
+        ok(format->cbSize == wave_fmt_tests[i].size_field, "Unexpected size field, %u.\n", format->cbSize);
         CoTaskMemFree(format);
 
         hr = MFCreateWaveFormatExFromMFMediaType(mediatype, (WAVEFORMATEX **)&format_ext, &size,
@@ -5714,8 +6228,9 @@ static void test_MFCreateWaveFormatExFromMFMediaType(void)
 
         hr = MFCreateWaveFormatExFromMFMediaType(mediatype, &format, &size, MFWaveFormatExConvertFlag_ForceExtensible + 1);
         ok(hr == S_OK, "Failed to create format, hr %#lx.\n", hr);
-        ok(size == sizeof(*format), "Unexpected size %u.\n", size);
+        ok(size == wave_fmt_tests[i].size, "Unexpected size %u.\n", size);
         CoTaskMemFree(format);
+        winetest_pop_context();
     }
 
     IMFMediaType_Release(mediatype);
@@ -6039,6 +6554,9 @@ static void test_local_handlers(void)
         return;
     }
 
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
     hr = pMFRegisterLocalSchemeHandler(NULL, NULL);
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
 
@@ -6068,6 +6586,9 @@ static void test_local_handlers(void)
 
     hr = pMFRegisterLocalByteStreamHandler(localW, localW, &local_activate);
     ok(hr == S_OK, "Failed to register stream handler, hr %#lx.\n", hr);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
 }
 
 static void test_create_property_store(void)
@@ -6437,6 +6958,208 @@ static void test_dxgi_device_manager(void)
     IMFDXGIDeviceManager_Release(manager2);
 }
 
+static IMFSample *create_dxgi_sample(ID3D11Device *device, UINT32 color, UINT bind_flags)
+{
+    D3D11_TEXTURE2D_DESC desc = {
+        .Width = 1,
+        .Height = 1,
+        .MipLevels = 1,
+        .ArraySize = 1,
+        .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
+        .SampleDesc = {
+            .Count = 1,
+            .Quality = 0,
+        },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = bind_flags,
+        .CPUAccessFlags = 0,
+        .MiscFlags = 0,
+    };
+    D3D11_SUBRESOURCE_DATA data = {
+        .pSysMem = &color,
+        .SysMemPitch = 4,
+        .SysMemSlicePitch = 4,
+    };
+    IMFSample *sample;
+    ID3D11Texture2D *texture;
+    IMFMediaBuffer *buffer;
+    HRESULT hr;
+
+    hr = ID3D11Device_CreateTexture2D(device, &desc, &data, &texture);
+    ok(hr == S_OK, "Failed to create d3d11 texture, hr %#lx.\n", hr);
+
+    hr = pMFCreateDXGISurfaceBuffer(&IID_ID3D11Texture2D, (IUnknown *) texture, 0, FALSE, &buffer);
+    ok(hr == S_OK, "Failed to create dxgi surface buffer, hr %#lx.\n", hr);
+
+    hr = IMFMediaBuffer_SetCurrentLength(buffer, 4);
+    ok(hr == S_OK, "Failed to set media buffer length, hr %#lx.\n", hr);
+
+    hr = MFCreateSample(&sample);
+    ok(hr == S_OK, "Failed create sample, hr %#lx.\n", hr);
+
+    hr = IMFSample_AddBuffer(sample, buffer);
+    ok(hr == S_OK, "Failed add buffer to sample, hr %#lx.\n", hr);
+
+    hr = IMFSample_SetSampleTime(sample, 0);
+    ok(hr == S_OK, "Failed to set sample time, hr %#lx.\n", hr);
+
+    hr = IMFSample_SetSampleDuration(sample, 10000000/60);
+    ok(hr == S_OK, "Failed to set sample duration, hr %#lx.\n", hr);
+
+    IMFMediaBuffer_Release(buffer);
+    ID3D11Texture2D_Release(texture);
+
+    return sample;
+}
+
+static IMFSample *test_xvp_process_sample(IMFTransform *xvp, IMFSample *in_sample, IMFSample *out_sample)
+{
+    IMFMediaBuffer *out_buffer;
+    HRESULT hr;
+    MFT_OUTPUT_DATA_BUFFER out = {
+        .dwStreamID = 0,
+        .pSample = out_sample,
+        .dwStatus = 0,
+        .pEvents = NULL,
+    };
+    DWORD status;
+    BYTE *out_data;
+    DWORD out_length;
+
+    hr = IMFTransform_ProcessInput(xvp, 0, in_sample, 0);
+    ok(hr == S_OK, "Failed to process input, hr %#lx.\n", hr);
+
+    hr = IMFTransform_ProcessOutput(xvp, 0, 1, &out, &status);
+    ok(hr == S_OK, "Failed to process output, hr %#lx.\n", hr);
+
+    hr = IMFSample_ConvertToContiguousBuffer(out.pSample, &out_buffer);
+    ok(hr == S_OK, "Failed to convert sample to contiguous buffer, hr %#lx.\n", hr);
+
+    hr = IMFMediaBuffer_Lock(out_buffer, &out_data, &out_length, NULL);
+    ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+
+    ok(out_length == 4, "Output sample length should be 4.\n");
+    ok(*(UINT32 *) out_data == 0xdeadbeef, "Output sample should be populated with input data.\n");
+
+    hr = IMFMediaBuffer_Unlock(out_buffer);
+    ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+
+    IMFMediaBuffer_Release(out_buffer);
+
+    if (out.pEvents) IMFCollection_Release(out.pEvents);
+
+    return out.pSample;
+}
+
+static void test_xvp_playback_mode(void)
+{
+    HRESULT hr;
+    UINT reset_token;
+    MFT_OUTPUT_STREAM_INFO out_info;
+    IMFDXGIDeviceManager *manager;
+    ID3D11Device *device;
+    IMFTransform *xvp;
+    IMFAttributes *xvp_attrs;
+    IMFSample *in_sample, *out_sample, *got_out_sample;
+    IMFMediaType *type;
+
+    if (!pMFCreateDXGIDeviceManager)
+    {
+        win_skip("MFCreateDXGIDeviceManager not found.\n");
+        return;
+    }
+
+    if (!pMFCreateDXGISurfaceBuffer)
+    {
+        win_skip("MFCreateDXGISurfaceBuffer() is not available.\n");
+        return;
+    }
+
+    hr = pD3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                           NULL, 0, D3D11_SDK_VERSION, &device, NULL, NULL);
+    if (FAILED(hr))
+    {
+        skip("Failed to create D3D11 device object.\n");
+        return;
+    }
+
+    hr = pMFCreateDXGIDeviceManager(&reset_token, &manager);
+    ok(hr == S_OK, "Failed to create device manager, hr %#lx.\n", hr);
+
+    hr = IMFDXGIDeviceManager_ResetDevice(manager, (IUnknown *) device, reset_token);
+    ok(hr == S_OK, "Failed to reset device manager, hr %#lx.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_VideoProcessorMFT, NULL, CLSCTX_INPROC_SERVER, &IID_IMFTransform, (void **) &xvp);
+    ok(hr == S_OK, "Failed to create video processor MFT, hr %#lx.\n", hr);
+
+    hr = IMFTransform_ProcessMessage(xvp, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR) manager);
+    if (hr == E_NOINTERFACE)
+    {
+        win_skip("D3D11 manager does not support video processing.\n");
+        goto end;
+    }
+    ok(hr == S_OK, "Failed to set D3D manager, hr %#lx.\n", hr);
+
+    hr = IMFTransform_GetAttributes(xvp, &xvp_attrs);
+    ok(hr == S_OK, "Failed to get video processor attributes\n");
+
+    hr = MFCreateMediaType(&type);
+    ok(hr == S_OK, "Failed create media type, hr %#lx.\n", hr);
+
+    hr = IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+    ok(hr == S_OK, "Failed to set major type, hr %#lx.\n", hr);
+
+    hr = IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFVideoFormat_ARGB32);
+    ok(hr == S_OK, "Failed to set subtype, hr %#lx.\n", hr);
+
+    hr = IMFMediaType_SetUINT64(type, &MF_MT_FRAME_SIZE, ((UINT64) 1 << 32) | 1);
+    ok(hr == S_OK, "Failed to frame size, hr %#lx.\n", hr);
+
+    hr = IMFTransform_SetInputType(xvp, 0, type, 0);
+    ok(hr == S_OK, "Failed to set input type, hr %#lx.\n", hr);
+
+    hr = IMFTransform_SetOutputType(xvp, 0, type, 0);
+    ok(hr == S_OK, "Failed to set output type, hr %#lx.\n", hr);
+
+    hr = IMFTransform_GetOutputStreamInfo(xvp, 0, &out_info);
+    ok(hr == S_OK, "Failed to get output stream info, hr %#lx.\n", hr);
+
+    ok(out_info.cbSize == 4, "Output size should be 4.\n");
+
+    in_sample = create_dxgi_sample(device, 0xdeadbeef, 0);
+
+    if ((out_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) || (out_info.dwFlags & MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES))
+    {
+        got_out_sample = test_xvp_process_sample(xvp, in_sample, NULL);
+        IMFSample_Release(got_out_sample);
+    }
+    else
+    {
+        win_skip("Video processor MFT can't provide output samples.\n");
+    }
+
+    hr = IMFTransform_ProcessMessage(xvp, MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+    ok(hr == S_OK, "Failed to end streaming, hr %#lx.\n", hr);
+
+    hr = IMFAttributes_SetUINT32(xvp_attrs, &MF_XVP_PLAYBACK_MODE, TRUE);
+    ok(hr == S_OK, "Failed to set MF_XVP_PLAYBACK_MODE, hr %#lx.\n", hr);
+
+    out_sample = create_dxgi_sample(device, 0, D3D11_BIND_RENDER_TARGET);
+    got_out_sample = test_xvp_process_sample(xvp, in_sample, out_sample);
+
+    ok(got_out_sample == out_sample, "Video processor should use caller-provided sample.\n");
+
+    if (got_out_sample != out_sample) IMFSample_Release(got_out_sample);
+    IMFSample_Release(in_sample);
+    IMFSample_Release(out_sample);
+    IMFMediaType_Release(type);
+    IMFAttributes_Release(xvp_attrs);
+end:
+    IMFTransform_Release(xvp);
+    IMFDXGIDeviceManager_Release(manager);
+    ID3D11Device_Release(device);
+}
+
 static void test_MFCreateTransformActivate(void)
 {
     IMFActivate *activate;
@@ -6607,9 +7330,7 @@ static void test_queue_com(void)
         sprintf(path_name, "%s mfplat s%d", argv[0], system_queues[i]);
         ok(CreateProcessA( NULL, path_name, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info),
                 "CreateProcess failed.\n" );
-        wait_child_process(info.hProcess);
-        CloseHandle(info.hProcess);
-        CloseHandle(info.hThread);
+        wait_child_process(&info);
     }
 
     for (i = 0; i < ARRAY_SIZE(user_queues); ++i)
@@ -6619,9 +7340,7 @@ static void test_queue_com(void)
         sprintf(path_name, "%s mfplat u%d", argv[0], user_queues[i]);
         ok(CreateProcessA( NULL, path_name, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info),
                 "CreateProcess failed.\n" );
-        wait_child_process(info.hProcess);
-        CloseHandle(info.hProcess);
-        CloseHandle(info.hThread);
+        wait_child_process(&info);
     }
 }
 
@@ -7589,6 +8308,40 @@ static void test_MFCreateMediaBufferFromMediaType(void)
 
     IMFMediaBuffer_Release(buffer);
 
+    hr = IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFVideoFormat_NV12);
+    ok(hr == S_OK, "Failed to set attribute, hr %#lx.\n", hr);
+    hr = IMFMediaType_SetUINT64(media_type, &MF_MT_FRAME_SIZE, (UINT64)96 << 32 | 96);
+    ok(hr == S_OK, "Failed to set attribute, hr %#lx.\n", hr);
+    hr = IMFMediaType_SetUINT32(media_type, &MF_MT_DEFAULT_STRIDE, 96);
+    ok(hr == S_OK, "Failed to set attribute, hr %#lx.\n", hr);
+    hr = pMFCreateMediaBufferFromMediaType(media_type, 0, 0, 0, &buffer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&buffer_2d);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMF2DBuffer_Lock2D(buffer_2d, &data, &pitch);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(pitch == 128, "got pitch %ld.\n", pitch);
+    hr = IMF2DBuffer_Unlock2D(buffer_2d);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMF2DBuffer_Release(buffer_2d);
+
+    IMFMediaBuffer_Release(buffer);
+
+    /* A linear buffer is created for YUV if MF_MT_DEFAULT_STRIDE is negative */
+    hr = IMFMediaType_SetUINT32(media_type, &MF_MT_DEFAULT_STRIDE, -128);
+    ok(hr == S_OK, "Failed to set attribute, hr %#lx.\n", hr);
+    hr = pMFCreateMediaBufferFromMediaType(media_type, 0, 0, 0, &buffer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&buffer_2d);
+    todo_wine
+    ok(hr == E_NOINTERFACE, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+        IMF2DBuffer_Release(buffer_2d);
+
+    IMFMediaBuffer_Release(buffer);
+
     /* MF_MT_FRAME_SIZE doesn't work with compressed formats */
     hr = IMFMediaType_DeleteItem(media_type, &MF_MT_FRAME_SIZE);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -7931,7 +8684,6 @@ static void test_MFInitMediaTypeFromWaveFormatEx(void)
     hr = IMFMediaType_DeleteItem(mediatype, &MF_MT_USER_DATA);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = MFCreateWaveFormatExFromMFMediaType(mediatype, (WAVEFORMATEX **)&wfx, &size, 0);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     if (hr == S_OK)
     {
@@ -8078,6 +8830,46 @@ static void test_MFCreateMFVideoFormatFromMFMediaType(void)
     IMFMediaType_Release(media_type);
 }
 
+static const struct guid_type_pair
+{
+    const GUID *am_type;
+    const GUID *mf_type;
+} am_mf_guid_tests[] =
+{
+    /* these RGB formats are converted, MEDIASUBTYPE variant isn't
+     * defined using DEFINE_MEDIATYPE_GUID */
+    { &MEDIASUBTYPE_RGB1, &MFVideoFormat_RGB1 },
+    { &MEDIASUBTYPE_RGB4, &MFVideoFormat_RGB4 },
+    { &MEDIASUBTYPE_RGB8, &MFVideoFormat_RGB8 },
+    { &MEDIASUBTYPE_RGB555, &MFVideoFormat_RGB555 },
+    { &MEDIASUBTYPE_RGB565, &MFVideoFormat_RGB565 },
+    { &MEDIASUBTYPE_RGB24, &MFVideoFormat_RGB24 },
+    { &MEDIASUBTYPE_RGB32, &MFVideoFormat_RGB32 },
+    { &MEDIASUBTYPE_ARGB1555, &MFVideoFormat_ARGB1555 },
+    { &MEDIASUBTYPE_ARGB4444, &MFVideoFormat_ARGB4444 },
+    { &MEDIASUBTYPE_ARGB32, &MFVideoFormat_ARGB32 },
+    { &MEDIASUBTYPE_A2R10G10B10, &MFVideoFormat_A2B10G10R10 },
+    { &MEDIASUBTYPE_A2B10G10R10, &MFVideoFormat_A2R10G10B10 },
+
+    /* any other GUID is passed through */
+    { &MEDIASUBTYPE_I420, &MFVideoFormat_I420 },
+    { &MEDIASUBTYPE_AYUV, &MFVideoFormat_AYUV },
+    { &MEDIASUBTYPE_YV12, &MFVideoFormat_YV12 },
+    { &MEDIASUBTYPE_YUY2, &MFVideoFormat_YUY2 },
+    { &MEDIASUBTYPE_UYVY, &MFVideoFormat_UYVY },
+    { &MEDIASUBTYPE_YVYU, &MFVideoFormat_YVYU },
+    { &MEDIASUBTYPE_NV12, &MFVideoFormat_NV12 },
+
+    /* even formats that don't exist in MF */
+    { &DUMMY_GUID3, &DUMMY_GUID3 },
+    { &MEDIASUBTYPE_NV24, &MEDIASUBTYPE_NV24 },
+    { &MEDIASUBTYPE_P208, &MEDIASUBTYPE_P208 },
+
+    /* if the mapping is ambiguous, it is not corrected */
+    { &MEDIASUBTYPE_h264, &MEDIASUBTYPE_h264 },
+    { &MEDIASUBTYPE_H264, &MFVideoFormat_H264 },
+};
+
 static void test_MFInitAMMediaTypeFromMFMediaType(void)
 {
     static const MFVideoArea aperture = {.OffsetX = {.fract = 1, .value = 2}, .OffsetY = {.fract = 3, .value = 4}, .Area={56,78}};
@@ -8090,6 +8882,7 @@ static void test_MFInitAMMediaTypeFromMFMediaType(void)
     MPEG1VIDEOINFO *mpeg1_info;
     MPEG2VIDEOINFO *mpeg2_info;
     IMFMediaType *media_type, *other_type;
+    MFVIDEOFORMAT *video_format;
     AM_MEDIA_TYPE am_type;
     MFVideoArea *area;
     UINT32 value32;
@@ -8203,6 +8996,18 @@ static void test_MFInitAMMediaTypeFromMFMediaType(void)
     ok(IsEqualGUID(&am_type.formattype, &FORMAT_MPEG2Video), "got %s.\n", debugstr_guid(&am_type.formattype));
     ok(am_type.cbFormat == sizeof(MPEG2VIDEOINFO), "got %lu\n", am_type.cbFormat);
     CoTaskMemFree(am_type.pbFormat);
+    IMFMediaType_DeleteAllItems(media_type);
+
+    /* test audio with NULL mapping */
+    hr = IMFMediaType_SetGUID(media_type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFAudioFormat_MP3);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_NUM_CHANNELS, 2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = MFInitAMMediaTypeFromMFMediaType(media_type, GUID_NULL, &am_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_DeleteAllItems(media_type);
 
 
     /* test WAVEFORMATEX mapping */
@@ -8724,10 +9529,10 @@ static void test_MFInitAMMediaTypeFromMFMediaType(void)
     hr = MFInitAMMediaTypeFromMFMediaType(media_type, FORMAT_MFVideoFormat, &am_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = MFInitMediaTypeFromAMMediaType(other_type, &am_type);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFMediaType_GetAllocatedBlob(other_type, &MF_MT_MINIMUM_DISPLAY_APERTURE, (BYTE **)&area, &value32);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK) CoTaskMemFree(area);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CoTaskMemFree(area);
     IMFMediaType_DeleteAllItems(other_type);
     CoTaskMemFree(am_type.pbFormat);
 
@@ -8916,6 +9721,52 @@ static void test_MFInitAMMediaTypeFromMFMediaType(void)
     CoTaskMemFree(am_type.pbFormat);
 
     IMFMediaType_DeleteAllItems(media_type);
+
+
+    for (UINT i = 0; i < ARRAY_SIZE(am_mf_guid_tests); ++i)
+    {
+        winetest_push_context("%s", debugstr_guid(am_mf_guid_tests[i].am_type));
+
+        hr = IMFMediaType_SetGUID(media_type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, am_mf_guid_tests[i].mf_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IMFMediaType_SetUINT64(media_type, &MF_MT_FRAME_SIZE, (UINT64)1920 << 32 | 1088);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = MFInitAMMediaTypeFromMFMediaType(media_type, FORMAT_VideoInfo, &am_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(IsEqualGUID(&am_type.majortype, &MFMediaType_Video), "Unexpected guid %s.\n", debugstr_guid(&am_type.majortype));
+        ok(IsEqualGUID(&am_type.subtype, am_mf_guid_tests[i].am_type), "Unexpected guid %s.\n", debugstr_guid(&am_type.subtype));
+        if (IsEqualGUID(&am_type.subtype, &MEDIASUBTYPE_RGB565))
+            todo_wine ok(am_type.cbFormat == sizeof(VIDEOINFOHEADER) + 3 * sizeof(DWORD), "got %lu\n", am_type.cbFormat);
+        else
+            ok(am_type.cbFormat == sizeof(VIDEOINFOHEADER), "got %lu\n", am_type.cbFormat);
+        video_info = (VIDEOINFOHEADER *)am_type.pbFormat;
+        if (!is_MEDIASUBTYPE_RGB(&am_type.subtype) && !IsEqualGUID(&am_type.subtype, &DUMMY_GUID3))
+            ok(video_info->bmiHeader.biCompression == am_mf_guid_tests[i].mf_type->Data1,
+                    "got compression %s\n", debugstr_fourcc(video_info->bmiHeader.biCompression));
+        else if (IsEqualGUID(&am_type.subtype, &MEDIASUBTYPE_RGB565))
+            ok(video_info->bmiHeader.biCompression == BI_BITFIELDS,
+                    "got compression %s\n", debugstr_fourcc(video_info->bmiHeader.biCompression));
+        else
+            todo_wine_if(IsEqualGUID(&am_type.subtype, &MEDIASUBTYPE_ARGB1555) || IsEqualGUID(&am_type.subtype, &DUMMY_GUID3))
+            ok(video_info->bmiHeader.biCompression == BI_RGB,
+                    "got compression %s\n", debugstr_fourcc(video_info->bmiHeader.biCompression));
+        CoTaskMemFree(am_type.pbFormat);
+
+        hr = MFInitAMMediaTypeFromMFMediaType(media_type, FORMAT_MFVideoFormat, &am_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(IsEqualGUID(&am_type.majortype, &MFMediaType_Video), "Unexpected guid %s.\n", debugstr_guid(&am_type.majortype));
+        ok(IsEqualGUID(&am_type.subtype, am_mf_guid_tests[i].mf_type), "Unexpected guid %s.\n", debugstr_guid(&am_type.subtype));
+        ok(am_type.cbFormat == sizeof(MFVIDEOFORMAT), "got %lu\n", am_type.cbFormat);
+        video_format = (MFVIDEOFORMAT *)am_type.pbFormat;
+        ok(IsEqualGUID(&video_format->guidFormat, am_mf_guid_tests[i].mf_type), "Unexpected guid %s.\n", debugstr_guid(&video_format->guidFormat));
+        CoTaskMemFree(am_type.pbFormat);
+
+        IMFMediaType_DeleteAllItems(media_type);
+        winetest_pop_context();
+    }
 
 
     IMFMediaType_Release(media_type);
@@ -10712,6 +11563,571 @@ notsupported:
     ok(!refcount, "Unexpected device refcount %u.\n", refcount);
 }
 
+static DWORD WINAPI test_d3d12_sync_object_thread(LPVOID param)
+{
+    HRESULT hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(param, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    return 0;
+}
+
+static void test_d3d12_sync_object(void)
+{
+    IMFD3D12SynchronizationObject *sync_obj;
+    IMFD3D12SynchronizationObjectCommands *sync_cmd;
+    IUnknown *unk;
+    ID3D12Device *device, *device2;
+    ID3D12CommandQueue *queue, *queue2;
+    ID3D12Fence *fence, *fence2;
+    HANDLE event, event2, event3, event4, thread;
+    D3D12_COMMAND_QUEUE_DESC queue_desc = { .Type = D3D12_COMMAND_LIST_TYPE_DIRECT };
+    DWORD status;
+    unsigned int refcount;
+    HRESULT hr;
+
+    /* d3d12 */
+    if (!(device = create_d3d12_device()))
+    {
+        skip("Failed to create a D3D12 device, skipping tests.\n");
+        return;
+    }
+
+    if (!pMFCreateD3D12SynchronizationObject)
+    {
+        win_skip("MFCreateD3D12SynchronizationObject() is not available.\n");
+        goto notsupported;
+    }
+
+    hr = ID3D12Device_CreateCommandQueue(device, &queue_desc, &IID_ID3D12CommandQueue, (void **) &queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateCommandQueue(device, &queue_desc, &IID_ID3D12CommandQueue, (void **) &queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    event = CreateEventA(NULL, FALSE,  FALSE, NULL);
+    event2 = CreateEventA(NULL, FALSE,  FALSE, NULL);
+
+    /* MFCreateD3D12SynchronizationObject */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IUnknown, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IUnknown, (void **) &unk);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IUnknown_QueryInterface(unk, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IUnknown_QueryInterface(unk, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IUnknown_Release(unk);
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObject_QueryInterface(sync_obj, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* invalid arguments */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReadyWait(sync_cmd, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* EnqueueResourceReady / EnqueueResourceReadyWait */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_SetEventOnCompletion(fence2, 1, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReadyWait(sync_cmd, queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12CommandQueue_Signal(queue2, fence2, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+    ID3D12Fence_Release(fence2);
+
+    /* EnqueueResourceReady / SignalEventOnResourceReady */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+    status = WaitForSingleObject(event2, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+    status = WaitForSingleObject(event2, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* EnqueueResourceReady is a manual-reset event */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* SignalEventOnResourceReady(NULL) */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    thread = CreateThread(NULL, 0, test_d3d12_sync_object_thread, sync_cmd, 0, NULL);
+
+    status = WaitForSingleObject(thread, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(thread, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    CloseHandle(thread);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* EnqueueResourceReady works cross-device */
+
+    device2 = create_d3d12_device();
+    hr = pMFCreateD3D12SynchronizationObject(device2, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Device_Release(device2);
+
+    /* EnqueueResourceRelease depends on MFStartup */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* SignalEventOnFinalResourceRelease signals immediately if no Release enqueued  */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+
+    /* EnqueueResourceRelease / SignalEventOnFinalResourceRelease */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    for (UINT64 gen = 1; gen <= 5; gen++)
+    {
+    hr = ID3D12CommandQueue_Wait(queue, fence, gen);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    hr = ID3D12CommandQueue_Wait(queue2, fence2, gen);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_Signal(fence, gen);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    hr = ID3D12Fence_Signal(fence2, gen);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+    ID3D12Fence_Release(fence2);
+
+    /* SignalEventOnFinalResourceRelease only tracks one event */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+    status = WaitForSingleObject(event2, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+
+    /* SignalEventOnFinalResourceRelease with duplicated event */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    event3 = CreateEventA(NULL, FALSE,  FALSE, NULL);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event3);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    DuplicateHandle(GetCurrentProcess(), event3, GetCurrentProcess(), &event4, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    CloseHandle(event3);
+
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    status = WaitForSingleObject(event4, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+    CloseHandle(event4);
+
+    /* SignalEventOnFinalResourceRelease is not affected by pending Ready */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    /* unblock queue */
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+
+    /* Reset errors if Release pending */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceRelease(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == MF_E_UNEXPECTED, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_SignalEventOnFinalResourceRelease(sync_obj, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+
+    /* Reset clears Ready */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+
+    /* ReadyWait before Reset is signaled by Ready after Reset */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReadyWait(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12CommandQueue_Signal(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ID3D12Fence_SetEventOnCompletion(fence, 1, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+
+    /* Ready after Reset is cleared by deferred Ready before Reset */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12CommandQueue_Signal(queue, fence2, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_SetEventOnCompletion(fence2, 1, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    hr = IMFD3D12SynchronizationObjectCommands_SignalEventOnResourceReady(sync_cmd, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_TIMEOUT, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+    ID3D12Fence_Release(fence2);
+
+    /* ReadyWait before Reset is signaled by deferred Ready before Reset */
+
+    hr = pMFCreateD3D12SynchronizationObject(device, &IID_IMFD3D12SynchronizationObjectCommands, (void **) &sync_cmd);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_QueryInterface(sync_cmd, &IID_IMFD3D12SynchronizationObject, (void **) &sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12Device_CreateFence(device, 0, 0, &IID_ID3D12Fence, (void **) &fence2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReady(sync_cmd, queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObjectCommands_EnqueueResourceReadyWait(sync_cmd, queue2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = ID3D12CommandQueue_Signal(queue2, fence2, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFD3D12SynchronizationObject_Reset(sync_obj);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID3D12Fence_Signal(fence, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ID3D12Fence_SetEventOnCompletion(fence2, 1, event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    status = WaitForSingleObject(event, 100);
+    ok(status == WAIT_OBJECT_0, "got %#lx.\n", status);
+
+    IMFD3D12SynchronizationObject_Release(sync_obj);
+    IMFD3D12SynchronizationObjectCommands_Release(sync_cmd);
+    ID3D12Fence_Release(fence);
+    ID3D12Fence_Release(fence2);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+
+    ID3D12CommandQueue_Release(queue);
+    ID3D12CommandQueue_Release(queue2);
+    CloseHandle(event);
+    CloseHandle(event2);
+
+notsupported:
+    refcount = ID3D12Device_Release(device);
+    ok(!refcount, "Unexpected device refcount %u.\n", refcount);
+}
+
 static void test_sample_allocator_sysmem(void)
 {
     IMFVideoSampleAllocatorNotify test_notify = { &test_notify_callback_vtbl };
@@ -11722,7 +13138,6 @@ static void test_MFInitMediaTypeFromVideoInfoHeader(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&guid, &GUID_NULL), "Unexpected guid %s.\n", debugstr_guid(&guid));
     hr = IMFMediaType_GetUINT64(media_type, &MF_MT_FRAME_SIZE, &value64);
-    todo_wine
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
 
     vih.bmiHeader.biWidth = 16;
@@ -12067,7 +13482,6 @@ static void test_MFInitMediaTypeFromVideoInfoHeader2(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&guid, &GUID_NULL), "Unexpected guid %s.\n", debugstr_guid(&guid));
     hr = IMFMediaType_GetUINT64(media_type, &MF_MT_FRAME_SIZE, &value64);
-    todo_wine
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
 
     vih.bmiHeader.biWidth = 16;
@@ -12435,7 +13849,6 @@ static void test_MFInitMediaTypeFromMPEG1VideoInfo(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&guid, &GUID_NULL), "Unexpected guid %s.\n", debugstr_guid(&guid));
     hr = IMFMediaType_GetUINT64(media_type, &MF_MT_FRAME_SIZE, &value64);
-    todo_wine
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
 
     vih.hdr.bmiHeader.biWidth = 16;
@@ -12547,7 +13960,6 @@ static void test_MFInitMediaTypeFromMPEG2VideoInfo(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&guid, &GUID_NULL), "Unexpected guid %s.\n", debugstr_guid(&guid));
     hr = IMFMediaType_GetUINT64(media_type, &MF_MT_FRAME_SIZE, &value64);
-    todo_wine
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
 
     vih.hdr.bmiHeader.biWidth = 16;
@@ -12676,50 +14088,50 @@ static void test_MFInitMediaTypeFromAMMediaType(void)
         {0}, {0}, 0, 0, 0,
         {sizeof(BITMAPINFOHEADER), 32, 24, 1, 0, 0xdeadbeef}
     };
-    static const struct guid_type_pair
+    static const GUID *audio_types[] =
     {
-        const GUID *am_type;
-        const GUID *mf_type;
-    } guid_types[] =
-    {
-        /* these RGB formats are converted, MEDIASUBTYPE variant isn't
-         * defined using DEFINE_MEDIATYPE_GUID */
-        { &MEDIASUBTYPE_RGB1, &MFVideoFormat_RGB1 },
-        { &MEDIASUBTYPE_RGB4, &MFVideoFormat_RGB4 },
-        { &MEDIASUBTYPE_RGB8, &MFVideoFormat_RGB8 },
-        { &MEDIASUBTYPE_RGB555, &MFVideoFormat_RGB555 },
-        { &MEDIASUBTYPE_RGB565, &MFVideoFormat_RGB565 },
-        { &MEDIASUBTYPE_RGB24, &MFVideoFormat_RGB24 },
-        { &MEDIASUBTYPE_RGB32, &MFVideoFormat_RGB32 },
-        { &MEDIASUBTYPE_ARGB1555, &MFVideoFormat_ARGB1555 },
-        { &MEDIASUBTYPE_ARGB4444, &MFVideoFormat_ARGB4444 },
-        { &MEDIASUBTYPE_ARGB32, &MFVideoFormat_ARGB32 },
-        { &MEDIASUBTYPE_A2R10G10B10, &MFVideoFormat_A2B10G10R10 },
-        { &MEDIASUBTYPE_A2B10G10R10, &MFVideoFormat_A2R10G10B10 },
-
-        /* any other GUID is passed through */
-        { &MEDIASUBTYPE_I420, &MFVideoFormat_I420 },
-        { &MEDIASUBTYPE_AYUV, &MFVideoFormat_AYUV },
-        { &MEDIASUBTYPE_YV12, &MFVideoFormat_YV12 },
-        { &MEDIASUBTYPE_YUY2, &MFVideoFormat_YUY2 },
-        { &MEDIASUBTYPE_UYVY, &MFVideoFormat_UYVY },
-        { &MEDIASUBTYPE_YVYU, &MFVideoFormat_YVYU },
-        { &MEDIASUBTYPE_NV12, &MFVideoFormat_NV12 },
-
-        /* even formats that don't exist in MF */
-        { &DUMMY_GUID3, &DUMMY_GUID3 },
-        { &MEDIASUBTYPE_NV24, &MEDIASUBTYPE_NV24 },
-        { &MEDIASUBTYPE_P208, &MEDIASUBTYPE_P208 },
-
-        /* if the mapping is ambiguous, it is not corrected */
-        { &MEDIASUBTYPE_h264, &MEDIASUBTYPE_h264 },
-        { &MEDIASUBTYPE_H264, &MFVideoFormat_H264 },
+        &MEDIASUBTYPE_MP3,
+        &MEDIASUBTYPE_MSAUDIO1,
+        &MEDIASUBTYPE_WMAUDIO2,
+        &MEDIASUBTYPE_WMAUDIO3,
+        &MEDIASUBTYPE_WMAUDIO_LOSSLESS,
+        &MEDIASUBTYPE_PCM,
+        &MEDIASUBTYPE_IEEE_FLOAT,
+        &DUMMY_CLSID,
     };
     MFVideoArea aperture;
     unsigned int i;
 
     hr = MFCreateMediaType(&media_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    memset(&mt, 0, sizeof(mt));
+    mt.majortype = MEDIATYPE_Audio;
+
+    for (i = 0; i < ARRAY_SIZE(audio_types); i++)
+    {
+        mt.subtype = *audio_types[i];
+
+        hr = MFInitMediaTypeFromAMMediaType(media_type, &mt);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFMediaType_GetCount(media_type, &value32);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(value32 == 4, "Unexpected value %#x.\n", value32);
+
+        hr = IMFMediaType_GetGUID(media_type, &MF_MT_MAJOR_TYPE, &guid);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(IsEqualGUID(&guid, &MFMediaType_Audio), "Unexpected guid %s.\n", debugstr_guid(&guid));
+        hr = IMFMediaType_GetGUID(media_type, &MF_MT_SUBTYPE, &guid);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(IsEqualGUID(&guid, audio_types[i]), "Unexpected guid %s.\n", debugstr_guid(&guid));
+        hr = IMFMediaType_GetUINT32(media_type, &MF_MT_ALL_SAMPLES_INDEPENDENT, &value32);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(value32 == 1, "Unexpected value %#x.\n", value32);
+        hr = IMFMediaType_GetGUID(media_type, &MF_MT_AM_FORMAT_TYPE, &guid);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(IsEqualGUID(&guid, &GUID_NULL), "Unexpected guid %s.\n", debugstr_guid(&guid));
+    }
 
     memset(&mt, 0, sizeof(mt));
     mt.majortype = MEDIATYPE_Video;
@@ -12862,10 +14274,10 @@ static void test_MFInitMediaTypeFromAMMediaType(void)
     ok(!memcmp(&aperture, &expect_aperture, sizeof(aperture)), "unexpected aperture\n");
 
     vih.bmiHeader.biHeight = 24;
-    for (i = 0; i < ARRAY_SIZE(guid_types); ++i)
+    for (i = 0; i < ARRAY_SIZE(am_mf_guid_tests); ++i)
     {
-        winetest_push_context("%s", debugstr_guid(guid_types[i].am_type));
-        memcpy(&mt.subtype, guid_types[i].am_type, sizeof(GUID));
+        winetest_push_context("%s", debugstr_guid(am_mf_guid_tests[i].am_type));
+        memcpy(&mt.subtype, am_mf_guid_tests[i].am_type, sizeof(GUID));
 
         hr = MFInitMediaTypeFromAMMediaType(media_type, &mt);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -12875,7 +14287,7 @@ static void test_MFInitMediaTypeFromAMMediaType(void)
         ok(IsEqualGUID(&guid, &MFMediaType_Video), "Unexpected guid %s.\n", debugstr_guid(&guid));
         hr = IMFMediaType_GetGUID(media_type, &MF_MT_SUBTYPE, &guid);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-        ok(IsEqualGUID(&guid, guid_types[i].mf_type), "Unexpected guid %s.\n", debugstr_guid(&guid));
+        ok(IsEqualGUID(&guid, am_mf_guid_tests[i].mf_type), "Unexpected guid %s.\n", debugstr_guid(&guid));
         winetest_pop_context();
     }
 
@@ -13193,6 +14605,44 @@ static void test_2dbuffer_copy(void)
     ID3D11Device_Release(device);
 }
 
+static void test_undefined_queue_id(void)
+{
+    struct test_callback *callback;
+    IMFAsyncResult *result;
+    HRESULT hr;
+    DWORD res;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    callback = create_test_callback(&test_async_callback_result_vtbl);
+
+    hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_UNDEFINED, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    res = wait_async_callback_result(&callback->IMFAsyncCallback_iface, 100, &result);
+    ok(res == 0, "got %#lx\n", res);
+    IMFAsyncResult_Release(result);
+
+    hr = MFPutWorkItem(0xffff, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    res = wait_async_callback_result(&callback->IMFAsyncCallback_iface, 100, &result);
+    ok(res == 0, "got %#lx\n", res);
+    IMFAsyncResult_Release(result);
+
+    hr = MFPutWorkItem(0x4000, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    res = wait_async_callback_result(&callback->IMFAsyncCallback_iface, 100, &result);
+    ok(res == 0, "got %#lx\n", res);
+    IMFAsyncResult_Release(result);
+
+    hr = MFPutWorkItem(0x10000, &callback->IMFAsyncCallback_iface, NULL);
+    ok(hr == MF_E_INVALID_WORKQUEUE, "got %#lx\n", hr);
+    IMFAsyncCallback_Release(&callback->IMFAsyncCallback_iface);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
+}
+
 START_TEST(mfplat)
 {
     char **argv;
@@ -13203,7 +14653,14 @@ START_TEST(mfplat)
     argc = winetest_get_mainargs(&argv);
     if (argc >= 3)
     {
-        test_queue_com_state(argv[2]);
+        if (!strcmp(argv[2], "startup"))
+            test_startup();
+        else if (!strcmp(argv[2], "startup_counts"))
+            test_startup_counts();
+        else if (!strcmp(argv[2], "undefined_queue_id"))
+            test_undefined_queue_id();
+        else
+            test_queue_com_state(argv[2]);
         return;
     }
 
@@ -13215,7 +14672,9 @@ START_TEST(mfplat)
 
     CoInitialize(NULL);
 
-    test_startup();
+    run_child_test("startup");
+    run_child_test("startup_counts");
+    run_child_test("undefined_queue_id");
     test_register();
     test_media_type();
     test_MFCreateMediaEvent();
@@ -13271,6 +14730,7 @@ START_TEST(mfplat)
     test_MFMapDXGIFormatToDX9Format();
     test_d3d11_surface_buffer();
     test_d3d12_surface_buffer();
+    test_d3d12_sync_object();
     test_sample_allocator_sysmem();
     test_sample_allocator_d3d9();
     test_sample_allocator_d3d11();
@@ -13287,6 +14747,7 @@ START_TEST(mfplat)
     test_MFInitMediaTypeFromAMMediaType();
     test_MFCreatePathFromURL();
     test_2dbuffer_copy();
+    test_xvp_playback_mode();
 
     CoUninitialize();
 }

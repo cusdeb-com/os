@@ -332,7 +332,6 @@ static HRESULT send_storage_event(HTMLStorage *storage, BSTR key, BSTR old_value
 
     ctx.url = NULL;
 
-    /* FIXME: Events are actually sent to the current window on native, even if we're detached. */
     if(!window->base.outer_window)
         goto done;
 
@@ -1180,7 +1179,7 @@ static HRESULT HTMLStorage_delete(DispatchEx *dispex, DISPID id)
     return HTMLStorage_removeItem(&This->IHTMLStorage_iface, This->props[idx]);
 }
 
-static HRESULT HTMLStorage_next_dispid(DispatchEx *dispex, DISPID id, DISPID *pid)
+static HRESULT HTMLStorage_next_dispid(DispatchEx *dispex, DISPID id, BOOL enum_all_own_props, DISPID *pid)
 {
     DWORD idx = (id == DISPID_STARTENUM) ? 0 : id - MSHTML_DISPID_CUSTOM_MIN + 1;
     HTMLStorage *This = impl_from_DispatchEx(dispex);
@@ -1295,10 +1294,11 @@ static const tid_t HTMLStorage_iface_tids[] = {
     0
 };
 dispex_static_data_t Storage_dispex = {
-    .id         = PROT_Storage,
+    .id         = OBJID_Storage,
     .vtbl       = &Storage_dispex_vtbl,
     .disp_tid   = IHTMLStorage_tid,
     .iface_tids = HTMLStorage_iface_tids,
+    .js_flags   = HOSTOBJ_VOLATILE_FILL | HOSTOBJ_VOLATILE_PROPS,
 };
 
 static HRESULT build_session_origin(IUri *uri, BSTR hostname, BSTR *ret)

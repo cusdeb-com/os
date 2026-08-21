@@ -54,6 +54,7 @@ Build-Depends: bison,
                libxrender-dev:i386,
                libxxf86vm-dev,
                libxxf86vm-dev:i386,
+               mingw-w64,
                quilt
 Standards-Version: 4.7.4
 Homepage: https://winehq.org
@@ -61,6 +62,7 @@ Homepage: https://winehq.org
 Package: wine
 Architecture: amd64
 Depends: binfmt-support,
+         libasound2t64,
          libasound2t64:i386,
          libc6:i386,
          libfontconfig1,
@@ -88,6 +90,18 @@ Depends: binfmt-support,
          libxrandr2:i386,
          libxrender1,
          libxrender1:i386,
+         libxxf86vm1,
+         libxxf86vm1:i386,
+         libxinerama1,
+         libxinerama1:i386,
+         libxcursor1,
+         libxcursor1:i386,
+         libxi6,
+         libxi6:i386,
+         libxcomposite1,
+         libxcomposite1:i386,
+         libxfixes3,
+         libxfixes3:i386,
          ${misc:Depends},
          ${shlibs:Depends}
 Recommends: libasound2-plugins,

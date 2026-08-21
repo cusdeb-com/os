@@ -21,8 +21,6 @@
 #ifndef __WINE_PARSE_H
 #define __WINE_PARSE_H
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -238,6 +236,8 @@ struct hid_preparsed_data
 #define PID_USAGE_SHARED_PARAMETER_BLOCKS          ((USAGE) 0xaa)
 #define PID_USAGE_CREATE_NEW_EFFECT_REPORT         ((USAGE) 0xab)
 #define PID_USAGE_RAM_POOL_AVAILABLE               ((USAGE) 0xac)
+
+#define MAX_PID_AXES                               6
 
 #define IOCTL_HID_GET_WINE_RAWINPUT_HANDLE         HID_BUFFER_CTL_CODE(300)
 

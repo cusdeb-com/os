@@ -81,7 +81,8 @@ static int sock_recv(int fd, void *msg, size_t len, int flags)
     return ret;
 }
 
-static DWORD netconn_verify_cert( PCCERT_CONTEXT cert, WCHAR *server, DWORD security_flags, BOOL check_revocation )
+static DWORD netconn_verify_cert( PCCERT_CONTEXT cert, WCHAR *server, DWORD security_flags, BOOL check_revocation,
+                                  PCCERT_CHAIN_CONTEXT *ret_chain )
 {
     HCERTSTORE store = cert->hCertStore;
     BOOL ret;
@@ -92,6 +93,7 @@ static DWORD netconn_verify_cert( PCCERT_CONTEXT cert, WCHAR *server, DWORD secu
     DWORD err = ERROR_SUCCESS;
 
     TRACE("verifying %s\n", debugstr_w( server ));
+    *ret_chain = NULL;
     chainPara.RequestedUsage.Usage.cUsageIdentifier = 1;
     chainPara.RequestedUsage.Usage.rgpszUsageIdentifier = server_auth;
     ret = CertGetCertificateChain( NULL, cert, NULL, store, &chainPara,
@@ -169,7 +171,7 @@ static DWORD netconn_verify_cert( PCCERT_CONTEXT cert, WCHAR *server, DWORD secu
                     err = ERROR_WINHTTP_SECURE_INVALID_CERT;
             }
         }
-        CertFreeCertificateChain( chain );
+        *ret_chain = chain;
     }
     else
         err = ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
@@ -296,6 +298,7 @@ void netconn_release( struct netconn *conn )
         free(conn->ssl_read_buf);
         free(conn->ssl_write_buf);
         free(conn->extra_buf);
+        CertFreeCertificateChain(conn->chain);
         DeleteSecurityContext(&conn->ssl_ctx);
     }
     if (conn->socket != -1)
@@ -400,7 +403,7 @@ DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD secur
 
             status = QueryContextAttributesW(&ctx, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (void*)&cert);
             if(status == SEC_E_OK) {
-                res = netconn_verify_cert(cert, hostname, security_flags, check_revocation);
+                res = netconn_verify_cert(cert, hostname, security_flags, check_revocation, &conn->chain);
                 CertFreeCertificateContext(cert);
                 if(res != ERROR_SUCCESS) {
                     WARN( "cert verify failed: %lu\n", res );
@@ -672,11 +675,6 @@ void netconn_cancel_io( struct netconn *conn )
     closesocket( socket );
 }
 
-ULONG netconn_query_data_available( struct netconn *conn )
-{
-    return conn->secure ? conn->peek_len : 0;
-}
-
 DWORD netconn_set_timeout( struct netconn *netconn, BOOL send, int value )
 {
     int opt = send ? SO_SNDTIMEO : SO_RCVTIMEO;
@@ -687,6 +685,11 @@ DWORD netconn_set_timeout( struct netconn *netconn, BOOL send, int value )
         return err;
     }
     return ERROR_SUCCESS;
+}
+
+BOOL netconn_is_valid( struct netconn *netconn )
+{
+    return netconn && netconn->socket != -1;
 }
 
 BOOL netconn_is_alive( struct netconn *netconn )
@@ -723,7 +726,7 @@ BOOL netconn_is_alive( struct netconn *netconn )
     return len == 1 || (len == -1 && err == WSAEWOULDBLOCK);
 }
 
-static DWORD resolve_hostname( const WCHAR *name, INTERNET_PORT port, struct sockaddr_storage *sa )
+static DWORD resolve_hostname( const WCHAR *name, INTERNET_PORT port, DWORD flags, struct sockaddr_storage *sa )
 {
     ADDRINFOW *res, hints;
     int ret;
@@ -733,6 +736,7 @@ static DWORD resolve_hostname( const WCHAR *name, INTERNET_PORT port, struct soc
      * their IPv6 addresses even though they have IPv6 addresses in the DNS.
      */
     hints.ai_family = AF_INET;
+    hints.ai_flags  = flags;
 
     ret = GetAddrInfoW( name, NULL, &hints, &res );
     if (ret != 0)
@@ -766,12 +770,13 @@ struct async_resolve
     LONG                     ref;
     WCHAR                   *hostname;
     INTERNET_PORT            port;
+    DWORD                    flags;
     struct sockaddr_storage  addr;
     DWORD                    result;
     HANDLE                   done;
 };
 
-static struct async_resolve *create_async_resolve( const WCHAR *hostname, INTERNET_PORT port )
+static struct async_resolve *create_async_resolve( const WCHAR *hostname, INTERNET_PORT port, DWORD flags )
 {
     struct async_resolve *ret;
 
@@ -783,6 +788,7 @@ static struct async_resolve *create_async_resolve( const WCHAR *hostname, INTERN
     ret->ref = 1;
     ret->hostname = wcsdup( hostname );
     ret->port     = port;
+    ret->flags    = flags;
     if (!(ret->done = CreateEventW( NULL, FALSE, FALSE, NULL )))
     {
         free( ret->hostname );
@@ -805,21 +811,21 @@ static void CALLBACK resolve_proc( TP_CALLBACK_INSTANCE *instance, void *ctx )
 {
     struct async_resolve *async = ctx;
 
-    async->result = resolve_hostname( async->hostname, async->port, &async->addr );
+    async->result = resolve_hostname( async->hostname, async->port, async->flags, &async->addr );
     SetEvent( async->done );
     async_resolve_release( async );
 }
 
-DWORD netconn_resolve( WCHAR *hostname, INTERNET_PORT port, struct sockaddr_storage *addr, int timeout )
+DWORD netconn_resolve( const WCHAR *hostname, INTERNET_PORT port, DWORD flags, struct sockaddr_storage *addr, int timeout )
 {
     DWORD ret;
 
-    if (!timeout) ret = resolve_hostname( hostname, port, addr );
+    if (!timeout) ret = resolve_hostname( hostname, port, flags, addr );
     else
     {
         struct async_resolve *async;
 
-        if (!(async = create_async_resolve( hostname, port )))
+        if (!(async = create_async_resolve( hostname, port, flags )))
             return ERROR_OUTOFMEMORY;
 
         InterlockedIncrement( &async->ref );

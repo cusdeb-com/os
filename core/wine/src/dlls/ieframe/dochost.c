@@ -16,10 +16,13 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <assert.h>
+
 #include "ieframe.h"
 
 #include "exdispid.h"
 #include "mshtml.h"
+#include "mshtmdid.h"
 #include "perhist.h"
 #include "initguid.h"
 
@@ -78,6 +81,40 @@ void abort_dochost_tasks(DocHost *This, task_proc_t proc)
         list_remove(&task->entry);
         task->destr(task);
     }
+}
+
+static BOOL fire_titlechange(DocHost *This)
+{
+    IHTMLDocument2 *doc;
+    BSTR title = NULL;
+    DISPPARAMS dp = { NULL, NULL, 0, 0 };
+    HRESULT hres;
+    BOOL has_title = FALSE;
+    VARIANTARG arg;
+
+    if(!This->document)
+        return FALSE;
+
+    hres = IUnknown_QueryInterface(This->document, &IID_IHTMLDocument2, (void **)&doc);
+    if(FAILED(hres))
+        return FALSE;
+
+    hres = IHTMLDocument2_get_title(doc, &title);
+    IHTMLDocument2_Release(doc);
+    if(FAILED(hres) || !title)
+        return FALSE;
+
+    has_title = *title != 0;
+
+    VariantInit(&arg);
+    V_VT(&arg) = VT_BSTR;
+    V_BSTR(&arg) = title;
+    dp.rgvarg = &arg;
+    dp.cArgs = 1;
+    call_sink(This->cps.wbe2, DISPID_TITLECHANGE, &dp);
+    VariantClear(&arg);
+
+    return has_title;
 }
 
 void on_commandstate_change(DocHost *doc_host, LONG command, BOOL enable)
@@ -365,13 +402,11 @@ static LRESULT WINAPI doc_view_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 {
     DocHost *This;
 
-    static const WCHAR wszTHIS[] = {'T','H','I','S',0};
-
     if(msg == WM_CREATE) {
         This = *(DocHost**)lParam;
-        SetPropW(hwnd, wszTHIS, This);
+        SetPropW(hwnd, L"THIS", This);
     }else {
-        This = GetPropW(hwnd, wszTHIS);
+        This = GetPropW(hwnd, L"THIS");
     }
 
     switch(msg) {
@@ -441,7 +476,7 @@ static void update_travellog(DocHost *This)
             return;
 
         This->travellog.size = 4;
-    }else if(This->travellog.size < This->travellog.position+1) {
+    }else if(This->travellog.size < This->travellog.position+2) {
         travellog_entry_t *new_travellog;
 
         new_travellog = realloc(This->travellog.log, This->travellog.size * 2 * sizeof(*This->travellog.log));
@@ -469,6 +504,7 @@ static void update_travellog(DocHost *This)
 
     if(This->travellog.loading_pos == -1) {
         This->travellog.position++;
+        assert(This->travellog.position < This->travellog.size);
         This->travellog.log[This->travellog.position].stream = NULL;
         This->travellog.log[This->travellog.position].url = NULL;
     }else {
@@ -485,9 +521,6 @@ void create_doc_view_hwnd(DocHost *This)
 {
     RECT rect;
 
-    static const WCHAR wszShell_DocObject_View[] =
-        {'S','h','e','l','l',' ','D','o','c','O','b','j','e','c','t',' ','V','i','e','w',0};
-
     if(!doc_view_atom) {
         static WNDCLASSEXW wndclass = {
             sizeof(wndclass),
@@ -495,7 +528,7 @@ void create_doc_view_hwnd(DocHost *This)
             doc_view_proc,
             0, 0 /* native uses 4*/, NULL, NULL, NULL,
             (HBRUSH)(COLOR_WINDOW + 1), NULL,
-            wszShell_DocObject_View,
+            L"Shell DocObject View",
             NULL
         };
 
@@ -505,8 +538,8 @@ void create_doc_view_hwnd(DocHost *This)
     }
 
     This->container_vtbl->get_docobj_rect(This, &rect);
-    This->hwnd = CreateWindowExW(0, wszShell_DocObject_View,
-         wszShell_DocObject_View,
+    This->hwnd = CreateWindowExW(0, L"Shell DocObject View",
+         L"Shell DocObject View",
          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_TABSTOP,
          rect.left, rect.top, rect.right, rect.bottom, This->frame_hwnd,
          NULL, ieframe_instance, This);
@@ -710,6 +743,10 @@ static HRESULT WINAPI ClOleCommandTarget_Exec(IOleCommandTarget *iface,
             if(!This->olecmd)
                 return E_NOTIMPL;
             return IOleCommandTarget_Exec(This->olecmd, pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
+        case OLECMDID_SETTITLE:
+            if(fire_titlechange(This) && This->olecmd)
+                return IOleCommandTarget_Exec(This->olecmd, pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
+            return S_OK;
         case OLECMDID_SETDOWNLOADSTATE:
             if(pvaIn && V_VT(pvaIn) == VT_I4)
                 This->busy = V_I4(pvaIn) ? VARIANT_TRUE : VARIANT_FALSE;
@@ -1111,6 +1148,9 @@ static HRESULT WINAPI PropertyNotifySink_OnChanged(IPropertyNotifySink *iface, D
         update_ready_state(This, ready_state);
         break;
     }
+    case DISPID_IHTMLDOCUMENT2_TITLE:
+        fire_titlechange(This);
+        break;
     default:
         FIXME("unimplemented dispid %ld\n", dispID);
         return E_NOTIMPL;

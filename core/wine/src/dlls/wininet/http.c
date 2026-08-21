@@ -151,6 +151,7 @@ void server_release(server_t *server)
         CertFreeCertificateChain(server->cert_chain);
     free(server->name);
     free(server->scheme_host_port);
+    free(server->addr);
     free(server);
 }
 
@@ -329,7 +330,6 @@ static void reset_data_stream(http_request_t *req)
     destroy_data_stream(req->data_stream);
     req->data_stream = &req->netconn_stream.data_stream;
     req->read_pos = req->read_size = req->netconn_stream.content_read = 0;
-    req->content_pos = 0;
     req->read_gzip = FALSE;
 }
 
@@ -1158,6 +1158,7 @@ static BOOL HTTP_DoAuthorization( http_request_t *request, LPCWSTR pszAuthValue,
                                                 in.pvBuffer ? &in_desc : NULL,
                                                 0, &pAuthInfo->ctx, &out_desc,
                                                 &pAuthInfo->attr, &pAuthInfo->exp);
+        free(in.pvBuffer);
         if (sec_status == SEC_E_OK)
         {
             pAuthInfo->finished = TRUE;
@@ -1761,9 +1762,8 @@ static BOOL HTTP_DealWithProxy(appinfo_t *hIC, http_session_t *session, http_req
 static DWORD HTTP_ResolveName(http_request_t *request)
 {
     server_t *server = request->proxy ? request->proxy : request->server;
-    int addr_len;
 
-    if(server->addr_len)
+    if(server->addr)
         return ERROR_SUCCESS;
 
     INTERNET_SendCallback(&request->hdr, request->hdr.dwContext,
@@ -1771,16 +1771,14 @@ static DWORD HTTP_ResolveName(http_request_t *request)
                           server->name,
                           (lstrlenW(server->name)+1) * sizeof(WCHAR));
 
-    addr_len = sizeof(server->addr);
-    if (!GetAddress(server->name, server->port, (SOCKADDR*)&server->addr, &addr_len, server->addr_str))
+    if (!(server->addr = GetAddress(server->name, server->port)))
         return ERROR_INTERNET_NAME_NOT_RESOLVED;
 
-    server->addr_len = addr_len;
     INTERNET_SendCallback(&request->hdr, request->hdr.dwContext,
                           INTERNET_STATUS_NAME_RESOLVED,
-                          server->addr_str, strlen(server->addr_str)+1);
+                          server->addr->addr_str, strlen(server->addr->addr_str)+1);
 
-    TRACE("resolved %s to %s\n", debugstr_w(server->name), server->addr_str);
+    TRACE("resolved %s to %s\n", debugstr_w(server->name), server->addr->addr_str);
     return ERROR_SUCCESS;
 }
 
@@ -2428,6 +2426,27 @@ static void commit_cache_entry(http_request_t *req)
     free(header);
 }
 
+static void write_cache_file(http_request_t *req, const BYTE *buf, DWORD len)
+{
+    if(!req->hCacheFile) {
+        return;
+    }
+
+    if(len) {
+        BOOL bres;
+        DWORD written;
+
+        bres = WriteFile(req->hCacheFile, buf, len, &written, NULL);
+        if(bres)
+            req->cache_size += written;
+        else
+            FIXME("WriteFile failed: %lu\n", GetLastError());
+    }
+
+    if(req->data_stream->vtbl->end_of_data(req->data_stream, req))
+        commit_cache_entry(req);
+}
+
 static void create_cache_entry(http_request_t *req)
 {
     WCHAR file_name[MAX_PATH+1];
@@ -2513,18 +2532,7 @@ static void create_cache_entry(http_request_t *req)
         return;
     }
 
-    if(req->read_size) {
-        DWORD written;
-
-        b = WriteFile(req->hCacheFile, req->read_buf+req->read_pos, req->read_size, &written, NULL);
-        if(b)
-            req->cache_size += written;
-        else
-            FIXME("WriteFile failed: %lu\n", GetLastError());
-
-        if(req->data_stream->vtbl->end_of_data(req->data_stream, req))
-            commit_cache_entry(req);
-    }
+    write_cache_file(req, req->read_buf+req->read_pos, req->read_size);
 }
 
 /* read some more data into the read buffer (the read section must be held) */
@@ -2622,21 +2630,7 @@ static DWORD read_http_stream(http_request_t *req, BYTE *buf, DWORD size, DWORD 
         *read = 0;
     assert(*read <= size);
 
-    if(req->hCacheFile) {
-        if(*read) {
-            BOOL bres;
-            DWORD written;
-
-            bres = WriteFile(req->hCacheFile, buf, *read, &written, NULL);
-            if(bres)
-                req->cache_size += written;
-            else
-                FIXME("WriteFile failed: %lu\n", GetLastError());
-        }
-
-        if((res == ERROR_SUCCESS && !*read) || req->data_stream->vtbl->end_of_data(req->data_stream, req))
-            commit_cache_entry(req);
-    }
+    write_cache_file(req, buf, *read);
 
     return res;
 }
@@ -3053,6 +3047,11 @@ static DWORD read_req_file(http_request_t *req, BYTE *buffer, DWORD size, DWORD 
                                &ret_read, allow_blocking);
         if (res != ERROR_SUCCESS)
             return res;
+        if (!ret_read && req->content_pos > req->cache_size) {
+            req->state = ERROR_INTERNET_INCORRECT_HANDLE_STATE;
+            *read = 0;
+            return ERROR_NOACCESS;
+        }
         if (!ret_read) {
             *read = 0;
             return ERROR_SUCCESS;
@@ -3065,6 +3064,10 @@ static DWORD read_req_file(http_request_t *req, BYTE *buffer, DWORD size, DWORD 
             return GetLastError();
         if (!ReadFile(req->req_file->file_handle, buffer, size, &ret_read, NULL))
             return GetLastError();
+    } else if (req->content_pos > req->cache_size) {
+        req->state = ERROR_INTERNET_INCORRECT_HANDLE_STATE;
+        *read = 0;
+        return ERROR_NOACCESS;
     }
 
     *read = ret_read;
@@ -3153,6 +3156,13 @@ static void async_read_file_proc(task_header_t *hdr)
         while (req->content_pos > req->cache_size) {
             ret = read_http_stream(req, (BYTE*)buf, min(sizeof(buf), req->content_pos - req->cache_size),
                                    &ret_read, TRUE);
+            if (!ret_read && req->content_pos > req->cache_size) {
+                req->state = ERROR_INTERNET_INCORRECT_HANDLE_STATE;
+                if(task->ret_read)
+                    *task->ret_read = 0;
+                send_request_complete(req, FALSE, ERROR_NOACCESS);
+                return;
+            }
             if(ret != ERROR_SUCCESS || !ret_read)
                 break;
         }
@@ -3219,6 +3229,12 @@ static DWORD HTTPREQ_SetFilePointer(object_header_t *hdr, LONG lDistanceToMove, 
 
     EnterCriticalSection(&req->read_section);
 
+    if (req->state != ERROR_SUCCESS) {
+        LeaveCriticalSection(&req->read_section);
+        SetLastError(ERROR_INTERNET_INVALID_OPERATION);
+        return INVALID_SET_FILE_POINTER;
+    }
+
     switch (dwMoveContext) {
         case FILE_BEGIN:
             res = lDistanceToMove;
@@ -3265,12 +3281,14 @@ static DWORD HTTPREQ_ReadFile(object_header_t *hdr, void *buf, DWORD size, DWORD
     if(allow_blocking || TryEnterCriticalSection(&req->read_section)) {
         if(allow_blocking)
             EnterCriticalSection(&req->read_section);
-        if(hdr->dwError == ERROR_SUCCESS)
-            hdr->dwError = INTERNET_HANDLE_IN_USE;
-        else if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-            hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
+        if(!req->state)
+            req->state = INTERNET_HANDLE_IN_USE;
+        else if(req->state == INTERNET_HANDLE_IN_USE)
+            req->state = ERROR_INTERNET_INTERNAL_ERROR;
+        else
+            res = req->state;
 
-        if(req->read_size) {
+        if(res == ERROR_SUCCESS && req->read_size) {
             read = min(size, req->read_size);
             memcpy(buf, req->read_buf + req->read_pos, read);
             req->read_size -= read;
@@ -3278,7 +3296,7 @@ static DWORD HTTPREQ_ReadFile(object_header_t *hdr, void *buf, DWORD size, DWORD
             req->content_pos += read;
         }
 
-        if(read < size && req->req_file && req->req_file->file_handle) {
+        if(res == ERROR_SUCCESS && read < size && req->req_file && req->req_file->file_handle) {
             res = read_req_file(req, (BYTE*)buf + read, size - read, &cread, allow_blocking);
             if(res == ERROR_SUCCESS) {
                 read += cread;
@@ -3300,10 +3318,10 @@ static DWORD HTTPREQ_ReadFile(object_header_t *hdr, void *buf, DWORD size, DWORD
             }
         }
 
-        if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-            hdr->dwError = ERROR_SUCCESS;
+        if(req->state == INTERNET_HANDLE_IN_USE)
+            req->state = 0;
         else
-            error = hdr->dwError;
+            error = req->state;
 
         LeaveCriticalSection( &req->read_section );
     }else {
@@ -3361,10 +3379,14 @@ static DWORD HTTPREQ_QueryDataAvailable(object_header_t *hdr, DWORD *available, 
     if(allow_blocking || TryEnterCriticalSection(&req->read_section)) {
         if(allow_blocking)
             EnterCriticalSection(&req->read_section);
-        if(hdr->dwError == ERROR_SUCCESS)
-            hdr->dwError = INTERNET_HANDLE_IN_USE;
-        else if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-            hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
+        if(!req->state)
+            req->state = INTERNET_HANDLE_IN_USE;
+        else if(req->state == INTERNET_HANDLE_IN_USE)
+            req->state = ERROR_INTERNET_INTERNAL_ERROR;
+        else {
+            LeaveCriticalSection( &req->read_section );
+            return req->state;
+        }
 
         avail = req->read_size;
         if(req->cache_size > req->content_pos)
@@ -3379,10 +3401,10 @@ static DWORD HTTPREQ_QueryDataAvailable(object_header_t *hdr, DWORD *available, 
             res = refill_read_buffer(req, allow_blocking, &avail);
         }
 
-        if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-            hdr->dwError = ERROR_SUCCESS;
+        if(req->state == INTERNET_HANDLE_IN_USE)
+            req->state = 0;
         else
-            error = hdr->dwError;
+            error = req->state;
 
         LeaveCriticalSection( &req->read_section );
     }else {
@@ -4888,6 +4910,7 @@ static void http_process_keep_alive(http_request_t *req)
 
 static DWORD open_http_connection(http_request_t *request, BOOL *reusing)
 {
+    server_t *server;
     netconn_t *netconn = NULL;
     DWORD res;
 
@@ -4936,13 +4959,9 @@ static DWORD open_http_connection(http_request_t *request, BOOL *reusing)
 
     TRACE("connecting to %s, proxy %s\n", debugstr_w(request->server->name),
           request->proxy ? debugstr_w(request->proxy->name) : "(null)");
-
-    INTERNET_SendCallback(&request->hdr, request->hdr.dwContext,
-                          INTERNET_STATUS_CONNECTING_TO_SERVER,
-                          request->server->addr_str,
-                          strlen(request->server->addr_str)+1);
-
-    res = create_netconn(request->proxy ? request->proxy : request->server, request->security_flags,
+    server = request->proxy ? request->proxy : request->server;
+    assert(server->addr);
+    res = create_netconn(server, &request->hdr, request->security_flags,
                          (request->hdr.ErrorMask & INTERNET_ERROR_MASK_COMBINED_SEC_CERT) != 0,
                          request->hdr.connect_timeout, &netconn);
     if(res != ERROR_SUCCESS) {
@@ -4951,11 +4970,6 @@ static DWORD open_http_connection(http_request_t *request, BOOL *reusing)
     }
 
     request->netconn = netconn;
-
-    INTERNET_SendCallback(&request->hdr, request->hdr.dwContext,
-            INTERNET_STATUS_CONNECTED_TO_SERVER,
-            request->server->addr_str, strlen(request->server->addr_str)+1);
-
     *reusing = FALSE;
     TRACE("Created connection to %s: %p\n", debugstr_w(request->server->name), netconn);
     return ERROR_SUCCESS;
@@ -4982,80 +4996,17 @@ static void set_content_length_header( http_request_t *request, DWORD len, DWORD
     HTTP_HttpAddRequestHeadersW( request, buf, ~0u, flags );
 }
 
-/***********************************************************************
- *           HTTP_HttpSendRequestW (internal)
- *
- * Sends the specified request to the HTTP server
- *
- * RETURNS
- *    ERROR_SUCCESS on success
- *    win32 error code on failure
- *
- */
-static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
-	DWORD dwHeaderLength, LPVOID lpOptional, DWORD dwOptionalLength,
-	DWORD dwContentLength, BOOL bEndRequest)
+static DWORD create_request(http_request_t *request, void *optional, DWORD optlen, DWORD content_length,
+                            BOOL end_request)
 {
     BOOL redirected = FALSE, secure_proxy_connect = FALSE, loop_next;
     WCHAR *request_header = NULL;
     INT responseLen, cnt;
     DWORD res;
-    const WCHAR *appinfo_agent;
-
-    TRACE("--> %p\n", request);
-
-    assert(request->hdr.htype == WH_HHTTPREQ);
-
-    /* if the verb is NULL default to GET */
-    if (!request->verb)
-        request->verb = wcsdup(L"GET");
-
-    HTTP_ProcessHeader(request, L"Host", request->server->canon_host_port,
-                       HTTP_ADDREQ_FLAG_ADD_IF_NEW | HTTP_ADDHDR_FLAG_REQ);
-
-    if (dwContentLength || wcscmp(request->verb, L"GET"))
-    {
-        set_content_length_header(request, dwContentLength, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
-        request->bytesToWrite = dwContentLength;
-    }
-
-    appinfo_agent = request->session->appInfo->agent;
-
-    if (appinfo_agent && *appinfo_agent)
-    {
-        WCHAR *agent_header;
-        int len;
-
-        len = lstrlenW(appinfo_agent) + lstrlenW(L"User-Agent: %s\r\n");
-        agent_header = malloc(len * sizeof(WCHAR));
-        swprintf(agent_header, len, L"User-Agent: %s\r\n", appinfo_agent);
-
-        HTTP_HttpAddRequestHeadersW(request, agent_header, lstrlenW(agent_header), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
-        free(agent_header);
-    }
-    if (request->hdr.dwFlags & INTERNET_FLAG_PRAGMA_NOCACHE)
-    {
-        HTTP_HttpAddRequestHeadersW(request, L"Pragma: no-cache\r\n",
-                                    lstrlenW(L"Pragma: no-cache\r\n"), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
-    }
-    if ((request->hdr.dwFlags & INTERNET_FLAG_NO_CACHE_WRITE) && wcscmp(request->verb, L"GET"))
-    {
-        HTTP_HttpAddRequestHeadersW(request, L"Cache-Control: no-cache\r\n",
-                                    lstrlenW(L"Cache-Control: no-cache\r\n"), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
-    }
-
-    /* add the headers the caller supplied */
-    if (lpszHeaders)
-    {
-        if (dwHeaderLength == 0)
-            dwHeaderLength = lstrlenW(lpszHeaders);
-
-        HTTP_HttpAddRequestHeadersW(request, lpszHeaders, dwHeaderLength, HTTP_ADDREQ_FLAG_ADD | HTTP_ADDREQ_FLAG_REPLACE);
-    }
 
     do
     {
-        DWORD len, data_len = dwOptionalLength;
+        DWORD len, data_len = optlen;
         BOOL reusing_connection;
         char *ascii_req;
 
@@ -5124,7 +5075,7 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
         else
         {
             if (request->proxy && HTTP_GetCustomHeaderIndex(request, L"Content-Length", 0, TRUE) >= 0)
-                set_content_length_header(request, dwContentLength, HTTP_ADDREQ_FLAG_REPLACE);
+                set_content_length_header(request, content_length, HTTP_ADDREQ_FLAG_REPLACE);
 
             request_header = build_request_header(request, request->verb, request->path, request->version, TRUE);
         }
@@ -5132,10 +5083,10 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
         TRACE("Request header -> %s\n", debugstr_w(request_header) );
 
         /* send the request as ASCII, tack on the optional data */
-        if (!lpOptional || redirected || secure_proxy_connect)
+        if (!optional || redirected || secure_proxy_connect)
             data_len = 0;
 
-        ascii_req = build_ascii_request(request_header, lpOptional, data_len, &len);
+        ascii_req = build_ascii_request(request_header, optional, data_len, &len);
         free(request_header);
         TRACE("full request -> %s\n", debugstr_a(ascii_req) );
 
@@ -5160,7 +5111,7 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                               INTERNET_STATUS_REQUEST_SENT,
                               &len, sizeof(DWORD));
 
-        if (bEndRequest)
+        if (end_request)
         {
             DWORD dwBufferSize;
 
@@ -5206,12 +5157,14 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                 case HTTP_STATUS_MOVED:
                 case HTTP_STATUS_REDIRECT_KEEP_VERB:
                 case HTTP_STATUS_REDIRECT_METHOD:
+                case HTTP_STATUS_PERMANENT_REDIRECT:
                     new_url = get_redirect_url(request);
                     if(!new_url)
                         break;
 
                     if (wcscmp(request->verb, L"GET") && wcscmp(request->verb, L"HEAD") &&
-                        request->status_code != HTTP_STATUS_REDIRECT_KEEP_VERB)
+                        request->status_code != HTTP_STATUS_REDIRECT_KEEP_VERB &&
+                        request->status_code != HTTP_STATUS_PERMANENT_REDIRECT)
                     {
                         free(request->verb);
                         request->verb = wcsdup(L"GET");
@@ -5313,6 +5266,79 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
     while (loop_next);
 
 lend:
+    return res;
+}
+
+/***********************************************************************
+ *           HTTP_HttpSendRequestW (internal)
+ *
+ * Sends the specified request to the HTTP server
+ *
+ * RETURNS
+ *    ERROR_SUCCESS on success
+ *    win32 error code on failure
+ *
+ */
+static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
+	DWORD dwHeaderLength, LPVOID lpOptional, DWORD dwOptionalLength,
+	DWORD dwContentLength, BOOL bEndRequest)
+{
+    DWORD res;
+    const WCHAR *appinfo_agent;
+
+    TRACE("--> %p\n", request);
+
+    assert(request->hdr.htype == WH_HHTTPREQ);
+
+    /* if the verb is NULL default to GET */
+    if (!request->verb)
+        request->verb = wcsdup(L"GET");
+
+    HTTP_ProcessHeader(request, L"Host", request->server->canon_host_port,
+                       HTTP_ADDREQ_FLAG_ADD_IF_NEW | HTTP_ADDHDR_FLAG_REQ);
+
+    if (dwContentLength || wcscmp(request->verb, L"GET"))
+    {
+        set_content_length_header(request, dwContentLength, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+        request->bytesToWrite = dwContentLength;
+    }
+
+    appinfo_agent = request->session->appInfo->agent;
+
+    if (appinfo_agent && *appinfo_agent)
+    {
+        WCHAR *agent_header;
+        int len;
+
+        len = lstrlenW(appinfo_agent) + lstrlenW(L"User-Agent: %s\r\n");
+        agent_header = malloc(len * sizeof(WCHAR));
+        swprintf(agent_header, len, L"User-Agent: %s\r\n", appinfo_agent);
+
+        HTTP_HttpAddRequestHeadersW(request, agent_header, lstrlenW(agent_header), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+        free(agent_header);
+    }
+    if (request->hdr.dwFlags & INTERNET_FLAG_PRAGMA_NOCACHE)
+    {
+        HTTP_HttpAddRequestHeadersW(request, L"Pragma: no-cache\r\n",
+                                    lstrlenW(L"Pragma: no-cache\r\n"), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    }
+    if ((request->hdr.dwFlags & INTERNET_FLAG_NO_CACHE_WRITE) && wcscmp(request->verb, L"GET"))
+    {
+        HTTP_HttpAddRequestHeadersW(request, L"Cache-Control: no-cache\r\n",
+                                    lstrlenW(L"Cache-Control: no-cache\r\n"), HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    }
+
+    /* add the headers the caller supplied */
+    if (lpszHeaders)
+    {
+        if (dwHeaderLength == 0)
+            dwHeaderLength = lstrlenW(lpszHeaders);
+
+        HTTP_HttpAddRequestHeadersW(request, lpszHeaders, dwHeaderLength, HTTP_ADDREQ_FLAG_ADD | HTTP_ADDREQ_FLAG_REPLACE);
+    }
+
+    res = create_request(request, lpOptional, dwOptionalLength, dwContentLength, bEndRequest);
+
     /* TODO: send notification for P3P header */
 
     if(res == ERROR_SUCCESS)
@@ -5401,7 +5427,8 @@ static DWORD HTTP_HttpEndRequestW(http_request_t *request, DWORD dwFlags, DWORD_
         case HTTP_STATUS_REDIRECT:
         case HTTP_STATUS_MOVED:
         case HTTP_STATUS_REDIRECT_METHOD:
-        case HTTP_STATUS_REDIRECT_KEEP_VERB: {
+        case HTTP_STATUS_REDIRECT_KEEP_VERB:
+        case HTTP_STATUS_PERMANENT_REDIRECT: {
             WCHAR *new_url;
 
             new_url = get_redirect_url(request);
@@ -5409,7 +5436,8 @@ static DWORD HTTP_HttpEndRequestW(http_request_t *request, DWORD dwFlags, DWORD_
                 break;
 
             if (wcscmp(request->verb, L"GET") && wcscmp(request->verb, L"HEAD") &&
-                request->status_code != HTTP_STATUS_REDIRECT_KEEP_VERB)
+                request->status_code != HTTP_STATUS_REDIRECT_KEEP_VERB &&
+                request->status_code != HTTP_STATUS_PERMANENT_REDIRECT)
             {
                 free(request->verb);
                 request->verb = wcsdup(L"GET");

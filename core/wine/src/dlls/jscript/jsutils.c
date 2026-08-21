@@ -293,13 +293,8 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
                 hres = IWineJSDispatchHost_GetJSDispatch(disp_host, &jsdisp_iface);
                 IWineJSDispatchHost_Release(disp_host);
                 if(SUCCEEDED(hres)) {
-                    jsdisp_t *jsdisp = to_jsdisp((IDispatch *)jsdisp_iface);
-                    if(jsdisp->ctx == ctx) {
-                        *r = jsval_obj(jsdisp);
-                        return S_OK;
-                    }else {
-                        jsdisp_release(jsdisp);
-                    }
+                    *r = jsval_obj(as_jsdisp((IDispatch *)jsdisp_iface));
+                    return S_OK;
                 }
             }
         }
@@ -681,7 +676,7 @@ HRESULT to_integer(script_ctx_t *ctx, jsval_t v, double *ret)
     return S_OK;
 }
 
-static INT32 double_to_int32(double number)
+INT32 double_to_int32(double number)
 {
     INT32 exp, result;
     union {
