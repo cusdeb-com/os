@@ -1,8 +1,16 @@
 usr/share/cusdeb/cdex/explorer.exe
 usr/share/cusdeb/cdex/filebrowser.exe
 usr/share/cusdeb/cdex/control.exe
+usr/share/cusdeb/cdex/clipbrd.exe
+usr/share/cusdeb/cdex/eventvwr.exe
+usr/share/cusdeb/cdex/mshta.exe
+usr/share/cusdeb/cdex/mstsc.exe
+usr/share/cusdeb/cdex/regedit.exe
+usr/share/cusdeb/cdex/wordpad.exe
+usr/share/cusdeb/cdex/hh.exe
 usr/share/cusdeb/cdex/create-cusdeb-shortcuts.js
 usr/share/cusdeb/cdex/cdex-shortcut-helper
+usr/share/cusdeb/cdex/reactos-classes.reg
 usr/share/cusdeb/cdex/*.dll
 usr/share/cusdeb/cdex/*.cpl
 usr/share/cusdeb/cdex/mizu.msstyles
