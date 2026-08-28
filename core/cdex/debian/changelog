@@ -1,3 +1,18 @@
+cdex (0.0.7-1cd) trixie; urgency=medium
+
+  * runtime/themes/Chicago95, runtime/icons/SE98 and
+    runtime/icons/Chicago95_Standard_Cursors: remove the bundled theme, icon
+    and cursor assets.
+  * Makefile, debian/cdex-base.install and debian/cdex-base.postinst:
+    stop installing the removed assets and refreshing their icon caches.
+  * runtime/config/gtk/gtkrc-2.0, runtime/config/gtk/gtk-3.0/settings.ini,
+    runtime/config/lightdm/50-cusdeb-gtk-greeter.conf and
+    runtime/bin/cdex-win32-session: use Adwaita and hicolor for the GTK,
+    LightDM and cursor configuration; retain Win10 for Openbox.
+  * installer/README.md: document the standard GTK theme.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 03 Sep 2026 19:53:25 +0300
+
 cdex (0.0.6-1cd) trixie; urgency=medium
 
   * Import ReactOS 0.4.16 (upstream commit
