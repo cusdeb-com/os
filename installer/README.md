@@ -1,6 +1,6 @@
 # CusDeb OS Installer
 
-Builds a bootable Debian trixie Live ISO with Calamares. The live environment ships Wine, the ReactOS Explorer-based `cdex` shell, and Chicago95 theming.
+Builds a bootable Debian trixie Live ISO with Calamares. The live environment ships Wine, the ReactOS Explorer-based `cdex` shell, and standard GTK theming.
 
 ## Contents
 
@@ -26,7 +26,7 @@ Every build is currently a full clean rebuild and takes roughly 10–20 minutes 
 1. A Debian trixie live image configured by `live-build`.
 2. A minimal X11 environment (`openbox`, `lightdm`, selected drivers).
 3. Calamares installer with CusDeb branding.
-4. The CusDeb OS layer: `cdex-full` (Wine, ReactOS Explorer shell, Chicago95 theme, Linux-to-Win32 taskbar bridge).
+4. The CusDeb OS layer: `cdex-full` (Wine, ReactOS Explorer shell, standard GTK theme, Linux-to-Win32 taskbar bridge).
 5. A hybrid ISO bootable on both BIOS and UEFI.
 
 ## Build overview

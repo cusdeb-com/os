@@ -5,7 +5,7 @@ export DESKTOP_SESSION=cusdeb-win32
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=CusDebWin32
 export XDG_CONFIG_DIRS="/etc/xdg/cusdeb:/etc/xdg"
-export XCURSOR_THEME="Chicago95_Standard_Cursors"
+export XCURSOR_THEME="Adwaita"
 export XCURSOR_SIZE=16
 export WINEDEBUG="${WINEDEBUG:--all}"
 
