@@ -17,6 +17,5 @@ etc/polkit-1
 etc/systemd
 etc/xdg
 usr/share/themes
-usr/share/icons
 usr/share/fonts/truetype/cusdeb-ubuntu
 usr/share/doc/cdex-base/ubuntu-font

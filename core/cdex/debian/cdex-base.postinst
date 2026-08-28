@@ -12,12 +12,6 @@ if [ -x /usr/bin/systemctl ]; then
     systemctl enable systemd-resolved.service || true
 fi
 
-# Refresh icon caches for the bundled themes.
-if [ -x /usr/bin/gtk-update-icon-cache ]; then
-    gtk-update-icon-cache -q -f -t /usr/share/icons/SE98 || true
-    gtk-update-icon-cache -q -f -t /usr/share/icons/Chicago95_Standard_Cursors || true
-fi
-
 # Refresh the fontconfig cache for the bundled fonts.
 if [ -x /usr/bin/fc-cache ]; then
     fc-cache -f || true
