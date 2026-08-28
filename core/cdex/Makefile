@@ -184,18 +184,6 @@ install: build
 	cp -a runtime/themes/Win10 "$(DESTDIR)/usr/share/themes/"
 	chmod -R a+rX "$(DESTDIR)/usr/share/themes/Win10"
 
-	@echo "=== Installing Chicago95 GTK theme, SE98 icons and cursors ==="
-	install -d "$(DESTDIR)/usr/share/themes"
-	cp -a runtime/themes/Chicago95 "$(DESTDIR)/usr/share/themes/"
-	chmod -R a+rX "$(DESTDIR)/usr/share/themes/Chicago95"
-
-	install -d "$(DESTDIR)/usr/share/icons"
-	cp -a runtime/icons/SE98 "$(DESTDIR)/usr/share/icons/"
-	chmod -R a+rX "$(DESTDIR)/usr/share/icons/SE98"
-
-	cp -a runtime/icons/Chicago95_Standard_Cursors "$(DESTDIR)/usr/share/icons/"
-	chmod -R a+rX "$(DESTDIR)/usr/share/icons/Chicago95_Standard_Cursors"
-
 	@echo "=== Installing GASP-patched Ubuntu fonts ==="
 	install -d "$(FONT_DIR)"
 	set -e; for face in $(FONT_FACES); do \
