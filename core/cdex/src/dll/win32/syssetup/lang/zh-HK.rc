@@ -30,18 +30,18 @@ BEGIN
     LTEXT "按［下一步］繼續安裝程式。", IDC_STATIC, 15, 136, 195, 17
 END
 
-IDD_PRODUCT DIALOGEX 0, 0, 317, 143
+IDD_INSTALLATION DIALOGEX 0, 0, 317, 143
 STYLE DS_MODALFRAME | DS_SHELLFONT | WS_POPUPWINDOW | WS_CAPTION | WS_VISIBLE
 CAPTION "ReactOS 安裝程式"
 FONT 9, "新細明體"
 BEGIN
-    ICON "", IDC_PRODUCT_ICON, 5, 5, 20, 20
-    LTEXT "請選擇您要安裝的版本：", IDC_STATIC, 35, 7, 230, 12
-    LTEXT "版本(&O)：", IDC_STATIC, 5, 32, 85, 10
-    COMBOBOX IDC_PRODUCT_OPTIONS, 95, 30, 205, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX "版本資訊", IDC_STATIC, 5, 50, 305, 85
+    ICON "", IDC_INSTALLATION_ICON, 5, 5, 20, 20
+    LTEXT "Please choose an installation type:", IDC_STATIC, 35, 7, 230, 12
+    LTEXT "Installation &Types:", IDC_STATIC, 5, 32, 85, 10
+    COMBOBOX IDC_INSTALLATION_TYPES, 95, 30, 205, 300, CBS_HASSTRINGS | CBS_AUTOHSCROLL | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX "Installation Summary", IDC_STATIC, 5, 50, 305, 85
     LTEXT "説明：", IDC_STATIC, 20, 65, 70, 10
-    EDITTEXT IDC_PRODUCT_DESCRIPTION, 95, 65, 205, 60, ES_READONLY | ES_AUTOVSCROLL | ES_MULTILINE | WS_VSCROLL
+    EDITTEXT IDC_INSTALLATION_DESCRIPTION, 95, 65, 205, 60, ES_READONLY | ES_AUTOVSCROLL | ES_MULTILINE | WS_VSCROLL
 END
 
 IDD_OWNERPAGE DIALOGEX 0, 0, 317, 143
@@ -121,13 +121,15 @@ BEGIN
     LTEXT "正在登錄元件", IDC_TASKTEXT1, 65, 27, 232, 8
     LTEXT "Installing start menu items", IDC_TASKTEXT2, 65, 39, 232, 8
     LTEXT "Saving settings", IDC_TASKTEXT3, 65, 51, 232, 8
-    LTEXT "Removing temporary files", IDC_TASKTEXT4, 65, 63, 232, 8
+    LTEXT "Installing optional components", IDC_TASKTEXT4, 65, 63, 232, 8
+    LTEXT "Removing temporary files", IDC_TASKTEXT5, 65, 75, 232, 8
     LTEXT "", IDC_ITEM, 21, 85, 275, 8
     CONTROL "", IDC_PROCESSPROGRESS, "msctls_progress32", PBS_SMOOTH | WS_CHILD | WS_VISIBLE | WS_BORDER, 21, 97, 275, 11
     ICON "", IDC_CHECK1, 48, 26, 10, 10, SS_REALSIZEIMAGE | WS_GROUP
     ICON "", IDC_CHECK2, 48, 38, 10, 10, SS_REALSIZEIMAGE | WS_GROUP
     ICON "", IDC_CHECK3, 48, 50, 10, 10, SS_REALSIZEIMAGE | WS_GROUP
     ICON "", IDC_CHECK4, 48, 62, 10, 10, SS_REALSIZEIMAGE | WS_GROUP
+    ICON "", IDC_CHECK5, 48, 74, 10, 10, SS_REALSIZEIMAGE | WS_GROUP
 END
 
 IDD_FINISHPAGE DIALOGEX 0, 0, 317, 193
@@ -166,13 +168,13 @@ CAPTION "進階設定"
 FONT 9, "新細明體"
 BEGIN
     GROUPBOX "", IDC_PS2STATIC, 5, 20, 242, 110
-    RTEXT "採樣速率(&S)：", -1, 27, 35, 90, 8
-    LTEXT "報告速率", -1, 169, 35, 76, 8
+    RTEXT "採樣速率(&S)：", IDC_STATIC, 27, 35, 90, 8
+    LTEXT "報告速率", IDC_STATIC, 169, 35, 76, 8
     COMBOBOX IDC_PS2MOUSESAMPLERATE, 124, 33, 42, 41, CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL
-    RTEXT "滾輪偵測(&W)：", -1, 27, 55, 90, 8
+    RTEXT "滾輪偵測(&W)：", IDC_STATIC, 27, 55, 90, 8
     COMBOBOX IDC_PS2MOUSEWHEEL, 124, 53, 95, 46, CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL
-    RTEXT "輸入緩衝區長度(&I)：", -1, 27, 75, 90, 8
-    LTEXT "封包", -1, 169, 75, 26, 8
+    RTEXT "輸入緩衝區長度(&I)：", IDC_STATIC, 27, 75, 90, 8
+    LTEXT "封包", IDC_STATIC, 169, 75, 26, 8
     EDITTEXT IDC_PS2MOUSEINPUTLEN, 124, 72, 40, 14, ES_LEFT | ES_AUTOHSCROLL | ES_READONLY | ES_NUMBER | WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER
     CONTROL "", IDC_PS2MOUSEINPUTUPDN, "msctls_updown32", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS | WS_CHILD | WS_VISIBLE, 168, 70, 10, 14
     AUTOCHECKBOX "快速初始化(&F)", IDC_PS2MOUSEFASTINIT, 124, 97, 90, 10
@@ -264,11 +266,24 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_PRODUCTTITLE "選擇軟件版本"
-    IDS_PRODUCTSUBTITLE "您可以選擇要安裝的軟件版本。這會對系統的一些功能造成影響。"
-    IDS_PRODUCTSERVERNAME "ReactOS Server"
-    IDS_PRODUCTWORKSTATIONNAME "ReactOS Workstation"
-    IDS_PRODUCTSERVERINFO "系統將識別為一個伺服器。私人資料夾「我的圖片」、「我的影片」和「我的音樂」會獨立於「我的文件」。"
-    IDS_PRODUCTWORKSTATIONINFO "系統將識別為一個工作站。私人資料夾「我的圖片」、「我的影片」和「我的音樂」會在「我的文件」資料夾內。"
+    IDS_INSTALLATIONTITLE "選擇軟件版本"
+    IDS_INSTALLATIONSUBTITLE "您可以選擇要安裝的軟件版本。這會對系統的一些功能造成影響。"
+    IDS_INSTALLATIONSERVERNAME "ReactOS Server"
+    IDS_INSTALLATIONSERVERINFO "系統將識別為一個伺服器。私人資料夾「我的圖片」、「我的影片」和「我的音樂」會獨立於「我的文件」。"
+    IDS_INSTALLATIONWORKSTATIONNAME "ReactOS Workstation"
+    IDS_INSTALLATIONWORKSTATIONINFO "系統將識別為一個工作站。私人資料夾「我的圖片」、「我的影片」和「我的音樂」會在「我的文件」資料夾內。"
+    IDS_INSTALLATIONSERVERCORENAME "ReactOS Server Core"
+    IDS_INSTALLATIONSERVERCOREINFO "The system will be recognized as a server. The graphical shell is not installed, and the system starts in a command-line environment to reduce resource usage and attack surface."
+    /* Reserved for future use
+     * IDS_INSTALLATIONNANOSERVERNAME "ReactOS Nano Server"
+     * IDS_INSTALLATIONNANOSERVERINFO "The system will be recognized as a server. The system is entirely in text mode. You are expected to manage this system remotely."
+     */
     IDS_DEFAULT "（預設）"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_INSTALLADDONSCAPTION "Optional Components"
+    IDS_INSTALLADDONSMESSAGE "Optional components are available to improve application compatibility.\n\nWould you like to download and install them?"
+    IDS_INSTALLADDONSFAILEDMESSAGE "One or more optional components failed to install."
 END

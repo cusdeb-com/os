@@ -23,12 +23,16 @@
 #ifndef __SYSSETUP_H_INCLUDED__
 #define __SYSSETUP_H_INCLUDED__
 
-typedef enum _PRODUCT_OPTION
+typedef enum _INSTALLATION_TYPE
 {
-    PRODUCT_OPTION_SERVER,
-    PRODUCT_OPTION_WORKSTATION,
-    PRODUCT_OPTION_DEFAULT = PRODUCT_OPTION_SERVER
-} PRODUCT_OPTION, *PPRODUCT_OPTION;
+    INSTALLATION_TYPE_SERVER,
+    INSTALLATION_TYPE_WORKSTATION,
+    INSTALLATION_TYPE_SERVER_CORE,
+    // INSTALLATION_TYPE_NANO_SERVER,
+    INSTALLATION_TYPE_MAX,
+
+    INSTALLATION_TYPE_DEFAULT = INSTALLATION_TYPE_WORKSTATION
+} INSTALLATION_TYPE;
 
 /* Private Setup data shared between syssetup.dll and netshell.dll */
 typedef struct _SETUPDATA
@@ -44,7 +48,7 @@ typedef struct _SETUPDATA
     WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];  /* max. 15 characters */
     WCHAR AdminPassword[128];                         /* max. 127 characters */
     BOOL  UnattendSetup;
-    BOOL  DisableGeckoInst;
+    BOOL  RappsDownload;
 
     SYSTEMTIME SystemTime;
     struct _TIMEZONE_ENTRY* TimeZoneListHead;
@@ -58,7 +62,7 @@ typedef struct _SETUPDATA
     UINT uFirstNetworkWizardPage;
     UINT uPostNetworkWizardPage;
 
-    PRODUCT_OPTION ProductOption;
+    INSTALLATION_TYPE InstallationType;
 } SETUPDATA, *PSETUPDATA;
 
 

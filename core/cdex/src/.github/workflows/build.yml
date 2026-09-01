@@ -20,13 +20,15 @@ jobs:
     - name: Get RosBE build specifics
       id: get_rosbe_spec
       run: |
-        gcc -march=native -Q --help=target | grep "\-march= " | awk '{print $NF}'
+        # Print actual cpu-type option only.
+        echo -march = $(gcc -march=native -Q --help=target | grep "\-march=  " | awk '{print $NF}')
+        # Take all options/text into account.
         echo march-sha=$(gcc -march=native -Q --help=target | sha1sum | awk '{print $1}') >> $GITHUB_OUTPUT
         echo git-sha=$(git ls-remote https://github.com/zefklop/RosBE.git | grep unix_amd64 | awk '{print $1}') >> $GITHUB_OUTPUT
         wget https://gist.githubusercontent.com/zefklop/b2d6a0b470c70183e93d5285a03f5899/raw/build_rosbe_ci.sh
     - name: Get RosBE
       id: get_rosbe
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: RosBE-CI
         key: RosBE-CI-${{runner.os}}-${{steps.get_rosbe_spec.outputs.march-sha}}-${{steps.get_rosbe_spec.outputs.git-sha}}-${{hashfiles('./build_rosbe_ci.sh')}}
@@ -50,7 +52,7 @@ jobs:
       with:
         path: src
     - name: Set up cache for ccache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ccache
         key: ccache-${{matrix.compiler}}-${{matrix.arch}}-${{matrix.config}}-${{matrix.dllver}}-${{github.sha}}
@@ -74,7 +76,7 @@ jobs:
     - name: Print ccache statistics
       run: ccache -s
     - name: Upload ISOs
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-${{matrix.compiler}}-${{matrix.arch}}-${{matrix.config}}-${{matrix.dllver}}-${{github.sha}}
         path: |
@@ -100,7 +102,7 @@ jobs:
       run: choco install -y ninja
     - name: Install Flex & Bison
       run: |
-        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z
+        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z || curl -OL https://web.archive.org/web/2025if_/https://svn.reactos.org/storage/vperevertkin/flexbison.7z
         7z x flexbison.7z -O${{github.workspace}}\bin
         echo "${{github.workspace}}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo "BISON_PKGDATADIR=${{github.workspace}}\bin\share\bison" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -128,14 +130,14 @@ jobs:
     - name: Generate ISOs
       run: cmake --build build --target bootcd
     - name: Upload ISOs
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-msvc${{matrix.toolset}}-${{matrix.arch}}-${{matrix.config}}-${{matrix.dllver}}-${{github.sha}}
         path: |
           build/bootcd.iso
     - name: Upload debug symbols
       if: ${{ matrix.config == 'Debug' }}
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-syms-msvc${{matrix.toolset}}-${{matrix.arch}}-${{matrix.config}}-${{matrix.dllver}}-${{github.sha}}
         path: build/msvc_pdb
@@ -161,7 +163,7 @@ jobs:
       run: choco install -y ninja
     - name: Install Flex & Bison
       run: |
-        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z
+        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z || curl -OL https://web.archive.org/web/2025if_/https://svn.reactos.org/storage/vperevertkin/flexbison.7z
         7z x flexbison.7z -O${{github.workspace}}\bin
         echo "${{github.workspace}}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo "BISON_PKGDATADIR=${{github.workspace}}\bin\share\bison" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -216,7 +218,7 @@ jobs:
       if: ${{ matrix.arch == 'arm64' }}
       run: cmake --build build --target dll/cpl/all -- -k0
     - name: Upload compiled binaries
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-msvc${{matrix.toolset}}-${{matrix.arch}}-${{matrix.config}}-${{github.sha}}
         path: |
@@ -243,7 +245,7 @@ jobs:
           !**/*.tlb
     - name: Upload debug symbols
       if: ${{ matrix.config == 'Debug' }}
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-syms-msvc${{matrix.toolset}}-${{matrix.arch}}-${{matrix.config}}-${{github.sha}}
         path: build/msvc_pdb
@@ -265,7 +267,7 @@ jobs:
         echo "LLVM_PATH=${env:PROGRAMFILES}\llvm\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Install Flex & Bison
       run: |
-        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z
+        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z || curl -OL https://web.archive.org/web/2025if_/https://svn.reactos.org/storage/vperevertkin/flexbison.7z
         7z x flexbison.7z -O${{github.workspace}}\bin
         echo "${{github.workspace}}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo "BISON_PKGDATADIR=${{github.workspace}}\bin\share\bison" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -295,14 +297,14 @@ jobs:
     - name: Generate ISOs
       run: cmake --build build --target bootcd
     - name: Upload ISOs
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-clang-cl-${{matrix.arch}}-${{matrix.config}}-${{github.sha}}
         path: |
           build/bootcd.iso
     - name: Upload debug symbols
       if: ${{ matrix.config == 'Debug' }}
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: reactos-syms-clang-cl-${{matrix.arch}}-${{matrix.config}}-${{github.sha}}
         path: build/msvc_pdb
@@ -313,7 +315,7 @@ jobs:
     steps:
     - name: Install Flex and Bison
       run: |
-        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z
+        curl -O https://svn.reactos.org/storage/vperevertkin/flexbison.7z || curl -OL https://web.archive.org/web/2025if_/https://svn.reactos.org/storage/vperevertkin/flexbison.7z
         7z x flexbison.7z -O${{github.workspace}}\bin
         echo "${{github.workspace}}\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo "BISON_PKGDATADIR=${{github.workspace}}\bin\share\bison" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -329,6 +331,8 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake -G "Visual Studio 17 2022" -A Win32 -DCMAKE_TOOLCHAIN_FILE:FILEPATH=toolchain-msvc.cmake -DARCH:STRING=i386 -DENABLE_ROSTESTS=1 -DENABLE_ROSAPPS=1 ${{github.workspace}}\src
+        $GENERATOR = "Visual Studio 17 2022"
+        if ($env:VisualStudioVersion -ge "18") { $GENERATOR = "Visual Studio 18 2026" }
+        cmake -G $GENERATOR -A Win32 -DCMAKE_TOOLCHAIN_FILE:FILEPATH=toolchain-msvc.cmake -DARCH:STRING=i386 -DENABLE_ROSTESTS=1 -DENABLE_ROSAPPS=1 ${{github.workspace}}\src
     - name: Build
       run: cmake --build ${{github.workspace}}\build --target bootcd
