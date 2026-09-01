@@ -73,14 +73,17 @@
 #define IDC_TASKTEXT2         1064
 #define IDC_TASKTEXT3         1065
 #define IDC_TASKTEXT4         1066
-#define IDC_TASKBITMAP1       1067
-#define IDC_TASKBITMAP2       1068
-#define IDC_TASKBITMAP3       1069
-#define IDC_TASKBITMAP4       1070
-#define IDC_CHECK1            1071
-#define IDC_CHECK2            1072
-#define IDC_CHECK3            1073
-#define IDC_CHECK4            1074
+#define IDC_TASKTEXT5         1067
+#define IDC_TASKBITMAP1       1068
+#define IDC_TASKBITMAP2       1069
+#define IDC_TASKBITMAP3       1070
+#define IDC_TASKBITMAP4       1071
+#define IDC_TASKBITMAP5       1072
+#define IDC_CHECK1            1073
+#define IDC_CHECK2            1074
+#define IDC_CHECK3            1075
+#define IDC_CHECK4            1076
+#define IDC_CHECK5            1077
 
 #define IDD_FINISHPAGE        1080
 #define IDC_FINISHTITLE       1081
@@ -106,10 +109,10 @@
 #define IDC_PS2MOUSEDEFAULTS   2306
 #define IDC_PS2STATIC          2307
 
-#define IDD_PRODUCT                2400
-#define IDC_PRODUCT_ICON           2401
-#define IDC_PRODUCT_OPTIONS        2402
-#define IDC_PRODUCT_DESCRIPTION    2405
+#define IDD_INSTALLATION              2400
+#define IDC_INSTALLATION_ICON         2401
+#define IDC_INSTALLATION_TYPES        2402
+#define IDC_INSTALLATION_DESCRIPTION  2405
 
 #define IDS_ACKTITLE    3010
 #define IDS_ACKSUBTITLE 3011
@@ -170,15 +173,24 @@
 #define IDS_LUNAR   3802
 #define IDS_MIZU    3803
 
-#define IDS_PRODUCTTITLE            3900
-#define IDS_PRODUCTSUBTITLE         3901
-#define IDS_PRODUCTSERVERNAME       3902
-#define IDS_PRODUCTWORKSTATIONNAME  3903
-#define IDS_PRODUCTSERVERINFO       3904
-#define IDS_PRODUCTWORKSTATIONINFO  3905
-#define IDS_DEFAULT                 3906
+#define IDS_INSTALLATIONTITLE           3900
+#define IDS_INSTALLATIONSUBTITLE        3901
+#define IDS_INSTALLATIONSERVERNAME      3902
+#define IDS_INSTALLATIONSERVERINFO      3903
+#define IDS_INSTALLATIONWORKSTATIONNAME 3904
+#define IDS_INSTALLATIONWORKSTATIONINFO 3905
+#define IDS_INSTALLATIONSERVERCORENAME  3906
+#define IDS_INSTALLATIONSERVERCOREINFO  3907
+// #define IDS_INSTALLATIONNANOSERVERNAME  3908
+// #define IDS_INSTALLATIONNANOSERVERINFO  3909
+#define IDS_DEFAULT                 3910
 
 #define IDR_GPL 4000
+
+/* Strings for install addons consent dialog */
+#define IDS_INSTALLADDONSCAPTION        4010
+#define IDS_INSTALLADDONSMESSAGE        4011
+#define IDS_INSTALLADDONSFAILEDMESSAGE  4012
 
 /* Timer ID for the animated dialog bar. */
 #define IDT_BAR 1

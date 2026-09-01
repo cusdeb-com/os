@@ -11,7 +11,7 @@
 
 #include <string.h>
 
-#ifdef _M_ARM
+#if defined(_MSC_VER) && (defined(_M_ARM) || _MSC_VER >= 1950)
     #pragma function(strncmp)
 #endif
 

@@ -11,6 +11,8 @@ HWND hList;
 HWND hLocaleList;
 BOOL bSpain = FALSE;
 
+WCHAR Installer[MAX_PATH];
+
 typedef struct _LIVECD_UNATTEND
 {
     BOOL bEnabled;
@@ -101,57 +103,25 @@ Cleanup:
     if (hDC != NULL) ReleaseDC(hwndDlg, hDC);
 }
 
-
+/**
+ * @brief   Check whether we are running in MiniNT mode (e.g. live medium).
+ **/
 BOOL
-IsLiveCD(VOID)
+IsMiniNT(VOID)
 {
-    HKEY ControlKey = NULL;
-    LPWSTR SystemStartOptions = NULL;
-    LPWSTR CurrentOption, NextOption; /* Pointers into SystemStartOptions */
+    HKEY hKey;
     LONG rc;
-    BOOL ret = FALSE;
 
+    /* Check for the presence of the "MiniNT" registry key */
     rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                       REGSTR_PATH_CURRENT_CONTROL_SET,
+                       L"SYSTEM\\CurrentControlSet\\Control\\MiniNT",
                        0,
                        KEY_QUERY_VALUE,
-                       &ControlKey);
-    if (rc != ERROR_SUCCESS)
-    {
-        WARN("RegOpenKeyEx() failed with error %lu\n", rc);
-        goto cleanup;
-    }
+                       &hKey);
+    if (rc == ERROR_SUCCESS)
+        RegCloseKey(hKey);
 
-    rc = ReadRegSzKey(ControlKey, L"SystemStartOptions", &SystemStartOptions);
-    if (rc != ERROR_SUCCESS)
-    {
-        WARN("ReadRegSzKey() failed with error %lu\n", rc);
-        goto cleanup;
-    }
-
-    /* Check for CONSOLE switch in SystemStartOptions */
-    CurrentOption = SystemStartOptions;
-    while (CurrentOption)
-    {
-        NextOption = wcschr(CurrentOption, L' ');
-        if (NextOption)
-            *NextOption = L'\0';
-        if (_wcsicmp(CurrentOption, L"MININT") == 0)
-        {
-            TRACE("Found 'MININT' boot option\n");
-            ret = TRUE;
-            goto cleanup;
-        }
-        CurrentOption = NextOption ? NextOption + 1 : NULL;
-    }
-
-cleanup:
-    if (ControlKey != NULL)
-        RegCloseKey(ControlKey);
-    HeapFree(GetProcessHeap(), 0, SystemStartOptions);
-
-    TRACE("IsLiveCD() returning %u\n", ret);
-    return ret;
+    return (rc == ERROR_SUCCESS);
 }
 
 
@@ -232,7 +202,6 @@ CreateLanguagesList(HWND hwnd, PSTATE pState)
                  (LPARAM)langSel);
 }
 
-
 static
 BOOL
 GetLayoutName(
@@ -299,7 +268,6 @@ GetLayoutName(
     return FALSE;
 }
 
-
 static
 VOID
 SetKeyboardLayout(
@@ -323,7 +291,6 @@ SetKeyboardLayout(
     hKl = LoadKeyboardLayoutW(szLayoutId, KLF_ACTIVATE | KLF_REPLACELANG | KLF_SETFORPROCESS);
     SystemParametersInfoW(SPI_SETDEFAULTINPUTLANG, 0, &hKl, SPIF_SENDCHANGE);
 }
-
 
 static
 VOID
@@ -367,7 +334,6 @@ SelectKeyboardForLanguage(
 
     TRACE("No match found!\n");
 }
-
 
 static
 VOID
@@ -426,7 +392,6 @@ CreateKeyboardLayoutList(
 
     RegCloseKey(hKey);
 }
-
 
 static
 VOID
@@ -575,7 +540,6 @@ CenterWindow(HWND hWnd)
                  SWP_NOSIZE);
 }
 
-
 static
 VOID
 OnDrawItem(
@@ -630,6 +594,7 @@ LocaleDlgProc(
     switch (uMsg)
     {
         case WM_INITDIALOG:
+        {
             /* Save pointer to the state */
             pState = (PSTATE)lParam;
             SetWindowLongPtrW(hwndDlg, GWLP_USERDATA, (DWORD_PTR)pState);
@@ -640,17 +605,15 @@ LocaleDlgProc(
             /* Fill the language and keyboard layout lists */
             CreateLanguagesList(GetDlgItem(hwndDlg, IDC_LANGUAGELIST), pState);
             CreateKeyboardLayoutList(GetDlgItem(hwndDlg, IDC_LAYOUTLIST));
+
+            /* In unattended mode, advance to the next page */
             if (pState->Unattend->bEnabled)
-            {
-                /* Advance to the next page */
-                PostMessageW(hwndDlg, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0L);
-            }
-            return FALSE;
+                SendMessageW(hwndDlg, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);
+            return TRUE;
+        }
 
         case WM_DRAWITEM:
-            OnDrawItem((LPDRAWITEMSTRUCT)lParam,
-                       pState,
-                       IDC_LOCALELOGO);
+            OnDrawItem((LPDRAWITEMSTRUCT)lParam, pState, IDC_LOCALELOGO);
             return TRUE;
 
         case WM_COMMAND:
@@ -750,7 +713,6 @@ LocaleDlgProc(
     return FALSE;
 }
 
-
 static
 INT_PTR
 CALLBACK
@@ -769,8 +731,6 @@ StartDlgProc(
     {
         case WM_INITDIALOG:
         {
-            WCHAR Installer[MAX_PATH];
-
             /* Save pointer to the state */
             pState = (PSTATE)lParam;
             SetWindowLongPtrW(hwndDlg, GWLP_USERDATA, (DWORD_PTR)pState);
@@ -778,24 +738,25 @@ StartDlgProc(
             /* Center the dialog window */
             CenterWindow(hwndDlg);
 
-            /* Check whether we can find the ReactOS installer. If not,
-             * disable the "Install" button and directly start the LiveCD. */
-            *Installer = UNICODE_NULL;
-            if (!ExpandInstallerPath(L"reactos.exe", Installer, ARRAYSIZE(Installer)))
-                EnableWindow(GetDlgItem(hwndDlg, IDC_INSTALL), FALSE);
-
-            if (pState->Unattend->bEnabled || (*Installer == UNICODE_NULL))
+            /* If the ReactOS Installer could not be located, directly start
+             * the LiveCD. Otherwise, directly start the installer if we are
+             * in unattended mode. */
+            if (!*Installer)
             {
-                /* Click on the 'Run' button */
-                PostMessageW(hwndDlg, WM_COMMAND, MAKEWPARAM(IDC_RUN, BN_CLICKED), 0L);
+                /* Disable the "Install" button and click on "Run LiveCD" */
+                EnableWindow(GetDlgItem(hwndDlg, IDC_INSTALL), FALSE);
+                SendMessageW(hwndDlg, WM_COMMAND, MAKEWPARAM(IDC_RUN, BN_CLICKED), 0);
             }
-            return FALSE;
+            else if (pState->Unattend->bEnabled)
+            {
+                /* Click on "Install" */
+                SendMessageW(hwndDlg, WM_COMMAND, MAKEWPARAM(IDC_INSTALL, BN_CLICKED), 0);
+            }
+            return TRUE;
         }
 
         case WM_DRAWITEM:
-            OnDrawItem((LPDRAWITEMSTRUCT)lParam,
-                       pState,
-                       IDC_STARTLOGO);
+            OnDrawItem((LPDRAWITEMSTRUCT)lParam, pState, IDC_STARTLOGO);
             return TRUE;
 
         case WM_COMMAND:
@@ -849,7 +810,10 @@ StartDlgProc(
     return FALSE;
 }
 
-VOID ParseUnattend(LPCWSTR UnattendInf, LIVECD_UNATTEND* pUnattend)
+static VOID
+ParseUnattend(
+    _In_ LPCWSTR UnattendInf,
+    _Out_ LIVECD_UNATTEND* pUnattend)
 {
     WCHAR Buffer[MAX_PATH];
 
@@ -873,9 +837,15 @@ VOID ParseUnattend(LPCWSTR UnattendInf, LIVECD_UNATTEND* pUnattend)
         return;
     }
 
-    if (_wcsicmp(Buffer, L"yes"))
+    if (_wcsicmp(Buffer, L"yes") != 0)
     {
-        TRACE("Unattended setup is not enabled\n", Buffer);
+        TRACE("Unattended setup is not enabled\n");
+        return;
+    }
+    /* If the user presses Ctrl+Shift+F10, disable unattended setup */
+    if ((GetKeyState(VK_CONTROL) & GetKeyState(VK_SHIFT) & GetKeyState(VK_F10)) < 0)
+    {
+        WARN("Unattended setup is disabled by keypress\n");
         return;
     }
 
@@ -888,6 +858,132 @@ VOID ParseUnattend(LPCWSTR UnattendInf, LIVECD_UNATTEND* pUnattend)
     }
 }
 
+
+/**
+ * @brief
+ * Expands the path for the ReactOS Installer "reactos.exe".
+ * See also base/setup/welcome/welcome.c!ExpandInstallerPath()
+ **/
+static BOOL
+ExpandInstallerPath(
+    _In_ PCWSTR pInstallerName,
+    _Out_writes_z_(PathSize) PWSTR pInstallerPath,
+    _In_ SIZE_T PathSize)
+{
+    SYSTEM_INFO SystemInfo;
+    SIZE_T cchInstallerNameLen;
+    PWSTR ptr;
+    DWORD dwAttribs;
+
+    cchInstallerNameLen = wcslen(pInstallerName);
+    if (PathSize < cchInstallerNameLen)
+    {
+        /* The buffer is not large enough to contain the installer file name */
+        *pInstallerPath = UNICODE_NULL;
+        return FALSE;
+    }
+
+    /*
+     * First, try to find the installer using the default drive, under
+     * the directory whose name corresponds to the currently-running
+     * CPU architecture.
+     */
+    GetSystemInfo(&SystemInfo);
+
+    *pInstallerPath = UNICODE_NULL;
+    /* Alternatively one can use SharedUserData->NtSystemRoot */
+    GetSystemWindowsDirectoryW(pInstallerPath, PathSize - cchInstallerNameLen - 1);
+    ptr = wcschr(pInstallerPath, L'\\');
+    if (ptr)
+        *++ptr = UNICODE_NULL;
+    else
+        *pInstallerPath = UNICODE_NULL;
+
+    /* Append the corresponding CPU architecture */
+    switch (SystemInfo.wProcessorArchitecture)
+    {
+        case PROCESSOR_ARCHITECTURE_INTEL:
+            StringCchCatW(pInstallerPath, PathSize, L"I386");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_MIPS:
+            StringCchCatW(pInstallerPath, PathSize, L"MIPS");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_ALPHA:
+            StringCchCatW(pInstallerPath, PathSize, L"ALPHA");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_PPC:
+            StringCchCatW(pInstallerPath, PathSize, L"PPC");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_SHX:
+            StringCchCatW(pInstallerPath, PathSize, L"SHX");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_ARM:
+            StringCchCatW(pInstallerPath, PathSize, L"ARM");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_IA64:
+            StringCchCatW(pInstallerPath, PathSize, L"IA64");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_ALPHA64:
+            StringCchCatW(pInstallerPath, PathSize, L"ALPHA64");
+            break;
+
+        case PROCESSOR_ARCHITECTURE_AMD64:
+            StringCchCatW(pInstallerPath, PathSize, L"AMD64");
+            break;
+
+        // case PROCESSOR_ARCHITECTURE_MSIL: /* .NET CPU-independent code */
+        case PROCESSOR_ARCHITECTURE_UNKNOWN:
+        default:
+            WARN("Unknown processor architecture %lu\n", SystemInfo.wProcessorArchitecture);
+            SystemInfo.wProcessorArchitecture = PROCESSOR_ARCHITECTURE_UNKNOWN;
+            break;
+    }
+
+    if (SystemInfo.wProcessorArchitecture != PROCESSOR_ARCHITECTURE_UNKNOWN)
+        StringCchCatW(pInstallerPath, PathSize, L"\\");
+    StringCchCatW(pInstallerPath, PathSize, pInstallerName);
+
+    dwAttribs = GetFileAttributesW(pInstallerPath);
+    if ((dwAttribs != INVALID_FILE_ATTRIBUTES) &&
+        !(dwAttribs & FILE_ATTRIBUTE_DIRECTORY))
+    {
+        /* We have found the installer */
+        return TRUE;
+    }
+
+    WARN("Couldn't find the installer '%s', trying alternative.\n", debugstr_w(pInstallerPath));
+
+    /*
+     * We failed. Try to find the installer from either the current
+     * ReactOS installation directory, or from our current directory.
+     */
+    *pInstallerPath = UNICODE_NULL;
+    /* Alternatively one can use SharedUserData->NtSystemRoot */
+    if (GetSystemWindowsDirectoryW(pInstallerPath, PathSize - cchInstallerNameLen - 1))
+        StringCchCatW(pInstallerPath, PathSize, L"\\");
+    StringCchCatW(pInstallerPath, PathSize, pInstallerName);
+
+    dwAttribs = GetFileAttributesW(pInstallerPath);
+    if ((dwAttribs != INVALID_FILE_ATTRIBUTES) &&
+        !(dwAttribs & FILE_ATTRIBUTE_DIRECTORY))
+    {
+        /* We have found the installer */
+        return TRUE;
+    }
+
+    /* Installer not found */
+    ERR("Couldn't find the installer '%s'\n", debugstr_w(pInstallerPath));
+    *pInstallerPath = UNICODE_NULL;
+    return FALSE;
+}
+
 VOID
 RunLiveCD(
     PSTATE pState)
@@ -895,12 +991,36 @@ RunLiveCD(
     LIVECD_UNATTEND Unattend = {0};
     WCHAR UnattendInf[MAX_PATH];
 
-    InitLogo(&pState->ImageInfo, NULL);
+    /* Try to locate the ReactOS Installer */
+    if (!ExpandInstallerPath(L"reactos.exe", Installer, _countof(Installer)))
+        *Installer = UNICODE_NULL;
+    if (*Installer)
+        TRACE("ReactOS Installer: '%S'\n", Installer);
+    else
+        WARN("Could not find the ReactOS Installer\n");
 
-    GetWindowsDirectoryW(UnattendInf, _countof(UnattendInf));
-    wcscat(UnattendInf, L"\\unattend.inf");
+    /* If the ReactOS Installer was located, use its path for the
+     * unattended file; otherwise, use the current ReactOS directory. */
+    StringCchCopyW(UnattendInf, _countof(UnattendInf), Installer);
+    if (*UnattendInf)
+    {
+        /* Find the last path separator and truncate the path there.
+         * If there is none, NUL the path. */
+        PWCHAR ptr = wcsrchr(UnattendInf, L'\\');
+        if (!ptr)
+            ptr = UnattendInf;
+        *ptr = UNICODE_NULL;
+    }
+    if (!*UnattendInf)
+    {
+        /* No actual path was found, fall back to the ReactOS directory */
+        GetWindowsDirectoryW(UnattendInf, _countof(UnattendInf));
+    }
+    StringCchCatW(UnattendInf, _countof(UnattendInf), L"\\unattend.inf");
     ParseUnattend(UnattendInf, &Unattend);
     pState->Unattend = &Unattend;
+
+    InitLogo(&pState->ImageInfo, NULL);
 
     while (pState->NextPage != DONE)
     {

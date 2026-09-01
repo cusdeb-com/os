@@ -10,7 +10,7 @@
 
 #include <string.h>
 
-#if defined _M_ARM
+#if defined(_MSC_VER) && (defined(_M_ARM) || _MSC_VER >= 1950)
     #pragma function(strncpy)
 #endif
 
