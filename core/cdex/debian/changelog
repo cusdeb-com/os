@@ -1,3 +1,10 @@
+cdex (0.0.6-1cd) trixie; urgency=medium
+
+  * Import ReactOS 0.4.16 (upstream commit
+    822e8647792a2c43f033e3e00ed273d59f163c7b).
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 03 Sep 2026 18:22:10 +0300
+
 cdex (0.0.5-1cd) trixie; urgency=medium
 
   * runtime/bin: migrate the CDEX session to a win64 Wine prefix, matching
