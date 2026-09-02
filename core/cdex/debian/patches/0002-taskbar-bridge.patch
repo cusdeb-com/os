@@ -1,4 +1,4 @@
-Author: CusDeb OS Team
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
 Description: explorer: integrate the external taskbar bridge and its icons.
  Change base/shell/explorer/taskswnd.cpp to integrate the external Python
  taskbar bridge. Adds a timer-driven sync that reads /tmp/reactos-taskbar-
