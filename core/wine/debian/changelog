@@ -1,3 +1,10 @@
+wine (11.15.0-2cd) trixie; urgency=medium
+
+  * Install only Wine runtime files using the upstream install-lib targets
+    and strip installed ELF/PE binaries.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 03 Sep 2026 19:55:11 +0300
+
 wine (11.15.0-1cd) trixie; urgency=medium
 
   * Import Wine 11.15 (upstream commit
