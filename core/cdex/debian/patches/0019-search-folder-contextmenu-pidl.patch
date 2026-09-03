@@ -25,7 +25,7 @@ Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
          ILFree(pidlFolder);
      }
      return pidl;
-@@ -1018,6 +1018,80 @@
+@@ -1030,6 +1030,80 @@
          if (!pszVerb && SUCCEEDED(GetCommandStringA(m_pInner, LOWORD(lpcmi->lpVerb), GCS_VERBA, szVerb, _countof(szVerb))))
              pszVerb = szVerb;
  
@@ -106,7 +106,7 @@ Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
          if (pszVerb && !lstrcmpiA(pszVerb, "rename"))
          {
              // Note: We can't invoke m_pInner (CDefaultContextMenu::DoRename) because the pidl is incorrect and SelectItem will fail.
-@@ -1111,6 +1185,26 @@
+@@ -1123,6 +1197,26 @@
  
      if (riid == IID_IContextMenu)
      {

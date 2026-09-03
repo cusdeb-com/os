@@ -10,7 +10,7 @@ Last-Modified: Tue, 01 Sep 2026 18:46:20 +0300
 
 --- a/src/base/shell/explorer/taskswnd.cpp
 +++ b/src/base/shell/explorer/taskswnd.cpp
-@@ -1509,6 +1509,11 @@
+@@ -1932,6 +1932,11 @@
          else
              m_Theme = NULL;
  
@@ -22,7 +22,7 @@ Last-Modified: Tue, 01 Sep 2026 18:46:20 +0300
          return TRUE;
      }
  
-@@ -2032,7 +2037,16 @@
+@@ -2472,7 +2477,16 @@
  
          RECT rect;
          GetClientRect(&rect);
