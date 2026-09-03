@@ -12,7 +12,7 @@ override_dh_auto_build:
 	$(MAKE) build
 
 override_dh_auto_install:
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/wine
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/wine INSTALL_PROGRAM_FLAGS=-s
 	install -D -m 644 debian/wine.binfmts $(CURDIR)/debian/wine/usr/share/binfmts/wine
 
 override_dh_makeshlibs:

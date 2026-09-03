@@ -14,7 +14,7 @@ export CCACHE_DIR := /root/.ccache
 export CC         := ccache gcc
 export CXX        := ccache g++
 
-.PHONY: configure build install clean
+.PHONY: configure build install install-lib clean
 
 configure: $(BUILD32)/Makefile
 
@@ -43,10 +43,12 @@ build: configure
 	@echo "Building 32-bit Wine..."
 	$(MAKE) -C "$(BUILD32)" -j$$(nproc)
 
-install: build
+install: install-lib
+
+install-lib: build
 	@echo "Installing Wine into $(DESTDIR)$(PREFIX)..."
-	$(MAKE) -C "$(BUILD32)" install DESTDIR="$(DESTDIR)"
-	$(MAKE) -C "$(BUILD64)" install DESTDIR="$(DESTDIR)"
+	$(MAKE) -C "$(BUILD32)" install-lib DESTDIR="$(DESTDIR)"
+	$(MAKE) -C "$(BUILD64)" install-lib DESTDIR="$(DESTDIR)"
 
 clean:
 	rm -rf "$(WORK_DIR)"
