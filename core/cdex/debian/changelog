@@ -1,3 +1,23 @@
+cdex (0.0.10-1cd) trixie; urgency=medium
+
+  * tools/generate-reactos-classes.py: generate and validate a filtered
+    ReactOS Classes registry fragment from hivecls.inf and exclude the
+    runtime-dependent ShellNew\command value.
+  * Makefile: use the complete upstream hive only as the generator source,
+    install the generated registry fragment, and install icon provider
+    payloads from a shared exact-path manifest.
+  * debian/cdex-base.install: include the generated ReactOS Classes registry
+    fragment and its icon provider payloads in the package.
+  * debian/control: add libwin-hivex-perl for the hivexregedit tool used to
+    generate and validate the registry fragment.
+  * runtime/bin/cdex-registry: configure shortcut creation with the explicit
+    ReactOS appwiz.cpl path and import the Classes fragment during the complete
+    first-run registry setup.
+  * runtime/bin/cdex-win32-session: use one readiness marker, created only
+    after the complete registry setup succeeds.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 04 Sep 2026 22:32:33 +0300
+
 cdex (0.0.9-1cd) trixie; urgency=medium
 
   * debian/patches: remove obsolete 0010-start-menu-search.patch;

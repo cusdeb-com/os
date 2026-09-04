@@ -44,6 +44,22 @@ add_clsid() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\${clsid}\\InprocServer32" /v ThreadingModel /t REG_SZ /d Apartment /f
 }
 
+import_reactos_classes() {
+  # The generated ReactOS Classes registry fragment is imported as part of
+  # the complete first-run registry setup.
+  local reg_file="$REACTOS_SOURCE_DIR/reactos-classes.reg"
+  if [ ! -s "$reg_file" ]; then
+    echo "error: ReactOS Classes hive is missing: $reg_file" >&2
+    return 1
+  fi
+
+  # The file is visible to Wine through C:\reactos, the same stable mapping
+  # used by the shell payload and by every DefaultIcon value in the export.
+  WINEDEBUG=-all wine regedit /S 'C:\reactos\reactos-classes.reg' >/dev/null 2>&1 || return 1
+  # regedit returns before the wineserver has flushed the registry files.
+  WINEDEBUG=-all wineserver -w >/dev/null 2>&1 || return 1
+}
+
 configure_reactos_registry() {
   # REACTOS_REGISTRY_MARKER must be set by the caller (cdex-win32-session).
   if [ -z "${REACTOS_REGISTRY_MARKER:-}" ]; then
@@ -55,6 +71,9 @@ configure_reactos_registry() {
     echo "error: REACTOS_PREFIX is not set" >&2
     exit 1
   fi
+
+  import_reactos_classes || return 1
+
   # Winlogon\Shell, font substitutes and WindowMetrics live in
   # ensure_reactos_ui_settings below and are re-applied on every login because
   # wine.inf (after Wine upgrades) and theme applications clobber them.
@@ -127,27 +146,8 @@ configure_reactos_registry() {
   reg_add "HKLM\\Software\\Classes\\Directory\\shellex\\ContextMenuHandlers\\New" /ve /t REG_SZ /d "{D969A300-E7FF-11D0-A93B-00A0C90F2719}" /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shellex\\ContextMenuHandlers\\New" /ve /t REG_SZ /d "{D969A300-E7FF-11D0-A93B-00A0C90F2719}" /f
 
-  # Standard ShellNew handlers that CNewMenu enumerates when building the New submenu.
-  reg_add "HKLM\\Software\\Classes\\.txt" /ve /t REG_SZ /d "txtfile" /f
-  reg_add "HKLM\\Software\\Classes\\.txt\\ShellNew" /f
-  reg_add "HKLM\\Software\\Classes\\.txt\\ShellNew" /v NullFile /t REG_SZ /d "" /f
-  reg_add "HKLM\\Software\\Classes\\txtfile" /ve /t REG_SZ /d "Text Document" /f
-
-  reg_add "HKLM\\Software\\Classes\\.bmp" /ve /t REG_SZ /d "Paint.Picture" /f
-  reg_add "HKLM\\Software\\Classes\\.bmp\\ShellNew" /f
-  reg_add "HKLM\\Software\\Classes\\.bmp\\ShellNew" /v NullFile /t REG_SZ /d "" /f
-  reg_add "HKLM\\Software\\Classes\\Paint.Picture" /ve /t REG_SZ /d "Bitmap image" /f
-
-  reg_add "HKLM\\Software\\Classes\\.rtf" /ve /t REG_SZ /d "WordPad.Document.1" /f
-  reg_add "HKLM\\Software\\Classes\\.rtf\\ShellNew" /f
-  reg_add "HKLM\\Software\\Classes\\.rtf\\ShellNew" /v NullFile /t REG_SZ /d "" /f
-  reg_add "HKLM\\Software\\Classes\\WordPad.Document.1" /ve /t REG_SZ /d "Rich Text Document" /f
-
-  # Shortcut creation uses the NewLinkHere applet.
-  reg_add "HKLM\\Software\\Classes\\.lnk" /ve /t REG_SZ /d "lnkfile" /f
-  reg_add "HKLM\\Software\\Classes\\.lnk\\ShellNew" /f
-  reg_add "HKLM\\Software\\Classes\\.lnk\\ShellNew" /v Command /t REG_SZ /d "C:\\windows\\system32\\rundll32.exe appwiz.cpl,NewLinkHere %1" /f
-  reg_add "HKLM\\Software\\Classes\\lnkfile" /ve /t REG_SZ /d "Shortcut" /f
+  # Shortcut creation uses the ReactOS NewLinkHere applet.
+  reg_add "HKLM\\Software\\Classes\\.lnk\\ShellNew" /v Command /t REG_SZ /d "C:\\windows\\system32\\rundll32.exe C:\\reactos\\appwiz.cpl,NewLinkHere %1" /f
 
   add_clsid "{00BB2763-6A77-11D0-A535-00C04FD7D062}" "Shell ReactOS AutoComplete" browseui.dll
   add_clsid "{00BB2764-6A77-11D0-A535-00C04FD7D062}" "ReactOS History AutoComplete List" browseui.dll

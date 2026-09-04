@@ -5,6 +5,9 @@ REACTOS_SRC_DIR := $(REPO_DIR)/src
 
 BUILD_DIR := $(REPO_DIR)/debian/.reactos-build/build
 OUT_DIR := $(BUILD_DIR)
+REACTOS_CLASSES_REG := $(REPO_DIR)/debian/.reactos-build/reactos-classes.reg
+REACTOS_CLASSES_GENERATOR := $(REPO_DIR)/tools/generate-reactos-classes.py
+HIVEXREGEDIT := /usr/bin/hivexregedit
 FONT_BUILD_DIR := $(REPO_DIR)/debian/.font-build
 WALLPAPER_BUILD_DIR := $(REPO_DIR)/debian/.wallpaper-build
 CDEX_DIR := $(DESTDIR)/usr/share/cusdeb/cdex
@@ -26,6 +29,13 @@ REACTOS_TARGETS := \
 	mspaint \
 	winmine \
 	spider \
+	clipbrd \
+	eventvwr \
+	mshta \
+	mstsc \
+	regedit \
+	wordpad \
+	hh \
 	shell32 \
 	browseui \
 	shlwapi \
@@ -53,6 +63,12 @@ REACTOS_TARGETS := \
 	timedate \
 	usrmgr \
 	wined3dcfg \
+	cryptext \
+	ieframe \
+	msxml3 \
+	shimgvw \
+	themeui \
+	url \
 	mizu.msstyles
 
 REACTOS_ARTIFACTS := \
@@ -63,6 +79,13 @@ REACTOS_ARTIFACTS := \
 	mspaint.exe \
 	winmine.exe \
 	spider.exe \
+	clipbrd.exe \
+	eventvwr.exe \
+	mshta.exe \
+	mstsc.exe \
+	regedit.exe \
+	wordpad.exe \
+	hh.exe \
 	shell32.dll \
 	browseui.dll \
 	shlwapi.dll \
@@ -90,13 +113,19 @@ REACTOS_ARTIFACTS := \
 	timedate.cpl \
 	usrmgr.cpl \
 	wined3dcfg.cpl \
+	cryptext.dll \
+	ieframe.dll \
+	msxml3.dll \
+	shimgvw.dll \
+	themeui.dll \
+	url.dll \
 	mizu.msstyles
 
 .PHONY: all build install clean
 
 all: build
 
-build: $(OUT_DIR)/.build-stamp $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+build: $(OUT_DIR)/.build-stamp $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
 
 $(OUT_DIR)/.build-stamp:
 	@echo "=== Configuring ReactOS ==="
@@ -109,8 +138,18 @@ $(OUT_DIR)/.build-stamp:
 		-DARCH:STRING=i386 \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building ReactOS targets ==="
-	ninja -C "$(OUT_DIR)" $(REACTOS_TARGETS)
+	ninja -C "$(OUT_DIR)" host-tools $(REACTOS_TARGETS)
 	@touch "$@"
+
+$(REACTOS_CLASSES_REG): $(OUT_DIR)/.build-stamp $(REACTOS_CLASSES_GENERATOR) \
+		$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf
+	@echo "=== Generating ReactOS Classes registry ==="
+	python3 "$(REACTOS_CLASSES_GENERATOR)" \
+		--hivecls "$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf" \
+		--mkhive "$(OUT_DIR)/host-tools/bin/mkhive" \
+		--utf16le "$(OUT_DIR)/host-tools/bin/utf16le" \
+		--hivexregedit "$(HIVEXREGEDIT)" \
+		--output "$@"
 
 $(FONT_BUILD_DIR)/.fonts-stamp: tools/gasp_patch.py tools/rename_font.py \
 		$(wildcard fonts/ubuntu-font-family-0.83/*.ttf)
@@ -140,19 +179,32 @@ install: build
 			mspaint.exe)     candidate="$(OUT_DIR)/base/applications/mspaint/mspaint.exe" ;; \
 			winmine.exe)     candidate="$(OUT_DIR)/base/applications/games/winmine/winmine.exe" ;; \
 			spider.exe)      candidate="$(OUT_DIR)/base/applications/games/spider/spider.exe" ;; \
+			clipbrd.exe)     candidate="$(OUT_DIR)/base/applications/clipbrd/clipbrd.exe" ;; \
+			eventvwr.exe)    candidate="$(OUT_DIR)/base/applications/mscutils/eventvwr/eventvwr.exe" ;; \
+			mshta.exe)       candidate="$(OUT_DIR)/base/applications/mshta/mshta.exe" ;; \
+			mstsc.exe)       candidate="$(OUT_DIR)/base/applications/mstsc/mstsc.exe" ;; \
+			regedit.exe)     candidate="$(OUT_DIR)/base/applications/regedit/regedit.exe" ;; \
+			wordpad.exe)     candidate="$(OUT_DIR)/base/applications/wordpad/wordpad.exe" ;; \
+			hh.exe)          candidate="$(OUT_DIR)/base/applications/hh/hh.exe" ;; \
+			shell32.dll)     candidate="$(OUT_DIR)/dll/win32/shell32/shell32.dll" ;; \
 			*.cpl) \
 				cpl_dir="$${artifact%.cpl}"; \
 				if [ "$$cpl_dir" = "odbccp32i" ]; then cpl_dir="odbccp32"; fi; \
 				candidate="$(OUT_DIR)/dll/cpl/$$cpl_dir/$$artifact" ;; \
-				shell32.dll)  candidate="$(OUT_DIR)/dll/win32/shell32/shell32.dll" ;; \
-				browseui.dll) candidate="$(OUT_DIR)/dll/win32/browseui/browseui.dll" ;; \
-				shlwapi.dll)  candidate="$(OUT_DIR)/dll/win32/shlwapi/shlwapi.dll" ;; \
-				rshell.dll)   candidate="$(OUT_DIR)/base/shell/rshell/rshell.dll" ;; \
-				shdocvw.dll)  candidate="$(OUT_DIR)/dll/win32/shdocvw/shdocvw.dll" ;; \
-				uxtheme.dll)  candidate="$(OUT_DIR)/dll/win32/uxtheme/uxtheme.dll" ;; \
-				version.dll)  candidate="$(OUT_DIR)/dll/win32/version/version.dll" ;; \
-				sendmail.dll) candidate="$(OUT_DIR)/dll/shellext/sendmail/sendmail.dll" ;; \
-				w32time.dll)  candidate="$(OUT_DIR)/base/services/w32time/w32time.dll" ;; \
+			browseui.dll)  candidate="$(OUT_DIR)/dll/win32/browseui/browseui.dll" ;; \
+			shlwapi.dll)   candidate="$(OUT_DIR)/dll/win32/shlwapi/shlwapi.dll" ;; \
+			rshell.dll)    candidate="$(OUT_DIR)/base/shell/rshell/rshell.dll" ;; \
+			shdocvw.dll)   candidate="$(OUT_DIR)/dll/win32/shdocvw/shdocvw.dll" ;; \
+			uxtheme.dll)   candidate="$(OUT_DIR)/dll/win32/uxtheme/uxtheme.dll" ;; \
+			version.dll)   candidate="$(OUT_DIR)/dll/win32/version/version.dll" ;; \
+			sendmail.dll)  candidate="$(OUT_DIR)/dll/shellext/sendmail/sendmail.dll" ;; \
+			w32time.dll)   candidate="$(OUT_DIR)/base/services/w32time/w32time.dll" ;; \
+			cryptext.dll)  candidate="$(OUT_DIR)/dll/shellext/cryptext/cryptext.dll" ;; \
+			ieframe.dll)   candidate="$(OUT_DIR)/dll/win32/ieframe/ieframe.dll" ;; \
+			msxml3.dll)    candidate="$(OUT_DIR)/dll/win32/msxml3/msxml3.dll" ;; \
+			shimgvw.dll)   candidate="$(OUT_DIR)/dll/win32/shimgvw/shimgvw.dll" ;; \
+			themeui.dll)   candidate="$(OUT_DIR)/dll/win32/themeui/themeui.dll" ;; \
+			url.dll)       candidate="$(OUT_DIR)/dll/win32/url/url.dll" ;; \
 			mizu.msstyles) candidate="$(OUT_DIR)/media/themes/Mizu/mizu.msstyles/mizu.msstyles" ;; \
 			esac; \
 		if [ -z "$$candidate" ] || [ ! -f "$$candidate" ]; then \
@@ -170,6 +222,7 @@ install: build
 		"$(BIN_DIR)/"
 	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
+	install -m 644 "$(REACTOS_CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
 	@echo "=== Installing session/config files ==="
 	install -D -m 644 runtime/xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
 	install -D -m 644 runtime/config/lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"
