@@ -1,3 +1,13 @@
+cdex (0.0.9-1cd) trixie; urgency=medium
+
+  * debian/patches: remove obsolete 0010-start-menu-search.patch;
+    Start Menu Search works with the Wine 11.15 runtime.
+  * debian/patches/0017-save-resolution-on-displaychange.patch: refresh
+    hunk line numbers after removing the obsolete Start Menu search
+    patch.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 04 Sep 2026 12:51:35 +0300
+
 cdex (0.0.8-1cd) trixie; urgency=high
 
   * cdex-shortcut-helper: fix a local root privilege escalation. Root

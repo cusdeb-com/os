@@ -44,7 +44,7 @@ Last-Modified: Wed, 22 Jul 2026 18:00:00 +0300
  #define AUTOHIDE_SPEED_SHOW 10
  #define AUTOHIDE_SPEED_HIDE 1
  
-@@ -2506,6 +2534,9 @@
+@@ -2494,6 +2522,9 @@
          /* Move the tray window to the right position and resize it if necessary */
          CheckTrayWndPosition();
  
