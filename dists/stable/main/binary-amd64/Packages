@@ -105,23 +105,23 @@ Description: Spider solitaire card game
  This package is part of the CDEX desktop environment.
 
 Package: wine
-Version: 10.0.1-4cd
+Version: 11.15.0-2cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 583560
-Depends: binfmt-support, libasound2t64:i386, libc6:i386, libfontconfig1, libfontconfig1:i386, libfreetype6, libfreetype6:i386, libgcc-s1:i386, libgl1, libgl1:i386, libgnutls30t64, libgnutls30t64:i386, libjpeg62-turbo, libjpeg62-turbo:i386, libmpg123-0t64, libmpg123-0t64:i386, libncurses6, libncurses6:i386, libpng16-16t64, libpng16-16t64:i386, libx11-6:i386, libxext6:i386, libxml2, libxml2:i386, libxrandr2, libxrandr2:i386, libxrender1, libxrender1:i386, libasound2t64 (>= 1.0.16), libc6 (>= 2.38), libgcc-s1 (>= 3.0), libx11-6, libxext6
+Installed-Size: 357567
+Depends: binfmt-support, libasound2t64 (>= 1.0.16), libasound2t64:i386, libc6:i386, libfontconfig1, libfontconfig1:i386, libfreetype6, libfreetype6:i386, libgcc-s1:i386, libgl1, libgl1:i386, libgnutls30t64, libgnutls30t64:i386, libjpeg62-turbo, libjpeg62-turbo:i386, libmpg123-0t64, libmpg123-0t64:i386, libncurses6, libncurses6:i386, libpng16-16t64, libpng16-16t64:i386, libx11-6:i386, libxext6:i386, libxml2, libxml2:i386, libxrandr2, libxrandr2:i386, libxrender1, libxrender1:i386, libxxf86vm1, libxxf86vm1:i386, libxinerama1, libxinerama1:i386, libxcursor1, libxcursor1:i386, libxi6, libxi6:i386, libxcomposite1, libxcomposite1:i386, libxfixes3, libxfixes3:i386, libc6 (>= 2.38), libgcc-s1 (>= 3.0), libx11-6, libxext6
 Recommends: libasound2-plugins, libgl1-mesa-dri, libvulkan1, libvulkan1:i386
 Conflicts: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
 Replaces: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
-Provides: fonts-wine (= 10.0.1-4cd), libwine (= 10.0.1-4cd), wine-binfmt (= 10.0.1-4cd), wine32 (= 10.0.1-4cd), wine64 (= 10.0.1-4cd)
+Provides: fonts-wine (= 11.15.0-2cd), libwine (= 11.15.0-2cd), wine-binfmt (= 11.15.0-2cd), wine32 (= 11.15.0-2cd), wine64 (= 11.15.0-2cd)
 Homepage: https://winehq.org
 Priority: optional
 Section: otherosfs
-Filename: pool/main/w/wine/wine_10.0.1-4cd_amd64.deb
-Size: 63503852
-SHA256: d05ddab2dc7e1fb4f9795a9ed076f7f1e1b6678ab58a9062dc3ed8d2505a69c5
-SHA1: 60b35fd909973b0cdb0234b57ee2f3ce30b6820b
-MD5sum: 2b07f2febb47d7f7118d62381f57a3a8
+Filename: pool/main/w/wine/wine_11.15.0-2cd_amd64.deb
+Size: 63405640
+SHA256: 42728f669d50bcd55054f5bbf5ee666315a2928a715e8557269a24e73e205203
+SHA1: def46df22ae7a9f5c3cad452beb5f95a89ebd7b1
+MD5sum: 55f3d98b1c253fc5da37b1af6d84c624
 Description: Free and open-source Win32 implementation (CusDeb build)
  Wine is a compatibility layer for running Windows applications on Unix-like
  operating systems by implementing the Win32 API.
