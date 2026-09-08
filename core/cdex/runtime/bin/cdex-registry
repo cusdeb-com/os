@@ -44,6 +44,26 @@ add_clsid() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\${clsid}\\InprocServer32" /v ThreadingModel /t REG_SZ /d Apartment /f
 }
 
+ensure_reactos_explorer_handlers() {
+  local cdex_explorer='C:\\reactos\\explorer.exe'
+
+  # Wine's Folder open DDE handler targets its own shell. CDEX has no DDE
+  # server, so remove it before registering the ReactOS Explorer commands.
+  WINEDEBUG=-all wine reg delete "HKLM\\Software\\Classes\\Folder\\shell\\open\\ddeexec" /f >/dev/null 2>&1 || true
+  WINEDEBUG=-all wine reg delete "HKLM\\Software\\Classes\\Folder\\shell\\open\\ddeexec" /f /reg:32 >/dev/null 2>&1 || true
+
+  # Route both Open and Explore for folders, directories, and drive roots to
+  # the single ReactOS Explorer entrypoint. These class registrations cover
+  # the normal shell path; bare explorer.exe requests are resolved centrally
+  # by the patched shell32 ShellExecute boundary.
+  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open\\command" /ve /t REG_SZ /d "$cdex_explorer \"%1\"" /f
+  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore\\command" /ve /t REG_SZ /d "$cdex_explorer /E,\"%1\"" /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open\\command" /ve /t REG_SZ /d "$cdex_explorer \"%1\"" /f
+  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\explore\\command" /ve /t REG_SZ /d "$cdex_explorer /E,\"%1\"" /f
+  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open\\command" /ve /t REG_SZ /d "$cdex_explorer \"%1\"" /f
+  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore\\command" /ve /t REG_SZ /d "$cdex_explorer /E,\"%1\"" /f
+}
+
 configure_reactos_registry() {
   # REACTOS_REGISTRY_MARKER must be set by the caller (cdex-win32-session).
   if [ -z "${REACTOS_REGISTRY_MARKER:-}" ]; then
@@ -101,19 +121,13 @@ configure_reactos_registry() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\ShellFolder" /v CallForAttributes /t REG_DWORD /d 0x00000040 /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
-  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
   reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
-  reg_add "HKLM\\Software\\Classes\\Folder\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
   reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
   reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
-  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
   reg_add "HKLM\\Software\\Classes\\Directory\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
-  reg_add "HKLM\\Software\\Classes\\Directory\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open" /v BrowserFlags /t REG_DWORD /d 0x10 /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open" /v ExplorerFlags /t REG_DWORD /d 0x12 /f
-  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\open\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe "%1"' /f
   reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore" /v ExplorerFlags /t REG_DWORD /d 0x21 /f
-  reg_add "HKLM\\Software\\Classes\\Drive\\shell\\explore\\command" /ve /t REG_SZ /d 'C:\\reactos\\filebrowser.exe /E,"%1"' /f
 
   # Register the ReactOS New Object Service (CLSID_NewMenu) so the New submenu
   # appears in desktop and folder context menus.
@@ -186,6 +200,7 @@ configure_reactos_registry() {
   # processes in the win64 prefix).
   WINEDEBUG=-all WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b" \
     wine 'C:\windows\syswow64\regsvr32.exe' /s /i browseui.dll >/dev/null 2>&1 || true
+  ensure_reactos_explorer_handlers
   printf '%s\n' "$(date -Is)" >"$REACTOS_REGISTRY_MARKER"
   WINEDEBUG=-all wineserver -k || true
 }
