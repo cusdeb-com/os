@@ -186,8 +186,6 @@ prepare_reactos_payload() {
   rm -rf "$REACTOS_DRIVE_DIR"
   ln -s "$REACTOS_SOURCE_DIR" "$REACTOS_DRIVE_DIR"
 
-  install -m 755 "$REACTOS_SOURCE_DIR/filebrowser.exe" "$REACTOS_PREFIX/drive_c/windows/explorer.exe"
-
   # The payload DLLs and CPLs are 32-bit PE binaries. In a 64-bit prefix the
   # 32-bit system directory is syswow64; placing them in system32 would make
   # 64-bit Wine processes (wineboot, services, ...) fail to load them.
