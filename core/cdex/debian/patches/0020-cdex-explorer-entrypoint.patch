@@ -1,0 +1,218 @@
+Author: CusDeb OS Team
+Description: Route shell launches through the CDEX ReactOS Explorer.
+ Replace filebrowser fallbacks with the canonical explorer.exe entrypoint
+ and resolve bare Explorer commands centrally at the ShellExecute boundary.
+ Remove filebrowser build and post-build copy integration.
+Last-Modified: Tue, 08 Sep 2026 19:30:45 +0300
+
+--- a/src/base/applications/control/control.c
++++ b/src/base/applications/control/control.c
+@@ -74,8 +74,8 @@
+     WCHAR szParameters[MAX_PATH];
+ 
+     /*
+-     * Open a shell folder using "explorer.exe". If Explorer shell is not
+-     * available, use ReactOS's alternative file browser instead.
++     * Open a shell folder using the canonical Explorer entrypoint. shell32
++     * resolves this compatibility name to the CDEX ReactOS payload.
+      * The passed CLSIDs are all subfolders of the "Control Panel" shell folder.
+      */
+     StringCbCopyW(szParameters, sizeof(szParameters), L"/n,::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::{21EC2020-3AEA-1069-A2DD-08002B30309D}");
+@@ -83,7 +83,7 @@
+ 
+     return (INT_PTR)ShellExecuteW(NULL,
+                                   L"open",
+-                                  GetShellWindow() ? L"explorer.exe" : L"filebrowser.exe",
++                                  L"explorer.exe",
+                                   szParameters,
+                                   NULL,
+                                   SW_SHOWDEFAULT) > 32;
+--- a/src/base/applications/taskmgr/procpage.c
++++ b/src/base/applications/taskmgr/procpage.c
+@@ -1248,10 +1248,9 @@
+ 
+     StringCchPrintfW(pszCmdLine, dwLength, szCmdFormat, pszExePath);
+ 
+-    /* Call the shell to open the file location and select it. If Explorer shell
+-     * is not available, use ReactOS's alternative file browser instead. */
++    /* Call the shell to open the file location and select it. */
+     ShellExecuteW(NULL, L"open",
+-                  GetShellWindow() ? L"explorer.exe" : L"filebrowser.exe",
++                  L"explorer.exe",
+                   pszCmdLine, NULL, SW_SHOWNORMAL);
+ 
+ Cleanup:
+--- a/src/base/shell/CMakeLists.txt
++++ b/src/base/shell/CMakeLists.txt
+@@ -1,6 +1,5 @@
+ 
+ add_subdirectory(cmd)
+ add_subdirectory(explorer)
+-add_subdirectory(filebrowser)
+ add_subdirectory(progman)
+ add_subdirectory(rshell)
+--- a/src/base/shell/rshell/CMakeLists.txt
++++ b/src/base/shell/rshell/CMakeLists.txt
+@@ -44,9 +44,3 @@
+      "$<TARGET_FILE:rshell>"
+      "$<TARGET_FILE_DIR:explorer>/$<TARGET_FILE_NAME:rshell>"
+   COMMENT "Copying to output directory")
+-
+-add_custom_command(TARGET rshell POST_BUILD
+-  COMMAND "${CMAKE_COMMAND}" -E copy
+-     "$<TARGET_FILE:rshell>"
+-     "$<TARGET_FILE_DIR:filebrowser>/$<TARGET_FILE_NAME:rshell>"
+-  COMMENT "Copying to output directory")
+--- a/src/dll/cpl/ncpa/ncpa.c
++++ b/src/dll/cpl/ncpa/ncpa.c
+@@ -20,9 +20,9 @@
+ {
+ 	WCHAR szParameters[] = L"/n,::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::{21EC2020-3AEA-1069-A2DD-08002B30309D}\\::{7007ACC7-3202-11D1-AAD2-00805FC1270E}";
+ 
+-	/* NOTE: If Explorer shell is not available, use ReactOS's alternative file browser instead */
++	/* shell32 resolves the compatibility explorer name to the CDEX payload. */
+ 	return (INT_PTR) ShellExecuteW(NULL, L"open",
+-	                               GetShellWindow() ? L"explorer.exe" : L"filebrowser.exe",
++	                               L"explorer.exe",
+ 								   szParameters, NULL, SW_SHOWDEFAULT) > 32;
+ }
+ 
+--- a/src/dll/win32/browseui/CMakeLists.txt
++++ b/src/dll/win32/browseui/CMakeLists.txt
+@@ -62,9 +62,3 @@
+         target_link_options(browseui PRIVATE "-Wl,--allow-multiple-definition")
+     endif()
+ endif()
+-
+-add_custom_command(TARGET browseui POST_BUILD
+-  COMMAND "${CMAKE_COMMAND}" -E copy
+-     "$<TARGET_FILE:browseui>"
+-     "$<TARGET_FILE_DIR:filebrowser>/$<TARGET_FILE_NAME:browseui>"
+-  COMMENT "Copying to output directory")
+--- a/src/dll/win32/shell32/shlexec.cpp
++++ b/src/dll/win32/shell32/shlexec.cpp
+@@ -83,6 +83,64 @@
+     return s_bInDllProcess;
+ }
+ 
++/*
++ * Rewrite a bare "explorer.exe" command in-place to the CDEX ReactOS
++ * Explorer path. The function preserves the original arguments and quotes,
++ * changes nothing for other executables, and leaves the command unchanged if
++ * the destination buffer is too small. It only rewrites the command text; it
++ * does not launch the process.
++ */
++static void SHELL_ResolveCDEXExplorerCommand(LPWSTR command, DWORD cchCommand)
++{
++    static const WCHAR explorerPath[] = L"C:\\reactos\\explorer.exe";
++    WCHAR executable[MAX_PATH];
++    LPWSTR tokenStart, tokenEnd;
++    SIZE_T tokenLength, commandLength, replacementLength;
++
++    if (!command || !cchCommand)
++        return;
++
++    tokenStart = command;
++    while (*tokenStart == L' ' || *tokenStart == L'\t')
++        ++tokenStart;
++
++    if (*tokenStart == L'\"')
++    {
++        ++tokenStart;
++        tokenEnd = strchrW(tokenStart, L'\"');
++    }
++    else
++    {
++        tokenEnd = tokenStart;
++        while (*tokenEnd && *tokenEnd != L' ' && *tokenEnd != L'\t')
++            ++tokenEnd;
++    }
++
++    if (!tokenEnd)
++        return;
++
++    tokenLength = tokenEnd - tokenStart;
++    if (tokenLength >= _countof(executable))
++        return;
++
++    memcpy(executable, tokenStart, tokenLength * sizeof(*executable));
++    executable[tokenLength] = UNICODE_NULL;
++    if (lstrcmpiW(executable, L"explorer.exe") && lstrcmpiW(executable, L"explorer"))
++        return;
++
++    commandLength = lstrlenW(command);
++    replacementLength = _countof(explorerPath) - 1;
++    if (commandLength - tokenLength + replacementLength + 1 > cchCommand)
++    {
++        ERR("CDEX explorer command buffer is too small\n");
++        return;
++    }
++
++    memmove(tokenStart + replacementLength, tokenEnd,
++            (commandLength - (tokenEnd - command) + 1) * sizeof(*command));
++    memcpy(tokenStart, explorerPath, replacementLength * sizeof(*command));
++}
++
+ static UINT_PTR InvokeOpenWith(HWND hWndOwner, SHELLEXECUTEINFOW &sei)
+ {
+     extern HRESULT SH32_InvokeOpenWith(PCWSTR, LPCMINVOKECOMMANDINFO, HANDLE *);
+@@ -1509,6 +1567,8 @@
+             ERR("Argify buffer not large enough, truncating\n");
+     }
+ 
++    SHELL_ResolveCDEXExplorerCommand(param, _countof(param));
++
+     /* Get the parameters needed by the application
+        from the associated ddeexec key */
+     tmp = const_cast<LPWSTR>(strstrW(key, L"command"));
+@@ -1970,6 +2030,7 @@
+         }
+         if (resultLen > ARRAY_SIZE(wcmd))
+             ERR("Argify buffer not large enough... truncating\n");
++        SHELL_ResolveCDEXExplorerCommand(wcmd, _countof(wcmd));
+         return execfunc(wcmd, NULL, FALSE, psei, psei_out);
+     }
+ 
+@@ -2107,6 +2168,9 @@
+         /* Length of space plus length of parameters */
+         len += 1 + lstrlenW(wszParameters);
+     }
++    /* Leave room when the compatibility explorer name is replaced by the
++     * canonical ReactOS explorer path. */
++    len += MAX_PATH;
+     wszQuotedCmd.Allocate(len);
+     /* Must quote to handle case where cmd contains spaces,
+      * else security hole if malicious user creates executable file "C:\\Program"
+@@ -2120,6 +2184,8 @@
+         strcatW(wszQuotedCmd, wszParameters);
+     }
+ 
++    SHELL_ResolveCDEXExplorerCommand(wszQuotedCmd, len);
++
+     TRACE("%s/%s => %s/%s\n", debugstr_w(wszApplicationName), debugstr_w(psei->lpVerb), debugstr_w(wszQuotedCmd), debugstr_w(wszKeyname));
+ 
+     if (*wszKeyname)
+@@ -2451,6 +2517,8 @@
+         sei_tmp.lpFile = wszApplicationName;
+     }
+ 
++    SHELL_ResolveCDEXExplorerCommand(wszApplicationName, dwApplicationNameLen);
++
+     /* Else, try to execute the filename */
+     TRACE("execute: %s,%s,%s\n", debugstr_w(wszApplicationName), debugstr_w(wszParameters), debugstr_w(wszDir));
+ 
+--- a/src/dll/win32/shell32/wine/control.c
++++ b/src/dll/win32/shell32/wine/control.c
+@@ -732,10 +732,10 @@
+ #else
+ static	void	Control_DoWindow(CPanel* panel, HWND hWnd, HINSTANCE hInst)
+ {
+-    /* NOTE: If Explorer shell is not available, use ReactOS's alternative file browser instead */
++    /* shell32 resolves the compatibility explorer name to the CDEX payload. */
+     ShellExecuteW(NULL,
+                   L"open",
+-                  GetShellWindow() ? L"explorer.exe" : L"filebrowser.exe",
++                  L"explorer.exe",
+                   L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::{21EC2020-3AEA-1069-A2DD-08002B30309D}",
+                   NULL,
+                   SW_SHOWDEFAULT);

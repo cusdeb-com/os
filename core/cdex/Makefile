@@ -23,7 +23,6 @@ export CXXFLAGS := $(CXXFLAGS) -Wno-error=format-security
 
 REACTOS_TARGETS := \
 	explorer \
-	filebrowser \
 	control \
 	calc \
 	mspaint \
@@ -73,7 +72,6 @@ REACTOS_TARGETS := \
 
 REACTOS_ARTIFACTS := \
 	explorer.exe \
-	filebrowser.exe \
 	control.exe \
 	calc.exe \
 	mspaint.exe \
@@ -173,7 +171,6 @@ install: build
 	for artifact in $(REACTOS_ARTIFACTS); do \
 		case "$$artifact" in \
 			explorer.exe)    candidate="$(OUT_DIR)/base/shell/explorer/explorer.exe" ;; \
-			filebrowser.exe) candidate="$(OUT_DIR)/base/shell/filebrowser/filebrowser.exe" ;; \
 			control.exe)     candidate="$(OUT_DIR)/base/applications/control/control.exe" ;; \
 			calc.exe)        candidate="$(OUT_DIR)/base/applications/calc/calc.exe" ;; \
 			mspaint.exe)     candidate="$(OUT_DIR)/base/applications/mspaint/mspaint.exe" ;; \
