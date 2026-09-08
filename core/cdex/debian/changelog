@@ -1,3 +1,20 @@
+cdex (0.0.10-1cd) trixie; urgency=medium
+
+  * debian/patches/0019-search-folder-contextmenu-pidl.patch: update Search
+    Results Open handling for filesystem selections: folders open in new
+    Explorer frames and files through their normal associations, including
+    mixed selections.
+  * debian/patches/0020-cdex-explorer-entrypoint.patch: route bare
+    explorer.exe requests through the CDEX ReactOS Explorer, replace
+    filebrowser fallbacks, and remove filebrowser build/copy integration.
+  * runtime/bin/cdex-registry: register Folder, Directory, and Drive
+    open/explore commands for the ReactOS Explorer and remove the Wine Folder
+    DDE handler.
+  * Makefile, debian/cdex-base.install and runtime/bin/cdex-win32-
+    session: stop building, installing and copying filebrowser.exe.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 08 Sep 2026 19:27:27 +0300
+
 cdex (0.0.9-1cd) trixie; urgency=medium
 
   * debian/patches: remove obsolete 0010-start-menu-search.patch;
