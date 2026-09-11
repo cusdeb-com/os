@@ -1,6 +1,6 @@
 ---
 componentName:   cusdeb
-welcomeStyleCalamares: true
+welcomeStyleCalamares: false
 welcomeExpandingLogo: true
 windowExpanding: normal
 windowSize: 800px,580px
@@ -9,16 +9,16 @@ windowPlacement: center
 strings:
     productName:         CusDeb OS
     shortProductName:    CusDeb
-    version:             1
-    shortVersion:        1
-    versionedName:       CusDeb OS 1
-    shortVersionedName:  CusDeb OS 1
+    version:             ""
+    shortVersion:        ""
+    versionedName:       CusDeb OS
+    shortVersionedName:  CusDeb OS
     bootloaderEntryName: CusDeb OS
-    productUrl:          https://github.com/CusDeb
-    supportUrl:          https://github.com/CusDeb
-    knownIssuesUrl:      https://github.com/CusDeb
-    releaseNotesUrl:     https://github.com/CusDeb
-    donateUrl:           https://github.com/CusDeb
+    productUrl:          https://github.com/cusdeb-com/os
+    supportUrl:          https://github.com/cusdeb-com/os
+    knownIssuesUrl:      https://github.com/cusdeb-com/os/issues
+    releaseNotesUrl:     https://github.com/cusdeb-com/os/releases
+    donateUrl:           https://cusdeb.com/cdmag
 
 sidebar: widget
 navigation: widget
@@ -31,9 +31,9 @@ images:
 slideshow:               "show.qml"
 
 style:
-   SidebarBackground:    "#26475b"
+   SidebarBackground:    "#74A7E2"
    SidebarText:          "#FFFFFF"
-   SidebarTextCurrent:   "#fbfbfb"
-   SidebarBackgroundCurrent: "#265370"
+   SidebarTextCurrent:   "#FFFFFF"
+   SidebarBackgroundCurrent: "#193576"
 
 slideshowAPI: 2
