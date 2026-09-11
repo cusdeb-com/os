@@ -1,3 +1,12 @@
+cdex (0.0.11-1cd) trixie; urgency=medium
+
+  * wallpapers/cusdeb-race.png: replace the default CusDeb desktop
+    wallpaper asset.
+  * runtime/bin/cdex-win32-session: set the Openbox desktop background
+    to #9D9EA0.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 11 Sep 2026 20:23:09 +0300
+
 cdex (0.0.10-1cd) trixie; urgency=medium
 
   * tools/generate_registry_classes.py: generate and validate a filtered
