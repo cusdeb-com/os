@@ -1,22 +1,44 @@
 #!/usr/bin/env make -f
 
+# Repository paths
 REPO_DIR := $(CURDIR)
 REACTOS_SRC_DIR := $(REPO_DIR)/src
 
-BUILD_DIR := $(REPO_DIR)/debian/.reactos-build/build
+# Incremental build cache
+BUILD_CACHE_DIR := $(REPO_DIR)/.cdex-build
+BUILD_DIR := $(BUILD_CACHE_DIR)/reactos
 OUT_DIR := $(BUILD_DIR)
-REACTOS_CLASSES_REG := $(REPO_DIR)/debian/.reactos-build/reactos-classes.reg
+FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
+WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
+
+# Generated build inputs
+REACTOS_CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
+
+# Build tools and generators
 REACTOS_CLASSES_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
 HIVEXREGEDIT := /usr/bin/hivexregedit
-FONT_BUILD_DIR := $(REPO_DIR)/debian/.font-build
-WALLPAPER_BUILD_DIR := $(REPO_DIR)/debian/.wallpaper-build
+
+# Debian package output
+# Relative to the package root; override with PACKAGE_DIR=. in CI.
+PACKAGE_DIR ?= .cdex-build/packages
+PACKAGE_HOST_DIR := $(REPO_DIR)/$(PACKAGE_DIR)
+
+# Package install destinations
 CDEX_DIR := $(DESTDIR)/usr/share/cusdeb/cdex
 BIN_DIR := $(DESTDIR)/usr/bin
 FONT_DIR := $(DESTDIR)/usr/share/fonts/truetype/cusdeb-ubuntu
 DOC_DIR := $(DESTDIR)/usr/share/doc/cdex-base/ubuntu-font
 
+# Container build settings
+DOCKER ?= docker
+BUILD_IMAGE ?= cdex-buildenv:bookworm
+# Set REAPPLY_PATCHES=1 to reapply the complete Quilt series before building.
+REAPPLY_PATCHES ?= 0
+
+# Build asset settings
 FONT_FACES := R B RI
 
+# Cross-compilation settings
 export ROS_ARCH := i386
 export CFLAGS := $(CFLAGS) -Wno-error=format-security
 export CXXFLAGS := $(CXXFLAGS) -Wno-error=format-security
@@ -121,15 +143,48 @@ REACTOS_ARTIFACTS := \
 	url.dll \
 	mizu.msstyles
 
-.PHONY: all build install clean
+.PHONY: all build clean image shell ensure-image
+.PHONY: build-in-container install-in-container reactos-build
 
+# Public developer interface
 all: build
 
-build: $(OUT_DIR)/.build-stamp $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+build: ensure-image
+	mkdir -p "$(PACKAGE_HOST_DIR)"
+	$(DOCKER) run --rm \
+		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
+		--user "$$(id -u):$$(id -g)" \
+		--workdir /workspace \
+		--env "REAPPLY_PATCHES=$(REAPPLY_PATCHES)" \
+		--env "PACKAGE_DIR=$(PACKAGE_DIR)" \
+		"$(BUILD_IMAGE)" \
+		sh /workspace/tools/build-in-container.sh
 
-$(OUT_DIR)/.build-stamp:
+clean:
+	rm -rf "$(BUILD_CACHE_DIR)"
+
+image:
+	$(DOCKER) build --network=host --tag "$(BUILD_IMAGE)" \
+		--file "$(REPO_DIR)/Dockerfile" "$(REPO_DIR)"
+
+ensure-image:
+	@if ! $(DOCKER) image inspect "$(BUILD_IMAGE)" >/dev/null 2>&1; then \
+		echo "Build the build environment first: make image" >&2; \
+		exit 1; \
+	fi
+
+shell: ensure-image
+	$(DOCKER) run --rm --interactive --tty \
+		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
+		--user "$$(id -u):$$(id -g)" \
+		--workdir /workspace \
+		"$(BUILD_IMAGE)" /bin/bash
+
+# Internal container build interface.
+build-in-container: reactos-build $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+
+reactos-build:
 	@echo "=== Configuring ReactOS ==="
-	rm -rf "$(OUT_DIR)"
 	mkdir -p "$(OUT_DIR)"
 	cmake -S "$(REACTOS_SRC_DIR)" -B "$(OUT_DIR)" -G Ninja \
 		-DENABLE_CCACHE:BOOL=0 \
@@ -139,10 +194,9 @@ $(OUT_DIR)/.build-stamp:
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building ReactOS targets ==="
 	ninja -C "$(OUT_DIR)" host-tools $(REACTOS_TARGETS)
-	@touch "$@"
 
-$(REACTOS_CLASSES_REG): $(OUT_DIR)/.build-stamp $(REACTOS_CLASSES_GENERATOR) \
-		$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf
+$(REACTOS_CLASSES_REG): $(REACTOS_CLASSES_GENERATOR) \
+		$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf | reactos-build
 	@echo "=== Generating ReactOS Classes registry ==="
 	python3 "$(REACTOS_CLASSES_GENERATOR)" \
 		--hivecls "$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf" \
@@ -167,7 +221,8 @@ $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp: wallpapers/cusdeb-race.png
 	convert wallpapers/cusdeb-race.png -alpha off -type TrueColor "BMP3:$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp"
 	@touch "$@"
 
-install: build
+# Internal container install interface. Called by debian/rules after the build phase.
+install-in-container:
 	@echo "=== Installing ReactOS artifacts ==="
 	install -d "$(CDEX_DIR)"
 	for artifact in $(REACTOS_ARTIFACTS); do \
@@ -252,7 +307,3 @@ install: build
 
 	@echo "=== Installing ReactOS Marlett font ==="
 	install -D -m 644 "$(REACTOS_SRC_DIR)/media/fonts/Marlett.ttf" "$(CDEX_DIR)/fonts/Marlett.ttf"
-
-clean:
-	rm -rf "$(REPO_DIR)/debian/.reactos-build" "$(REPO_DIR)/debian/.font-build" \
-		"$(REPO_DIR)/debian/.wallpaper-build"
