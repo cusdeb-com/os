@@ -1,3 +1,15 @@
+cdex (0.0.13-2cd) trixie; urgency=medium
+
+  * Makefile: provide persistent incremental ReactOS builds with
+    configurable package output.
+  * Dockerfile, debian/control: define the shared Bookworm build
+    environment from the declared build dependencies.
+  * debian/rules, tools/build-in-container.sh: separate the container
+    build flow, apply Quilt, and create packages with fakeroot as the
+    host user.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 23 Sep 2026 16:02:03 +0300
+
 cdex (0.0.13-1cd) trixie; urgency=medium
 
   * debian/patches/0003-iconcache-ilc-color32.patch: keep shell icon
