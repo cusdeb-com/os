@@ -1,19 +1,17 @@
-FROM debian:bookworm AS builder
+FROM debian:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-WORKDIR /build/pkg
+WORKDIR /tmp/cdex-buildenv
 
-COPY . .
+# Needed only to build this image: apt-get build-dep reads the build
+# dependencies from debian/control. The source tree is not copied; it is
+# mounted when a package is built.
+COPY debian/control debian/control
 
-# Install build dependencies declared in debian/control.
 RUN apt-get update && apt-get build-dep -y . \
  && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /workspace
 
-# Build the binary package.
-RUN dpkg-buildpackage -us -uc -b
-
-FROM scratch AS exporter
-
-COPY --from=builder /build/*.deb /
+CMD ["sleep", "infinity"]
