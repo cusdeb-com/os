@@ -89,11 +89,17 @@ jobs:
 
       - name: Build Debian package
         run: |
-          cd "${{ matrix.package }}"
-          docker buildx build \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --output type=local,dest=. .
+          # TODO: use one Makefile-based build path after migrating Wine.
+          if [ "${{ matrix.package }}" = "core/cdex" ]; then
+            make -C "${{ matrix.package }}" image
+            make -C "${{ matrix.package }}" build PACKAGE_DIR=.
+          else
+            cd "${{ matrix.package }}"
+            docker buildx build \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --output type=local,dest=. .
+          fi
 
       - name: Collect .deb artifact
         run: |
