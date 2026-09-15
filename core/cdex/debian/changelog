@@ -1,3 +1,15 @@
+cdex (0.0.12-2cd) trixie; urgency=medium
+
+  * Makefile: provide persistent incremental ReactOS builds with
+    configurable package output.
+  * Dockerfile, debian/control: define the shared Bookworm build
+    environment from the declared build dependencies.
+  * debian/rules, tools/build-in-container.sh: separate the container
+    build flow, apply Quilt, and create packages with fakeroot as the
+    host user.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 15 Sep 2026 16:40:26 +0300
+
 cdex (0.0.12-1cd) trixie; urgency=medium
 
   * runtime/config/openbox/rc.xml: set window title font weight to normal.

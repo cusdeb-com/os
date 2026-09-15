@@ -4,14 +4,21 @@ export DH_VERBOSE = 1
 # dpkg hardening flags (-z relro etc.) are not supported by MinGW-w64 linker.
 export DEB_BUILD_MAINT_OPTIONS = hardening=-all
 
+# The container build interface may override this for CI output.
+PACKAGE_DIR ?= .cdex-build/packages
+
 %:
 	dh $@
 
-override_dh_auto_clean:
-	$(MAKE) clean
+override_dh_update_autotools_config:
+	@:
 
 override_dh_auto_build:
-	$(MAKE) build
+	$(MAKE) build-in-container
 
 override_dh_auto_install:
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	$(MAKE) install-in-container DESTDIR=$(CURDIR)/debian/tmp
+
+override_dh_builddeb:
+	mkdir -p "$(PACKAGE_DIR)"
+	dh_builddeb --destdir="$(PACKAGE_DIR)"
