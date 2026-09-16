@@ -1,4 +1,5 @@
 # Debian packaging build artifacts
+# Temporary branch CI trigger; remove after validation.
 /.wine-build
 /debian/.debhelper
 /debian/tmp

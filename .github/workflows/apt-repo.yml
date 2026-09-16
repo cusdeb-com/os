@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - fix/wine-incremental-build
   workflow_dispatch:
 
 jobs:
