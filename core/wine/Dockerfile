@@ -1,25 +1,30 @@
-FROM debian:trixie AS builder
+FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ` architecture is required for the 32-bit Wine build.
+# i386 architecture is required for the 32-bit Wine build.
 RUN dpkg --add-architecture i386
 
-WORKDIR /build/pkg
+WORKDIR /tmp/wine-buildenv
 
-COPY . .
+# Only packaging metadata is needed to install the build dependencies. The
+# source tree is mounted when a build is run, so source changes do not rebuild
+# this image.
+COPY debian/control debian/control
 
-# Install build dependencies declared in debian/control, exactly like hello-world.
-# apt-get update lives in the same layer so the package index is refreshed
-# whenever the source tree changes (COPY above invalidates the cache).
 RUN apt-get update \
     && apt-get build-dep -y . \
     && rm -rf /var/lib/apt/lists/*
 
-# Build the package. ccache is persisted via BuildKit cache mount.
-RUN --mount=type=cache,target=/root/.ccache \
-    dpkg-buildpackage -us -uc -b
+# ccache does not provide wrappers for the MinGW compiler names in the base
+# image. These names must resolve to ccache before the real compiler is found.
+RUN mkdir -p /opt/ccache/bin \
+    && ln -s /usr/bin/ccache /opt/ccache/bin/x86_64-w64-mingw32-gcc \
+    && ln -s /usr/bin/ccache /opt/ccache/bin/x86_64-w64-mingw32-g++ \
+    && ln -s /usr/bin/ccache /opt/ccache/bin/i686-w64-mingw32-gcc \
+    && ln -s /usr/bin/ccache /opt/ccache/bin/i686-w64-mingw32-g++
 
-FROM scratch AS exporter
+ENV PATH="/opt/ccache/bin:${PATH}"
+WORKDIR /workspace
 
-COPY --from=builder /build/*.deb /
+CMD ["sleep", "infinity"]
