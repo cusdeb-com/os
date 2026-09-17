@@ -1,3 +1,11 @@
+cdex (0.0.13-1cd) trixie; urgency=medium
+
+  * debian/patches/0003-iconcache-ilc-color32.patch: keep shell icon
+    lists at 32-bit depth so alpha-aware shell assets preserve
+    transparency.
+
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Thu, 17 Sep 2026 21:27:51 +0300
+
 cdex (0.0.12-1cd) trixie; urgency=medium
 
   * runtime/config/openbox/rc.xml: set window title font weight to normal.

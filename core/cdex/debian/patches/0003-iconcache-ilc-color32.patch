@@ -1,8 +1,9 @@
 Author: CusDeb OS Team
-Description: Force ILC_COLOR24 (instead of auto-detected ILC_COLOR32) in
- dll/win32/shell32/iconcache.cpp to work around Wine comctl32 alpha-blending
- issues that cause black backgrounds behind desktop icons.
-Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
+Description: Force the shell icon image lists (SIC_Initialize) to ILC_COLOR32,
+ dropping the auto-detected Shell Icon BPP logic. Keeps icon alpha channels
+ intact under Wine instead of degrading to lower color depths that lose
+ transparency and produce black edges.
+Last-Modified: Thu, 17 Sep 2026 14:04:41 +0300
 
 --- a/src/dll/win32/shell32/iconcache.cpp
 +++ b/src/dll/win32/shell32/iconcache.cpp
@@ -28,7 +29,7 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
      DWORD ilMask;
      BOOL result = FALSE;
  
-@@ -536,19 +528,11 @@ BOOL SIC_Initialize(void)
+@@ -536,19 +528,10 @@ BOOL SIC_Initialize(void)
      ShellSmallIconSize = SIC_GetSmallIconSize();
      ShellLargeIconSize = SIC_GetLargeIconSize();
  
@@ -45,11 +46,10 @@ Last-Modified: Mon, 13 Jul 2026 19:30:09 +0300
 -        ilMask = ILC_COLOR32;
 -    else
 -        ilMask = ILC_COLOR;
-+    /* Force 24-bit color depth for the icon cache to work around Wine's
-+     * ImageList alpha blending issues with 32-bit icons that have invalid
-+     * alpha channels but valid masks. With ILC_COLOR24, Wine falls back to
-+     * mask-based transparency which works correctly. */
-+    ilMask = ILC_COLOR24;
++    /* Wine's virtual desktop is always true-color, so just force 32-bit
++     * color depth and skip the (here pointless) auto-detection. */
++    ShellIconBPP = 32;
++    ilMask = ILC_COLOR32;
  
      ilMask |= ILC_MASK;
  
