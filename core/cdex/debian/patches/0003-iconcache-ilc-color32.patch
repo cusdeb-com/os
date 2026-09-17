@@ -1,4 +1,4 @@
-Author: CusDeb OS Team
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
 Description: Force the shell icon image lists (SIC_Initialize) to ILC_COLOR32,
  dropping the auto-detected Shell Icon BPP logic. Keeps icon alpha channels
  intact under Wine instead of degrading to lower color depths that lose
