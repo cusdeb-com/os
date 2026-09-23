@@ -1,3 +1,22 @@
+cdex (0.0.14-1cd) trixie; urgency=medium
+
+  * tools/asset_pipeline.py, assets/icons: keep canonical SVG masters
+    and generate high-resolution ICOs plus one path header in
+    .cdex-build/icons.
+  * Makefile, tools/build-in-container.sh: pass generated icon paths
+    directly to ReactOS and remove source-tree staging and backup
+    restoration.
+  * debian/patches/0020-shell32-resource-dependencies.patch: track
+    shell32 resource globs with CONFIGURE_DEPENDS for incremental
+    builds.
+  * debian/patches/0021-cdex-external-shell-icons.patch: map project-
+    owned shell icons through the generated catalog, retain ReactOS
+    fallback resources, and keep the compact shortcut overlay resource 30.ico.
+  * debian/control: add librsvg2-bin so ImageMagick can rasterize SVG
+    masters.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 23 Sep 2026 16:15:01 +0300
+
 cdex (0.0.13-2cd) trixie; urgency=medium
 
   * Makefile: provide persistent incremental ReactOS builds with

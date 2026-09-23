@@ -1,0 +1,29 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Track shell32 resource dependencies in incremental builds.
+ Keep the complete resource dependency list so changes to ICO and other
+ shell32 resources rebuild shell32.rc.res; recheck the glob when files are
+ added or removed.
+Last-Modified: Mon, 21 Sep 2026 14:00:00 +0300
+
+--- a/src/dll/win32/shell32/CMakeLists.txt
++++ b/src/dll/win32/shell32/CMakeLists.txt
+@@ -102,7 +102,10 @@
+     vista.c
+     ${CMAKE_CURRENT_BINARY_DIR}/shell32_stubs.c)
+ 
+-file(GLOB_RECURSE shell32_rc_deps res/*.*)
++# Keep all shell32 resource prerequisites in one OBJECT_DEPENDS list;
++# a later set_source_files_properties call replaces that list instead of
++# appending to it.
++file(GLOB_RECURSE shell32_rc_deps CONFIGURE_DEPENDS res/*.*)
+ list(APPEND shell32_rc_deps ${CMAKE_CURRENT_BINARY_DIR}/shell32_shldisp.tlb)
+ add_rc_deps(shell32.rc ${shell32_rc_deps})
+ 
+@@ -118,7 +121,6 @@
+ endif()
+ 
+ add_typelib(shell32_shldisp.idl)
+-set_source_files_properties(shell32.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell32_shldisp.tlb)
+ 
+ set_module_type(shell32 win32dll UNICODE)
+ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
