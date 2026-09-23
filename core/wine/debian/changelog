@@ -1,3 +1,15 @@
+wine (11.15.0-3cd) trixie; urgency=medium
+
+  * Makefile: provide persistent incremental Wine builds for 32-bit and
+    64-bit targets with configurable package output.
+  * Dockerfile, debian/control: define the Trixie build environment from the
+    declared build dependencies and configure ccache wrappers for MinGW tools.
+  * debian/rules, tools/build-in-container.sh: use the container build flow,
+    apply Quilt, install both Wine targets, and create packages with fakeroot
+    as the host user.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 16 Sep 2026 14:09:35 +0300
+
 wine (11.15.0-2cd) trixie; urgency=medium
 
   * Install only Wine runtime files using the upstream install-lib targets
