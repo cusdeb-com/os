@@ -10,6 +10,7 @@ BUILD_DIR := $(BUILD_CACHE_DIR)/reactos
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
 WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
+ICON_BUILD_DIR := $(BUILD_CACHE_DIR)/icons
 
 # Generated build inputs
 REACTOS_CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
@@ -17,6 +18,8 @@ REACTOS_CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
 # Build tools and generators
 REACTOS_CLASSES_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
 HIVEXREGEDIT := /usr/bin/hivexregedit
+
+ASSET_PIPELINE_SCRIPT := $(REPO_DIR)/tools/asset_pipeline.py
 
 # Debian package output
 # Relative to the package root; override with PACKAGE_DIR=. in CI.
@@ -143,7 +146,7 @@ REACTOS_ARTIFACTS := \
 	url.dll \
 	mizu.msstyles
 
-.PHONY: all build clean image shell ensure-image
+.PHONY: all build clean image shell ensure-image prepare-icons
 .PHONY: build-in-container install-in-container reactos-build
 
 # Public developer interface
@@ -183,7 +186,13 @@ shell: ensure-image
 # Internal container build interface.
 build-in-container: reactos-build $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
 
-reactos-build:
+prepare-icons: $(ASSET_PIPELINE_SCRIPT)
+	@echo "=== Preparing project-owned shell icons ==="
+	@python3 "$(ASSET_PIPELINE_SCRIPT)" prepare \
+		--root "$(REPO_DIR)" \
+		--build-dir "$(ICON_BUILD_DIR)"
+
+reactos-build: prepare-icons
 	@echo "=== Configuring ReactOS ==="
 	mkdir -p "$(OUT_DIR)"
 	cmake -S "$(REACTOS_SRC_DIR)" -B "$(OUT_DIR)" -G Ninja \
@@ -191,6 +200,7 @@ reactos-build:
 		-DENABLE_ROSTESTS=0 \
 		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(REACTOS_SRC_DIR)/toolchain-gcc.cmake" \
 		-DARCH:STRING=i386 \
+		-DCDEX_ICON_BUILD_DIR:PATH="$(ICON_BUILD_DIR)" \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building ReactOS targets ==="
 	ninja -C "$(OUT_DIR)" host-tools $(REACTOS_TARGETS)
