@@ -1,0 +1,2 @@
+/* CusDeb OS installer theme: pure white main window background. */
+#mainApp { background-color: #FFFFFF; }
