@@ -1,0 +1,89 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Preserve the mask-selected alpha in 32-bit pattern ROPs.
+ For 32-bpp destinations, expand monochrome mask bits into the reserved
+ byte during the Wine MaskBlt R2_MASKPEN stage. Limit the change to
+ the 0xAC0744 mask-combine ROP; keep other ROPs and formats unchanged.
+Last-Modified: Mon, 28 Sep 2026 18:13:10 +0300
+
+--- a/src/dlls/win32u/dibdrv/objects.c
++++ b/src/dlls/win32u/dibdrv/objects.c
+@@ -2007,6 +2007,22 @@
+         *needs_reselect = TRUE;
+     }
+ 
++    if (pattern.bit_count == 1 && pdev->dib.bit_count == 32 && brush->maskblt_alpha)
++    {
++        const RGBQUAD *pattern_colors = get_dib_color_table( &pattern );
++
++        /* MaskBlt's R2_MASKPEN stage uses the monochrome pattern to select
++         * between 32-bit results, so also carry its bit in the reserved byte.
++         */
++        color_table[0] = pattern_colors[0];
++        color_table[1] = pattern_colors[1];
++        color_table[0].rgbReserved = 0;
++        color_table[1].rgbReserved = 0xff;
++        pattern.color_table = color_table;
++        pattern.color_table_size = ARRAY_SIZE( color_table );
++        *needs_reselect = TRUE;
++    }
++
+     copy_dib_color_info(&brush->dib, &pdev->dib);
+ 
+     brush->dib.height = pattern.height;
+@@ -2108,6 +2124,7 @@
+                           const LOGBRUSH *logbrush, const struct brush_pattern *pattern, BOOL dither )
+ {
+     free_pattern_brush( brush );
++    brush->maskblt_alpha = FALSE;
+ 
+     if (pattern)
+     {
+--- a/src/dlls/win32u/dibdrv/primitives.c
++++ b/src/dlls/win32u/dibdrv/primitives.c
+@@ -2450,8 +2450,8 @@
+         DWORD dst_colors[2], i;
+ 
+         for (i = 0; i < ARRAY_SIZE(dst_colors); i++)
+-            dst_colors[i] = color_table[i].rgbRed << 16 | color_table[i].rgbGreen << 8 |
+-                color_table[i].rgbBlue;
++            dst_colors[i] = ((DWORD)color_table[i].rgbReserved << 24) | color_table[i].rgbRed << 16 |
++                color_table[i].rgbGreen << 8 | color_table[i].rgbBlue;
+ 
+         for(y = src_rect->top; y < src_rect->bottom; y++)
+         {
+--- a/src/dlls/win32u/dibdrv/bitblt.c
++++ b/src/dlls/win32u/dibdrv/bitblt.c
+@@ -738,6 +738,11 @@
+     return ret->bits.ptr ? ERROR_SUCCESS : ERROR_OUTOFMEMORY;
+ }
+ 
++/* ROP used by NtGdiMaskBlt to select between its foreground and
++ * background results.
++ */
++#define ROP_MASKBLT_COMBINE 0x00ac0744
++
+ static DWORD execute_rop( dibdrv_physdev *pdev, const RECT *dst_rect, dib_info *src,
+                           const RECT *src_rect, const struct clipped_rects *clipped_rects,
+                           const POINT *brush_org, DWORD rop )
+@@ -787,8 +792,11 @@
+                        OP_DST(*opcode) == DST ? clipped_rects : NULL, OP_ROP(*opcode) );
+             break;
+         case OP_ARGS(PAT,DST):
++            pdev->brush.maskblt_alpha = (rop == ROP_MASKBLT_COMBINE &&
++                                         pdev->dib.bit_count == 32 && src->bit_count == 32);
+             pdev->brush.rects( pdev, &pdev->brush, dibs[DST], clipped_rects->count, clipped_rects->rects,
+                                brush_org, OP_ROP(*opcode) );
++            pdev->brush.maskblt_alpha = FALSE;
+             break;
+         case OP_ARGS(PAT,SRC):
+             /* offset the brush origin to match the final dest rectangle */
+--- a/src/dlls/win32u/dibdrv/dibdrv.h
++++ b/src/dlls/win32u/dibdrv/dibdrv.h
+@@ -70,6 +70,7 @@
+     UINT     style;
+     UINT     hatch;
+     INT      rop;   /* rop2 last used to create the brush bits */
++    BOOL     maskblt_alpha; /* Expand the mask bit into alpha for MaskBlt */
+     COLORREF colorref;
+     dib_info dib;
+     rop_mask_bits masks;
