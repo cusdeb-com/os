@@ -1,3 +1,13 @@
+wine (11.15.1-1cd) trixie; urgency=medium
+
+  * Add 0012-maskblt-alpha-channel.patch: preserve ReactOS shell32
+    shortcut-overlay transparency by carrying the 1-bpp MaskBlt pattern's
+    selected value (0 or 255) into the alpha byte for ROP 0xAC0744 when
+    both source and destination bitmaps are 32-bpp, preventing black
+    pixels around the shortcut arrow.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 30 Sep 2026 13:12:58 +0300
+
 wine (11.15.0-2cd) trixie; urgency=medium
 
   * Install only Wine runtime files using the upstream install-lib targets
