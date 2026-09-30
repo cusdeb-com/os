@@ -9,3 +9,4 @@
 0009-desktop-shell-window-only-when-shell-enabled.patch
 0010-win32u-no-winlogo-icon-fallback.patch
 0011-winex11-adopt-host-rect-on-maximize.patch
+0012-maskblt-alpha-channel.patch
