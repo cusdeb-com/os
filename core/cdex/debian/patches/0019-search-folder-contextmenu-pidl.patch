@@ -1,19 +1,26 @@
 Author: CusDeb OS Team
-Description: Fix opening folders from the Search results folder.
- _ILCreateAbsolute dereferenced the uninitialized local pidl instead of the
- pidlChild parameter and used SHSimpleIDListFromPath, so it always returned
- NULL; build the absolute PIDL from the parent path with ILCreateFromPathW.
- GetUIObjectOf(IID_IContextMenu) now builds the context menu from absolute
- filesystem PIDLs via the desktop folder, fixing Open/Explore for results
- from different directories and non-contiguous multi-selection.
- InvokeCommand intercepts the "open" verb for all-directory selections and
- launches C:\reactos\filebrowser.exe /N,"<path>" so folders open in a new
- window instead of navigating the Search view and crashing on return.
-Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
+Description: Fix opening objects from the Search Results folder.
+ _ILCreateAbsolute used a NULL local PIDL instead of pidlChild and
+ SHSimpleIDListFromPath; construct the absolute PIDL from the child path with
+ ILCreateFromPathW.
+ Build context menus through the desktop folder from absolute filesystem PIDLs,
+ so results from different parent directories and non-contiguous selections use
+ the correct shell objects.
+ Intercept the "open" verb for filesystem results: open folders in new Explorer
+ frames and files through their normal associations, including mixed selections.
+Last-Modified: Tue, 08 Sep 2026 19:30:45 +0300
 
 --- a/src/dll/win32/browseui/shellfind/CFindFolder.cpp
 +++ b/src/dll/win32/browseui/shellfind/CFindFolder.cpp
-@@ -204,9 +204,9 @@
+@@ -7,6 +7,7 @@
+ 
+ #include "CFindFolder.h"
+ #include <exdispid.h>
++#include <browseui_undoc.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(shellfind);
+ 
+@@ -204,9 +205,9 @@
  static PIDLIST_ABSOLUTE _ILCreateAbsolute(LPCITEMIDLIST pidlChild)
  {
      PIDLIST_ABSOLUTE pidl = NULL;
@@ -25,16 +32,13 @@ Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
          ILFree(pidlFolder);
      }
      return pidl;
-@@ -1030,6 +1030,80 @@
+@@ -1030,6 +1031,69 @@
          if (!pszVerb && SUCCEEDED(GetCommandStringA(m_pInner, LOWORD(lpcmi->lpVerb), GCS_VERBA, szVerb, _countof(szVerb))))
              pszVerb = szVerb;
  
-+        // Open folders from Search in a new filebrowser window. Using the
-+        // standard "open" verb navigates the current Search window, which
-+        // crashes when returning back. /N forces a separate window.
-+        // The "explore" verb is left to the registry Folder/Directory handler,
-+        // which already launches C:\reactos\filebrowser.exe /E,"%1" and opens
-+        // a new frame, so it does not need to be intercepted here.
++        // Keep Search Results from navigating its own virtual folder. Resolve
++        // filesystem folders to native Explorer frames and files through their
++        // normal associations, including mixed and multi-selections.
 +        if (pszVerb && !lstrcmpiA(pszVerb, "open"))
 +        {
 +            PCUITEMID_CHILD *apidl;
@@ -42,62 +46,54 @@ Last-Modified: Tue, 28 Jul 2026 12:38:23 +0300
 +            HRESULT hResult = m_shellFolderView->GetSelectedObjects(&apidl, &cidl);
 +            if (SUCCEEDED(hResult))
 +            {
-+                if (cidl > 0)
++                BOOL allFilesystemItems = cidl > 0;
++                for (UINT i = 0; allFilesystemItems && i < cidl; ++i)
 +                {
-+                    BOOL allFolders = TRUE;
++                    PIDLIST_ABSOLUTE pidlAbs = _ILCreateAbsolute(apidl[i]);
++                    WCHAR path[MAX_PATH];
++                    allFilesystemItems = pidlAbs && SHGetPathFromIDListW(pidlAbs, path) &&
++                                         GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
++                    if (pidlAbs)
++                        ILFree(pidlAbs);
++                }
++
++                if (allFilesystemItems)
++                {
++                    BOOL bAnyFailed = FALSE;
 +                    for (UINT i = 0; i < cidl; ++i)
 +                    {
 +                        PIDLIST_ABSOLUTE pidlAbs = _ILCreateAbsolute(apidl[i]);
 +                        WCHAR path[MAX_PATH];
-+                        BOOL hasPath = pidlAbs && SHGetPathFromIDListW(pidlAbs, path);
-+                        if (pidlAbs)
-+                            ILFree(pidlAbs);
-+                        if (!hasPath)
++                        if (!pidlAbs || !SHGetPathFromIDListW(pidlAbs, path))
 +                        {
-+                            allFolders = FALSE;
-+                            break;
-+                        }
-+                        DWORD dwAttr = GetFileAttributesW(path);
-+                        if (dwAttr == INVALID_FILE_ATTRIBUTES || !(dwAttr & FILE_ATTRIBUTE_DIRECTORY))
-+                        {
-+                            allFolders = FALSE;
-+                            break;
-+                        }
-+                    }
-+
-+                    if (allFolders)
-+                    {
-+                        static const WCHAR szBrowser[] = L"C:\\reactos\\filebrowser.exe";
-+                        BOOL bAnyFailed = FALSE;
-+
-+                        for (UINT i = 0; i < cidl; ++i)
-+                        {
-+                            PIDLIST_ABSOLUTE pidlAbs = _ILCreateAbsolute(apidl[i]);
-+                            WCHAR path[MAX_PATH];
-+                            if (pidlAbs && SHGetPathFromIDListW(pidlAbs, path))
-+                            {
-+                                WCHAR params[MAX_PATH + 16];
-+                                if (SUCCEEDED(StringCchPrintfW(params, _countof(params), L"/N,\"%s\"", path)))
-+                                {
-+                                    HINSTANCE hInst = ShellExecuteW(lpcmi->hwnd, NULL, szBrowser, params, NULL, SW_SHOWNORMAL);
-+                                    if ((INT_PTR)hInst <= 32)
-+                                        bAnyFailed = TRUE;
-+                                }
-+                                else
-+                                {
-+                                    bAnyFailed = TRUE;
-+                                }
-+                            }
-+                            else
-+                            {
-+                                bAnyFailed = TRUE;
-+                            }
++                            bAnyFailed = TRUE;
 +                            if (pidlAbs)
 +                                ILFree(pidlAbs);
++                            continue;
 +                        }
-+                        LocalFree(apidl);
-+                        return bAnyFailed ? E_FAIL : S_OK;
++
++                        if (GetFileAttributesW(path) & FILE_ATTRIBUTE_DIRECTORY)
++                        {
++                            hResult = SHOpenNewFrame(pidlAbs, NULL, 0,
++                                                     SH_EXPLORER_CMDLINE_FLAG_NEWWND |
++                                                     SH_EXPLORER_CMDLINE_FLAG_NOREUSE);
++                            pidlAbs = NULL; // SHOpenNewFrame takes ownership.
++                            if (FAILED(hResult))
++                                bAnyFailed = TRUE;
++                        }
++                        else
++                        {
++                            HINSTANCE hInst = ShellExecuteW(lpcmi->hwnd, L"open", path,
++                                                             NULL, NULL, SW_SHOWNORMAL);
++                            if ((INT_PTR)hInst <= HINSTANCE_ERROR)
++                                bAnyFailed = TRUE;
++                        }
++
++                        if (pidlAbs)
++                            ILFree(pidlAbs);
 +                    }
++                    LocalFree(apidl);
++                    return bAnyFailed ? E_FAIL : S_OK;
 +                }
 +                LocalFree(apidl);
 +            }
