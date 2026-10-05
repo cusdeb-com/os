@@ -1,3 +1,11 @@
+wine (11.15.1-0cd) trixie; urgency=medium
+
+  * debian/patches/0012-comctl32-tab-focus-state.patch: synchronize
+    TCIS_BUTTONPRESSED after programmatic tab focus changes, preventing
+    stale state from blocking clicks on other tabs after Go To Process
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Mon, 05 Oct 2026 16:33:55 +0300
+
 wine (11.15.0-2cd) trixie; urgency=medium
 
   * Install only Wine runtime files using the upstream install-lib targets
