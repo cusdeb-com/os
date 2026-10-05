@@ -1,0 +1,34 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: comctl32: Keep tab state in sync on focus change.
+ Programmatic tab focus changes selection without updating TCIS_BUTTONPRESSED,
+ leaving stale state that causes clicks on other tabs to be ignored.
+ Mirror ReactOS state updates when changing or clearing tab focus.
+Last-Modified: Mon, 05 Oct 2026 12:36:46 +0300
+
+--- a/src/dlls/comctl32/tab.c
++++ b/src/dlls/comctl32/tab.c
+@@ -278,6 +278,7 @@
+   if (iItem < 0) {
+       infoPtr->uFocus = -1;
+       if (infoPtr->iSelected != -1) {
++          TAB_GetItem(infoPtr, infoPtr->iSelected)->dwState &= ~TCIS_BUTTONPRESSED;
+           infoPtr->iSelected = -1;
+           TAB_SendSimpleNotify(infoPtr, TCN_SELCHANGE);
+           TAB_InvalidateTabArea(infoPtr);
+@@ -306,12 +307,16 @@
+         NotifyWinEvent(EVENT_OBJECT_FOCUS, infoPtr->hwnd, OBJID_CLIENT, iItem + 1);
+       }
+     } else {
++      INT oldItem = infoPtr->iSelected;
+       INT oldFocus = infoPtr->uFocus;
+       if (infoPtr->iSelected != iItem || oldFocus == -1 ) {
+         infoPtr->uFocus = iItem;
+         if (oldFocus != -1) {
+           if (!TAB_SendSimpleNotify(infoPtr, TCN_SELCHANGING))  {
++            if (oldItem != -1)
++              TAB_GetItem(infoPtr, oldItem)->dwState &= ~TCIS_BUTTONPRESSED;
+             infoPtr->iSelected = iItem;
++            TAB_GetItem(infoPtr, iItem)->dwState |= TCIS_BUTTONPRESSED;
+             TAB_SendSimpleNotify(infoPtr, TCN_SELCHANGE);
+           }
+           else

@@ -1,3 +1,22 @@
+cdex (0.0.15-1cd) trixie; urgency=medium
+
+  * Makefile and debian/cdex-base.install: build and ship ReactOS Task
+    Manager.
+  * debian/patches/0021-taskmgr-wine-image-path.patch: translate Wine's
+    drive-prefixed process image path for Open File Location while retaining
+    ReactOS device-path handling.
+  * debian/patches/0022-taskmgr-end-task-wine-fallback.patch: use WM_CLOSE
+    for normal End Task and terminate the process for Ctrl-assisted force
+    termination, avoiding Wine's unimplemented EndTask.
+  * debian/patches/0023-taskmgr-application-icons.patch: fall back to
+    executable shell icons when Wine cannot marshal cross-process HICONs;
+    release owned icons when application entries are removed.
+  * debian/patches/0024-taskmgr-activate-application.patch: call
+    SetForegroundWindow after SwitchToThisWindow for Switch To, Bring To Front,
+    and double-click actions.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Mon, 05 Oct 2026 15:58:04 +0300
+
 cdex (0.0.14-1cd) trixie; urgency=medium
 
   * debian/patches/0019-search-folder-contextmenu-pidl.patch: update Search

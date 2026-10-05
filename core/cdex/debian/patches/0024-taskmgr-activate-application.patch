@@ -1,0 +1,41 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Activate application windows from Task Manager.
+ Explicitly request foreground activation after SwitchToThisWindow for Wine.
+Last-Modified: Mon, 05 Oct 2026 15:48:10 +0300
+
+--- a/src/base/applications/taskmgr/applpage.c
++++ b/src/base/applications/taskmgr/applpage.c
+@@ -888,6 +888,15 @@
+     HeapFree(GetProcessHeap(), 0, hWndArray);
+ }
+ 
++static void ApplicationPage_ActivateWindow(HWND hWnd)
++{
++    SwitchToThisWindow(hWnd, TRUE);
++
++    /* Wine raises the window in SwitchToThisWindow, but does not always
++     * activate it. Request foreground activation explicitly. */
++    SetForegroundWindow(hWnd);
++}
++
+ void ApplicationPage_OnWindowsBringToFront(void)
+ {
+     LPAPPLICATION_PAGE_LIST_ITEM  pAPLI = NULL;
+@@ -906,7 +915,7 @@
+         }
+     }
+     if (pAPLI) {
+-        SwitchToThisWindow(pAPLI->hWnd, TRUE);
++        ApplicationPage_ActivateWindow(pAPLI->hWnd);
+     }
+ }
+ 
+@@ -929,7 +938,7 @@
+         }
+     }
+     if (pAPLI) {
+-        SwitchToThisWindow(pAPLI->hWnd, TRUE);
++        ApplicationPage_ActivateWindow(pAPLI->hWnd);
+         if (TaskManagerSettings.MinimizeOnUse)
+             ShowWindowAsync(hMainWnd, SW_MINIMIZE);
+     }
