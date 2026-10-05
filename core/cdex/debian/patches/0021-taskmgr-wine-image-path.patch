@@ -1,0 +1,106 @@
+Author: CusDeb OS Team
+Description: Support Wine process image paths in Task Manager.
+ Convert Wine's \??\ drive-prefixed image path so Open File Location can reach
+ the central Explorer resolver, while keeping ReactOS device-path handling.
+Last-Modified: Mon, 05 Oct 2026 12:36:46 +0300
+
+--- a/src/base/applications/taskmgr/procpage.c
++++ b/src/base/applications/taskmgr/procpage.c
+@@ -968,10 +968,12 @@
+ 
+ /**
+  * @brief
+- * Maps an NT "\Device\..." path to its Win32 "DOS" equivalent.
++ * Maps a native process image path to its Win32 drive-letter equivalent.
++ * ProcessImageFileName returns a device path on ReactOS, while Wine returns
++ * a DOS path prefixed with "\\??\\".
+  *
+- * @param[in]   lpDevicePath
+- * The NT device path to convert.
++ * @param[in]   lpImagePath
++ * The native process image path to convert.
+  *
+  * @param[out]  lpDosPath
+  * Receives the converted Win32 path.
+@@ -985,8 +987,8 @@
+  * Returns 0 in case of failure.
+  **/
+ static DWORD
+-DevicePathToDosPath(
+-    _In_ LPCWSTR lpDevicePath,
++ProcessImagePathToDosPath(
++    _In_ LPCWSTR lpImagePath,
+     _Out_writes_to_opt_(dwLength, return)
+          LPWSTR lpDosPath,
+     _In_opt_ DWORD dwLength)
+@@ -994,28 +996,52 @@
+     DWORD dwRet = 0;
+     WCHAR szDrive[3] = L"?:";
+     WCHAR szDeviceName[MAX_PATH];
++    LPCWSTR lpDosPathSource;
+ 
+-    /* Check if lpDevicePath is a device path */
+-    if (_wcsnicmp(lpDevicePath, L"\\Device\\", CONST_STR_LEN(L"\\Device\\")) != 0)
++    /* Wine returns paths such as \??\C:\reactos\taskmgr.exe. */
++    if (_wcsnicmp(lpImagePath, L"\\??\\", CONST_STR_LEN(L"\\??\\")) == 0)
+     {
+-        return 0;
++        lpDosPathSource = lpImagePath + CONST_STR_LEN(L"\\??\\");
++
++        if (lstrlenW(lpDosPathSource) < 3)
++            return 0;
++
++        if (!((lpDosPathSource[0] >= L'A' && lpDosPathSource[0] <= L'Z') ||
++              (lpDosPathSource[0] >= L'a' && lpDosPathSource[0] <= L'z')))
++        {
++            return 0;
++        }
++
++        if (lpDosPathSource[1] != L':' || lpDosPathSource[2] != L'\\')
++            return 0;
++
++        dwRet = wcslen(lpDosPathSource) + 1;
++
++        if (lpDosPath && dwLength >= dwRet)
++            StringCchCopyW(lpDosPath, dwLength, lpDosPathSource);
++
++        return dwRet;
+     }
+ 
++    /* ReactOS returns native device paths such as \Device\HarddiskVolume1\... */
++    if (_wcsnicmp(lpImagePath, L"\\Device\\", CONST_STR_LEN(L"\\Device\\")) != 0)
++        return 0;
++
+     for (szDrive[0] = L'A'; szDrive[0] <= L'`'; szDrive[0]++)
+     {
+         if (QueryDosDeviceW(szDrive, szDeviceName, _countof(szDeviceName)) != 0)
+         {
+             size_t len = wcslen(szDeviceName);
+ 
+-            if (_wcsnicmp(lpDevicePath, szDeviceName, len) == 0)
++            if (_wcsnicmp(lpImagePath, szDeviceName, len) == 0)
+             {
+                 /* Get the required length, including the NULL terminator */
+-                dwRet = _countof(szDrive) + wcslen(lpDevicePath + len);
++                dwRet = _countof(szDrive) + wcslen(lpImagePath + len);
+ 
+                 if (lpDosPath && (dwLength >= dwRet))
+                 {
+                     StringCchPrintfW(lpDosPath, dwLength, L"%s%s",
+-                                     szDrive, lpDevicePath + len);
++                                     szDrive, lpImagePath + len);
+                 }
+ 
+                 break;
+@@ -1094,9 +1120,8 @@
+     /* Manually NULL-terminate */
+     ExePath->Buffer[ExePath->Length / sizeof(WCHAR)] = UNICODE_NULL;
+ 
+-    /* HACK: Convert device path format into Win32 path format.
+-     * Use ProcessImageFileNameWin32 instead if the kernel supports it. */
+-    dwRet = DevicePathToDosPath(ExePath->Buffer, lpExePath, dwLength);
++    /* Convert ProcessImageFileName into the Win32 path ShellExecute needs. */
++    dwRet = ProcessImagePathToDosPath(ExePath->Buffer, lpExePath, dwLength);
+ 
+ Cleanup:
+     HeapFree(GetProcessHeap(), 0, DynamicBuffer);

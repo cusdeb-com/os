@@ -1,0 +1,53 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Avoid Wine's unimplemented user32.EndTask in Task Manager.
+ Use WM_CLOSE for the normal Applications-page action and terminate the
+ target process only for the existing Ctrl-assisted force action.
+Last-Modified: Mon, 05 Oct 2026 12:36:46 +0300
+
+--- a/src/base/applications/taskmgr/applpage.c
++++ b/src/base/applications/taskmgr/applpage.c
+@@ -824,6 +824,35 @@
+     }
+ }
+ 
++static void ApplicationPageEndTask(HWND hWnd, BOOL force)
++{
++    DWORD processId;
++    HANDLE hProcess;
++
++    /* Wine does not implement user32.EndTask. Keep the normal path
++     * asynchronous, as Wine's Task Manager does. */
++    if (!force)
++    {
++        PostMessageW(hWnd, WM_CLOSE, 0, 0);
++        return;
++    }
++
++    /* Preserve the Ctrl-assisted force action without calling EndTask. */
++    if (!GetWindowThreadProcessId(hWnd, &processId) || !processId)
++        return;
++
++    hProcess = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION,
++                           FALSE,
++                           processId);
++    if (!hProcess)
++        return;
++
++    if (!IsCriticalProcess(hProcess))
++        TerminateProcess(hProcess, 1);
++
++    CloseHandle(hProcess);
++}
++
+ void ApplicationPage_OnEndTask(void)
+ {
+     LPAPPLICATION_PAGE_LIST_ITEM  pAPLI = NULL;
+@@ -842,7 +871,7 @@
+         if (item.state & LVIS_SELECTED) {
+             pAPLI = (LPAPPLICATION_PAGE_LIST_ITEM)item.lParam;
+             if (pAPLI) {
+-                EndTask(pAPLI->hWnd, 0, ForceEndTask);
++                ApplicationPageEndTask(pAPLI->hWnd, ForceEndTask);
+             }
+         }
+     }

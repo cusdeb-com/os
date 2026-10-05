@@ -26,6 +26,7 @@ REACTOS_TARGETS := \
 	control \
 	calc \
 	mspaint \
+	taskmgr \
 	winmine \
 	spider \
 	clipbrd \
@@ -75,6 +76,7 @@ REACTOS_ARTIFACTS := \
 	control.exe \
 	calc.exe \
 	mspaint.exe \
+	taskmgr.exe \
 	winmine.exe \
 	spider.exe \
 	clipbrd.exe \
@@ -174,6 +176,7 @@ install: build
 			control.exe)     candidate="$(OUT_DIR)/base/applications/control/control.exe" ;; \
 			calc.exe)        candidate="$(OUT_DIR)/base/applications/calc/calc.exe" ;; \
 			mspaint.exe)     candidate="$(OUT_DIR)/base/applications/mspaint/mspaint.exe" ;; \
+			taskmgr.exe)     candidate="$(OUT_DIR)/base/applications/taskmgr/taskmgr.exe" ;; \
 			winmine.exe)     candidate="$(OUT_DIR)/base/applications/games/winmine/winmine.exe" ;; \
 			spider.exe)      candidate="$(OUT_DIR)/base/applications/games/spider/spider.exe" ;; \
 			clipbrd.exe)     candidate="$(OUT_DIR)/base/applications/clipbrd/clipbrd.exe" ;; \

@@ -1,0 +1,293 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Load application icons when Wine cannot marshal window icon handles.
+ Use the executable shell icon after validating cross-process WM_GETICON results,
+ and release icons obtained from SHGetFileInfo when application entries change.
+Last-Modified: Mon, 05 Oct 2026 12:36:46 +0300
+
+--- a/src/base/applications/taskmgr/applpage.c
++++ b/src/base/applications/taskmgr/applpage.c
+@@ -14,6 +14,7 @@
+     HWND    hWnd;
+     WCHAR   szTitle[260];
+     HICON   hIcon;
++    BOOL    bIconOwned;
+     BOOL    bHung;
+ } APPLICATION_PAGE_LIST_ITEM, *LPAPPLICATION_PAGE_LIST_ITEM;
+ 
+@@ -30,7 +31,7 @@
+ BOOL            bApplicationPageSelectionMade = FALSE;
+ 
+ BOOL CALLBACK   EnumWindowsProc(HWND hWnd, LPARAM lParam);
+-void            AddOrUpdateHwnd(HWND hWnd, WCHAR *szTitle, HICON hIcon, BOOL bHung);
++void            AddOrUpdateHwnd(HWND hWnd, WCHAR *szTitle, HICON hIcon, BOOL bHung, BOOL bIconOwned);
+ void            ApplicationPageUpdate(void);
+ void            ApplicationPageOnNotify(WPARAM wParam, LPARAM lParam);
+ void            ApplicationPageShowContextMenu1(void);
+@@ -43,6 +44,18 @@
+ static DWORD    dwApplicationThread;
+ #endif
+ 
++static void
++FreeApplicationPageListItem(LPAPPLICATION_PAGE_LIST_ITEM pData)
++{
++    if (!pData)
++        return;
++
++    if (pData->bIconOwned && pData->hIcon)
++        DestroyIcon(pData->hIcon);
++
++    HeapFree(GetProcessHeap(), 0, pData);
++}
++
+ static INT
+ GetSystemColorDepth(VOID)
+ {
+@@ -80,7 +93,7 @@
+         item.iItem = i;
+         (void)ListView_GetItem(hApplicationPageListCtrl, &item);
+         pData = (LPAPPLICATION_PAGE_LIST_ITEM)item.lParam;
+-        HeapFree(GetProcessHeap(), 0, pData);
++        FreeApplicationPageListItem(pData);
+     }
+ }
+ 
+@@ -269,6 +282,7 @@
+             EnumWindows(EnumWindowsProc, 0);
+             if (noApps)
+             {
++                AppPageCleanup();
+                 (void)ListView_DeleteAllItems(hApplicationPageListCtrl);
+                 bApplicationPageSelectionMade = FALSE;
+             }
+@@ -297,7 +311,7 @@
+                     ImageList_Remove(hImageListSmall, item.iItem);
+ 
+                     (void)ListView_DeleteItem(hApplicationPageListCtrl, item.iItem);
+-                    HeapFree(GetProcessHeap(), 0, pAPLI);
++                    FreeApplicationPageListItem(pAPLI);
+                     bItemRemoved = TRUE;
+                 }
+             }
+@@ -325,13 +339,118 @@
+     }
+ }
+ 
++static BOOL
++IsApplicationIconUsable(HICON hIcon, BOOL bLargeIcon)
++{
++    HICON hCopy;
++    INT nSize = bLargeIcon ? 32 : 16;
++
++    if (!hIcon)
++        return FALSE;
++
++    hCopy = (HICON)CopyImage(hIcon, IMAGE_ICON, nSize, nSize, 0);
++    if (!hCopy)
++        return FALSE;
++
++    DestroyIcon(hCopy);
++    return TRUE;
++}
++
++static HICON
++GetApplicationIcon(HWND hWnd, BOOL bLargeIcon, BOOL *pbIconOwned)
++{
++    HICON hIcon = NULL;
++    LRESULT bAlive;
++    DWORD dwProcessId;
++    DWORD dwLength;
++    LPWSTR pszExePath;
++    SHFILEINFOW shfi;
++
++    *pbIconOwned = FALSE;
++
++#define GET_ICON(type) \
++    SendMessageTimeoutW(hWnd, WM_GETICON, (type), 0, SMTO_ABORTIFHUNG, 100, (PDWORD_PTR)&hIcon)
++
++    bAlive = GET_ICON(bLargeIcon ? ICON_BIG : ICON_SMALL);
++    if (!IsApplicationIconUsable(hIcon, bLargeIcon))
++    {
++        hIcon = NULL;
++        if (bAlive)
++        {
++            GET_ICON(bLargeIcon ? ICON_SMALL : ICON_BIG);
++            if (!IsApplicationIconUsable(hIcon, bLargeIcon))
++                hIcon = NULL;
++        }
++
++        if (!hIcon)
++        {
++            hIcon = (HICON)(LONG_PTR)GetClassLongPtrW(hWnd,
++                                                       bLargeIcon ? GCL_HICON : GCL_HICONSM);
++            if (!IsApplicationIconUsable(hIcon, bLargeIcon))
++                hIcon = NULL;
++        }
++        if (!hIcon)
++        {
++            hIcon = (HICON)(LONG_PTR)GetClassLongPtrW(hWnd,
++                                                       bLargeIcon ? GCL_HICONSM : GCL_HICON);
++            if (!IsApplicationIconUsable(hIcon, bLargeIcon))
++                hIcon = NULL;
++        }
++    }
++
++#undef GET_ICON
++
++    /* Wine cannot marshal a cross-process HICON for WM_GETICON or
++     * GetClassLongPtrW. Use the executable's shell icon in that case. */
++    if (!hIcon && GetWindowThreadProcessId(hWnd, &dwProcessId))
++    {
++        dwLength = GetProcessExecutablePathById(dwProcessId, NULL, 0);
++        if (dwLength)
++        {
++            pszExePath = HeapAlloc(GetProcessHeap(), 0, dwLength * sizeof(WCHAR));
++            if (pszExePath)
++            {
++                if (GetProcessExecutablePathById(dwProcessId, pszExePath, dwLength))
++                {
++                    UINT iconFlags;
++
++                    memset(&shfi, 0, sizeof(shfi));
++
++                    iconFlags = SHGFI_ICON |
++                                (bLargeIcon ? SHGFI_LARGEICON : SHGFI_SMALLICON);
++
++                    if (SHGetFileInfoW(pszExePath,
++                                       0,
++                                       &shfi,
++                                       sizeof(shfi),
++                                       iconFlags))
++                    {
++                        if (shfi.hIcon)
++                        {
++                            hIcon = shfi.hIcon;
++                            *pbIconOwned = TRUE;
++                        }
++                    }
++                }
++
++                HeapFree(GetProcessHeap(), 0, pszExePath);
++            }
++        }
++    }
++
++    if (!hIcon)
++        hIcon = LoadIconW(hInst, bLargeIcon ? MAKEINTRESOURCEW(IDI_WINDOW) : MAKEINTRESOURCEW(IDI_WINDOWSM));
++
++    return hIcon;
++}
++
+ BOOL CALLBACK EnumWindowsProc(HWND hWnd, LPARAM lParam)
+ {
+     HICON   hIcon;
+     WCHAR   szText[260];
+     BOOL    bLargeIcon;
++    BOOL    bIconOwned;
+     BOOL    bHung = FALSE;
+-    LRESULT bAlive;
+ 
+     typedef int (FAR __stdcall *IsHungAppWindowProc)(HWND);
+     IsHungAppWindowProc IsHungAppWindow;
+@@ -356,26 +475,8 @@
+ 
+     noApps = FALSE;
+ 
+-#define GET_ICON(type) \
+-    SendMessageTimeoutW(hWnd, WM_GETICON, (type), 0, SMTO_ABORTIFHUNG, 100, (PDWORD_PTR)&hIcon)
+-
+-    /* Get the icon for this window */
+-    hIcon = NULL;
+-    bAlive = GET_ICON(bLargeIcon ? ICON_BIG : ICON_SMALL);
+-    if (!hIcon)
+-    {
+-        /* We failed, try to retrieve other icons... */
+-        if (!hIcon && bAlive)
+-            GET_ICON(bLargeIcon ? ICON_SMALL : ICON_BIG);
+-        if (!hIcon)
+-            hIcon = (HICON)(LONG_PTR)GetClassLongPtrW(hWnd, bLargeIcon ? GCL_HICON : GCL_HICONSM);
+-        if (!hIcon)
+-            hIcon = (HICON)(LONG_PTR)GetClassLongPtrW(hWnd, bLargeIcon ? GCL_HICONSM : GCL_HICON);
+-
+-        /* If we still do not have any icon, load the default one */
+-        if (!hIcon) hIcon = LoadIconW(hInst, bLargeIcon ? MAKEINTRESOURCEW(IDI_WINDOW) : MAKEINTRESOURCEW(IDI_WINDOWSM));
+-    }
+-#undef GET_ICON
++    /* Get the icon for this window. */
++    hIcon = GetApplicationIcon(hWnd, bLargeIcon, &bIconOwned);
+ 
+     bHung = FALSE;
+ 
+@@ -384,12 +485,12 @@
+     if (IsHungAppWindow)
+         bHung = IsHungAppWindow(hWnd);
+ 
+-    AddOrUpdateHwnd(hWnd, szText, hIcon, bHung);
++    AddOrUpdateHwnd(hWnd, szText, hIcon, bHung, bIconOwned);
+ 
+     return TRUE;
+ }
+ 
+-void AddOrUpdateHwnd(HWND hWnd, WCHAR *szTitle, HICON hIcon, BOOL bHung)
++void AddOrUpdateHwnd(HWND hWnd, WCHAR *szTitle, HICON hIcon, BOOL bHung, BOOL bIconOwned)
+ {
+     LPAPPLICATION_PAGE_LIST_ITEM    pAPLI = NULL;
+     HIMAGELIST                      hImageListLarge;
+@@ -428,15 +529,24 @@
+             (_wcsicmp(pAPLI->szTitle, szTitle) != 0) ||
+             (pAPLI->bHung != bHung))
+         {
++            if (pAPLI->hIcon != hIcon)
++            {
++                /* ImageList_ReplaceIcon copies the icon before the old
++                 * handle is released. */
++                ImageList_ReplaceIcon(hImageListLarge, item.iItem, hIcon);
++                ImageList_ReplaceIcon(hImageListSmall, item.iItem, hIcon);
++
++                if (pAPLI->bIconOwned)
++                    DestroyIcon(pAPLI->hIcon);
++
++                pAPLI->hIcon = hIcon;
++                pAPLI->bIconOwned = bIconOwned;
++            }
++
+             /* Update the structure */
+-            pAPLI->hIcon = hIcon;
+             pAPLI->bHung = bHung;
+             wcscpy(pAPLI->szTitle, szTitle);
+ 
+-            /* Update the image list */
+-            ImageList_ReplaceIcon(hImageListLarge, item.iItem, hIcon);
+-            ImageList_ReplaceIcon(hImageListSmall, item.iItem, hIcon);
+-
+             /* Update the list view */
+             (void)ListView_RedrawItems(hApplicationPageListCtrl, 0, ListView_GetItemCount(hApplicationPageListCtrl));
+             /* UpdateWindow(hApplicationPageListCtrl); */
+@@ -449,6 +559,7 @@
+ 
+         pAPLI->hWnd = hWnd;
+         pAPLI->hIcon = hIcon;
++        pAPLI->bIconOwned = bIconOwned;
+         pAPLI->bHung = bHung;
+         wcscpy(pAPLI->szTitle, szTitle);
+ 
+--- a/src/base/applications/taskmgr/procpage.c
++++ b/src/base/applications/taskmgr/procpage.c
+@@ -1147,7 +1147,7 @@
+  * or actually written in the lpExePath buffer, including the NULL terminator.
+  * Returns 0 in case of failure.
+  **/
+-static DWORD
++DWORD
+ GetProcessExecutablePathById(
+     _In_ DWORD dwProcessId,
+     _Out_writes_to_opt_(dwLength, return)
+
+--- a/src/base/applications/taskmgr/procpage.h
++++ b/src/base/applications/taskmgr/procpage.h
+@@ -16,5 +16,6 @@
+ INT_PTR CALLBACK ProcessPageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+ void  RefreshProcessPage(void);
+ DWORD GetSelectedProcessId(void);
++DWORD GetProcessExecutablePathById(DWORD dwProcessId, LPWSTR lpExePath, DWORD dwLength);
+ void  ProcessPage_OnProperties(void);
+ void  ProcessPage_OnOpenFileLocation(void);

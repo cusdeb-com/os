@@ -17,3 +17,7 @@
 0018-start-menu-global-unfocus.patch
 0019-search-folder-contextmenu-pidl.patch
 0020-cdex-explorer-entrypoint.patch
+0021-taskmgr-wine-image-path.patch
+0022-taskmgr-end-task-wine-fallback.patch
+0023-taskmgr-application-icons.patch
+0024-taskmgr-activate-application.patch
