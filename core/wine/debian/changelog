@@ -1,3 +1,24 @@
+wine (11.19.0-1cd) trixie; urgency=medium
+
+  * Import Wine 11.19 (upstream commit
+    455e3509b98a6919fd4ad1def4803e08c41c03b2).
+  * Refresh quilt patches against the Wine 11.19 source tree.
+  * Refresh 0001-taskbar-theme.patch to apply the CusDeb TaskBand theme
+    to comctl32 toolbars.
+  * Refresh 0002-comctl32-shadow-text.patch to draw desktop and taskbar
+    labels with themed shadow text.
+  * Refresh 0008-xrandr-notify-desktop-on-mode-change.patch to notify
+    windows asynchronously and update monitor geometry after display
+    changes.
+  * Refresh 0010-win32u-no-winlogo-icon-fallback.patch to keep Openbox
+    from caching the placeholder icon before an application supplies its
+    real icon.
+  * Refresh 0011-winex11-adopt-host-rect-on-maximize.patch to adopt the
+    window-manager geometry on maximize and reject transient off-screen
+    rectangles.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 06 Oct 2026 17:09:36 +0300
+
 wine (11.15.0-2cd) trixie; urgency=medium
 
   * Install only Wine runtime files using the upstream install-lib targets
