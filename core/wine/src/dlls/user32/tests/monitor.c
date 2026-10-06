@@ -2652,11 +2652,11 @@ static void _check_display_dc(INT line, HDC hdc, const DEVMODEA *dm, BOOL allow_
 
 static void test_display_dc(void)
 {
-    static const INT bpps[] = {1, 4, 8, 16, 24, 32};
-    unsigned char buffer[sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD)];
+    static const INT bpps[] = {1, 4, 8, 16, 24, 32}, ddb_bpps[] = {1, 2, 4, 8, 15, 16, 24, 32};
+    unsigned char buffer[sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD)], bits_buffer[1024];
     HBITMAP hbitmap, hbitmap2, old_hbitmap;
     BITMAPINFO *bmi = (BITMAPINFO *)buffer;
-    INT count, old_count, i, bpp, value;
+    INT count, old_count, i, j, bpp, value;
     DWORD device_idx, mode_idx;
     DEVMODEA dm, dm2, dm3;
     HDC hdc, hdc2, mem_dc;
@@ -2676,17 +2676,6 @@ static void test_display_dc(void)
     ok(ret, "EnumDisplaySettingsA failed.\n");
 
     check_display_dc(hdc, &dm, FALSE);
-
-    /* Test that CreateCompatibleBitmap() for display DCs creates DDBs */
-    hbitmap = CreateCompatibleBitmap(hdc, dm.dmPelsWidth, dm.dmPelsHeight);
-    ok(!!hbitmap, "CreateCompatibleBitmap failed, error %ld.\n", GetLastError());
-    count = GetObjectW(hbitmap, sizeof(dib), &dib);
-    ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
-    count = GetObjectW(hbitmap, sizeof(bitmap), &bitmap);
-    ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
-    ok(bitmap.bmBitsPixel == dm.dmBitsPerPel, "Expected %ld, got %d.\n", dm.dmBitsPerPel,
-       bitmap.bmBitsPixel);
-    DeleteObject(hbitmap);
 
     /* Test selecting a DDB of a different depth into a display compatible DC */
     for (i = 0; i < ARRAY_SIZE(bpps); ++i)
@@ -2749,6 +2738,7 @@ static void test_display_dc(void)
         if (bpps[i] == dm.dmBitsPerPel)
         {
             res = DISP_CHANGE_SUCCESSFUL;
+            dm2 = dm;
         }
         else
         {
@@ -2785,6 +2775,167 @@ static void test_display_dc(void)
                 ok(value > 16 && value <= 256, "Got %d.\n", value);
             else
                 ok(value == 1 << bpps[i], "Expected %d, got %d.\n", 1 << bpps[i], value);
+
+            /* Test that the compatible bitmap created from CreateCompatibleBitmap() with a display
+             * DC doesn't always have the same bit depth */
+            hdc2 = GetDC(0);
+            check_display_dc(hdc2, &dm2, FALSE);
+
+            hbitmap = CreateCompatibleBitmap(hdc2, 1, 1);
+            count = GetObjectA(hbitmap, sizeof(dib), &dib);
+            ok(count == (bpps[i] == 8 ? sizeof(dib) : sizeof(bitmap)), "GetObjectA failed, count %d.\n", count);
+            if (count == sizeof(dib))
+            {
+                ok(dib.dsBmih.biSize == sizeof(BITMAPINFOHEADER), "Got unexpected biSize %#lx.\n", dib.dsBmih.biSize);
+                ok(dib.dsBmih.biWidth == 1, "Got unexpected biWidth %ld.\n", dib.dsBmih.biWidth);
+                ok(dib.dsBmih.biHeight == 1, "Got unexpected biHeight %ld.\n", dib.dsBmih.biHeight);
+                ok(dib.dsBmih.biPlanes == 1, "Got unexpected biPlanes %d.\n", dib.dsBmih.biPlanes);
+                ok(dib.dsBmih.biBitCount == 8, "Got unexpected biBitCount %d.\n", dib.dsBmih.biBitCount);
+                ok(dib.dsBmih.biCompression == BI_RGB, "Got unexpected biCompression %ld.\n", dib.dsBmih.biCompression);
+                ok(dib.dsBmih.biSizeImage == 4, "Got unexpected biSizeImage %#lx.\n", dib.dsBmih.biSizeImage);
+                ok(dib.dsBmih.biXPelsPerMeter == 0, "Got unexpected biXPelsPerMeter %ld.\n", dib.dsBmih.biXPelsPerMeter);
+                ok(dib.dsBmih.biYPelsPerMeter == 0, "Got unexpected biYPelsPerMeter %ld.\n", dib.dsBmih.biYPelsPerMeter);
+                ok(dib.dsBmih.biClrUsed == 256, "Got unexpected biClrUsed %ld.\n", dib.dsBmih.biClrUsed);
+                ok(dib.dsBmih.biClrImportant == 256, "Got unexpected biClrImportant %ld.\n", dib.dsBmih.biClrImportant);
+            }
+            ok(dib.dsBm.bmBitsPixel == (bpps[i] == 16 ? 32 : bpps[i]), "Expected %d, got %d.\n",
+               bpps[i] == 16 ? 32 : bpps[i], dib.dsBm.bmBitsPixel);
+
+            memset(buffer, 0, sizeof(buffer));
+            bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi->bmiHeader.biWidth = 1;
+            bmi->bmiHeader.biHeight = 1;
+            bmi->bmiHeader.biPlanes = 1;
+            bmi->bmiHeader.biBitCount = bpps[i];
+            count = GetDIBits(hdc2, hbitmap, 0, 1, bits_buffer, bmi, DIB_RGB_COLORS);
+            ok(count == 1, "GetDIBits failed.\n");
+            DeleteObject(hbitmap);
+
+            /* Test CreateCompatibleBitmap() with a display compatible DC */
+            mem_dc = CreateCompatibleDC(hdc2);
+
+            hbitmap = GetCurrentObject(mem_dc, OBJ_BITMAP);
+            ok(!!hbitmap, "GetCurrentObject failed, error %#lx.\n", GetLastError());
+            count = GetObjectA(hbitmap, sizeof(dib), &dib);
+            ok(count == sizeof(bitmap), "GetObjectA failed, count %d.\n", count);
+            ok(dib.dsBm.bmBitsPixel == 1, "Expected %d, got %d.\n", 1, dib.dsBm.bmBitsPixel);
+
+            hbitmap = CreateCompatibleBitmap(mem_dc, 1, 1);
+            count = GetObjectA(hbitmap, sizeof(dib), &dib);
+            ok(count == (bpps[i] == 8 ? sizeof(dib) : sizeof(bitmap)), "GetObjectA failed, count %d.\n", count);
+            ok(dib.dsBm.bmBitsPixel == (bpps[i] == 8 ? 8 : 1), "Expected %d, got %d.\n",
+               bpps[i] == 8 ? 8 : 1, dib.dsBm.bmBitsPixel);
+            DeleteObject(hbitmap);
+
+            /* Test CreateCompatibleBitmap() with a display compatible DC that has a DIB selected */
+            memset(buffer, 0, sizeof(buffer));
+            bmi->bmiHeader.biSize = sizeof(bmi->bmiHeader);
+            bmi->bmiHeader.biWidth = 1;
+            bmi->bmiHeader.biHeight = 1;
+            bmi->bmiHeader.biBitCount = bpps[i];
+            bmi->bmiHeader.biPlanes = 1;
+            bmi->bmiHeader.biCompression = BI_RGB;
+            hbitmap = CreateDIBSection(hdc2, bmi, DIB_RGB_COLORS, NULL, NULL, 0);
+            ok(!!hbitmap, "CreateDIBSection failed, error %ld.\n", GetLastError());
+            old_hbitmap = SelectObject(mem_dc, hbitmap);
+            ok(!!old_hbitmap, "Failed to select bitmap.\n");
+
+            hbitmap2 = CreateCompatibleBitmap(mem_dc, 1, 1);
+            count = GetObjectA(hbitmap2, sizeof(dib), &dib);
+            ok(count == sizeof(dib), "GetObjectA failed, count %d.\n", count);
+            ok(dib.dsBmih.biBitCount == bpps[i], "Expected %d, got %d.\n", bpps[i], dib.dsBmih.biBitCount);
+            DeleteObject(hbitmap2);
+
+            /* Test CreateCompatibleBitmap() with a display compatible DC after restoring the default bitmap */
+            hbitmap = SelectObject(mem_dc, old_hbitmap);
+            hbitmap2 = CreateCompatibleBitmap(mem_dc, 1, 1);
+            count = GetObjectA(hbitmap2, sizeof(dib), &dib);
+            ok(count == (bpps[i] == 8 ? sizeof(dib) : sizeof(bitmap)), "GetObjectA failed, count %d.\n", count);
+            ok(dib.dsBm.bmBitsPixel == (bpps[i] == 8 ? 8 : 1), "Expected %d, got %d.\n",
+               bpps[i] == 8 ? 8 : 1, dib.dsBm.bmBitsPixel);
+            DeleteObject(hbitmap2);
+            DeleteObject(hbitmap);
+
+            DeleteDC(mem_dc);
+
+            /* Test GetDIBits() with the display DC and DDBs of various bit depths */
+            for (j = 0; j < ARRAY_SIZE(ddb_bpps); j++)
+            {
+                winetest_push_context("DDB bpp %d", ddb_bpps[j]);
+                hbitmap = CreateBitmap(1, 1, 1, ddb_bpps[j], NULL);
+
+                /* Simulate SDL3 behavior by calling GetDIBits() twice */
+                memset(buffer, 0, sizeof(buffer));
+                bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                count = GetDIBits(hdc2, hbitmap, 0, 0, NULL, bmi, DIB_RGB_COLORS);
+                ok(count == 1, "GetDIBits failed.\n");
+                count = GetDIBits(hdc2, hbitmap, 0, 0, NULL, bmi, DIB_RGB_COLORS);
+                if (ddb_bpps[j] == 1 || (bpps[i] == 8 && ddb_bpps[j] == 8))
+                {
+                    ok(count == 1, "GetDIBits failed.\n");
+                    ok(*(unsigned int *)bmi->bmiColors == 0, "Got unexpected bmiColors %#x\n",
+                       *(unsigned int *)bmi->bmiColors);
+                }
+                else if (ddb_bpps[j] == 32)
+                {
+                    ok(count == 1, "GetDIBits failed.\n");
+                    ok(*(unsigned int *)bmi->bmiColors == 0xff0000, "Got unexpected bmiColors %#x\n",
+                       *(unsigned int *)bmi->bmiColors);
+                }
+                else
+                {
+                    ok(count == 0, "GetDIBits succeeded.\n");
+                    ok(*(unsigned int *)bmi->bmiColors == 0, "Got unexpected bmiColors %#x\n",
+                       *(unsigned int *)bmi->bmiColors);
+
+                    /* lines > 0. Still fails */
+                    count = GetDIBits(hdc2, hbitmap, 0, 1, NULL, bmi, DIB_RGB_COLORS);
+                    ok(count == 0, "GetDIBits succeeded.\n");
+
+                    /* buf != NULL. Still fails */
+                    count = GetDIBits(hdc2, hbitmap, 0, 1, bits_buffer, bmi, DIB_RGB_COLORS);
+                    ok(count == 0, "GetDIBits succeeded.\n");
+
+                    /* Reset biBitCount to 0. Now it succeeds */
+                    bmi->bmiHeader.biBitCount = 0;
+                    count = GetDIBits(hdc2, hbitmap, 0, 0, NULL, bmi, DIB_RGB_COLORS);
+                    ok(count == 1, "GetDIBits failed.\n");
+                }
+
+                /* Test that GetDIBits() is rejecting some DDB bit depths */
+                memset(buffer, 0, sizeof(buffer));
+                bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi->bmiHeader.biWidth = 1;
+                bmi->bmiHeader.biHeight = 1;
+                bmi->bmiHeader.biPlanes = 1;
+                bmi->bmiHeader.biBitCount = ddb_bpps[j];
+                count = GetDIBits(hdc2, hbitmap, 0, 1, bits_buffer, bmi, DIB_RGB_COLORS);
+                if (ddb_bpps[j] == 1 || (bpps[i] == 8 && ddb_bpps[j] == 8) || ddb_bpps[j] == 32)
+                    ok(count == 1, "GetDIBits failed.\n");
+                else
+                    ok(count == 0, "GetDIBits succeeded.\n");
+
+                /* Same result when using a display compatible memory DC */
+                mem_dc = CreateCompatibleDC(hdc2);
+                SelectObject(mem_dc, hbitmap);
+                memset(buffer, 0, sizeof(buffer));
+                bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi->bmiHeader.biWidth = 1;
+                bmi->bmiHeader.biHeight = 1;
+                bmi->bmiHeader.biPlanes = 1;
+                bmi->bmiHeader.biBitCount = ddb_bpps[j];
+                count = GetDIBits(mem_dc, hbitmap, 0, 1, bits_buffer, bmi, DIB_RGB_COLORS);
+                if (ddb_bpps[j] == 1 || (bpps[i] == 8 && ddb_bpps[j] == 8) || ddb_bpps[j] == 32)
+                    ok(count == 1, "GetDIBits failed.\n");
+                else
+                    ok(count == 0, "GetDIBits succeeded.\n");
+                DeleteDC(mem_dc);
+
+                DeleteObject(hbitmap);
+                winetest_pop_context();
+            }
+
+            ReleaseDC(0, hdc2);
         }
         winetest_pop_context();
     }
@@ -3260,7 +3411,7 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
     RECT primary = {0}, scaled_device = {0}, expect_device = {0}, rect, expect_rect, device;
     struct monitor_info tmp_info = {.handle = info->handle};
     UINT ret, i, x, y, expect_width, expect_height;
-    HWND unaware_hwnd, aware_hwnd, primary_hwnd, child;
+    HWND unaware_hwnd, aware_hwnd, primary_hwnd, child, hwnd;
     MONITORINFO mi = {.cbSize = sizeof(mi)};
     DPI_AWARENESS_CONTEXT old_ctx = 0, cur_ctx, ctx, system_ctx = (DPI_AWARENESS_CONTEXT)(((UINT_PTR)system_dpi << 8)|0x11);
     float unaware_scale = scales[step], scale, scale_x, scale_y;
@@ -3558,7 +3709,8 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
         ret = pGetDpiForWindow( child );
         ok( ret == system_dpi, "GetDpiForWindow returned %u\n", ret );
 
-        SetParent( child, NULL );
+        hwnd = SetParent( child, NULL );
+        ok( hwnd == unaware_hwnd, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
@@ -3568,24 +3720,32 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
         ret = pGetDpiForWindow( child );
         ok( ret == system_dpi, "GetDpiForWindow returned %u\n", ret );
 
-        SetParent( child, aware_hwnd );
+        SetLastError( 0xdeadbeef );
+        hwnd = SetParent( child, aware_hwnd );
+        if (system_aware && !monitor_aware) ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else if (!tests[i]) ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else
+        {
+            ok( hwnd == NULL, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+            ok( GetLastError() == ERROR_INVALID_STATE, "SetParent failed err %lu\n", GetLastError() );
+        }
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
 
         ctx = pGetWindowDpiAwarenessContext( child );
-        todo_wine_if( tests[i] && tests[i] != DPI_AWARENESS_CONTEXT_SYSTEM_AWARE && tests[i] != (DPI_AWARENESS_CONTEXT)0x7811 )
         ok( ctx == system_ctx, "GetWindowDpiAwarenessContext returned %#Ix\n", (UINT_PTR)ctx );
         ret = pGetDpiForWindow( child );
         ok( ret == system_dpi, "GetDpiForWindow returned %u\n", ret );
 
-        SetParent( child, NULL );
+        hwnd = SetParent( child, NULL );
+        if (system_aware && !monitor_aware) ok( hwnd == aware_hwnd, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
 
         ctx = pGetWindowDpiAwarenessContext( child );
-        todo_wine_if( tests[i] && tests[i] != DPI_AWARENESS_CONTEXT_SYSTEM_AWARE && tests[i] != (DPI_AWARENESS_CONTEXT)0x7811 )
         ok( ctx == system_ctx, "GetWindowDpiAwarenessContext returned %#Ix\n", (UINT_PTR)ctx );
         ret = pGetDpiForWindow( child );
         ok( ret == system_dpi, "GetDpiForWindow returned %u\n", ret );
@@ -3610,7 +3770,8 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
 
         /* WM_DPICHANGED is only sent if window was child of monitor aware window, and if
          * reparenting makes the window toplevel and changes its monitor */
-        SetParent( child, NULL );
+        hwnd = SetParent( child, NULL );
+        ok( hwnd == aware_hwnd, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         same_monitor = MonitorFromWindow( aware_hwnd, MONITOR_DEFAULTTONEAREST ) == MonitorFromWindow( child, MONITOR_DEFAULTTONEAREST );
         if (!monitor_aware || same_monitor) ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         else
@@ -3631,13 +3792,21 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
         if (monitor_aware && same_monitor) ok( ret == MulDiv( system_dpi, scale, 100 ), "GetDpiForWindow returned %u\n", ret );
         else ok( ret == (system_aware ? system_dpi : 96), "GetDpiForWindow returned %u\n", ret );
 
-        SetParent( child, unaware_hwnd );
+        SetLastError( 0xdeadbeef );
+        hwnd = SetParent( child, unaware_hwnd );
+        if (system_aware && !monitor_aware) ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else if (!tests[i]) ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else
+        {
+            ok( hwnd == NULL, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+            ok( GetLastError() == ERROR_INVALID_STATE, "SetParent failed err %lu\n", GetLastError() );
+        }
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
 
         ctx = pGetWindowDpiAwarenessContext( child );
-        todo_wine_if( tests[i] && tests[i] != DPI_AWARENESS_CONTEXT_SYSTEM_AWARE && tests[i] != (DPI_AWARENESS_CONTEXT)0x7811 )
+        todo_wine_if( tests[i] == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 )
         ok( ctx == cur_ctx, "GetWindowDpiAwarenessContext returned %p vs %p\n", ctx, cur_ctx );
         ret = pGetDpiForWindow( child );
         if (monitor_aware && same_monitor) ok( ret == MulDiv( system_dpi, scale, 100 ), "GetDpiForWindow returned %u\n", ret );
@@ -3645,19 +3814,22 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
 
         /* WM_DPICHANGED is only sent if window was child of monitor aware window, and if
          * reparenting makes the window toplevel and changes its monitor */
-        SetParent( child, NULL );
+        hwnd = SetParent( child, NULL );
+        if (system_aware && !monitor_aware) ok( hwnd == unaware_hwnd, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
+        else ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
 
         ctx = pGetWindowDpiAwarenessContext( child );
-        todo_wine_if( tests[i] && tests[i] != DPI_AWARENESS_CONTEXT_SYSTEM_AWARE && tests[i] != (DPI_AWARENESS_CONTEXT)0x7811 )
+        todo_wine_if( tests[i] == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 )
         ok( ctx == cur_ctx, "GetWindowDpiAwarenessContext returned %p vs %p\n", ctx, cur_ctx );
         ret = pGetDpiForWindow( child );
         if (monitor_aware && same_monitor) ok( ret == MulDiv( system_dpi, scale, 100 ), "GetDpiForWindow returned %u\n", ret );
         else ok( ret == (system_aware ? system_dpi : 96), "GetDpiForWindow returned %u\n", ret );
 
-        SetParent( child, aware_hwnd );
+        hwnd = SetParent( child, aware_hwnd );
+        ok( hwnd == GetDesktopWindow(), "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         flush_events();
         ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
@@ -3671,7 +3843,8 @@ static void test_monitor_dpi_awareness( const struct monitor_info *infos, UINT c
 
         /* WM_DPICHANGED is only sent if window was children of monitor aware window, and if
          * reparenting makes the window toplevel and changes its monitor */
-        SetParent( child, NULL );
+        hwnd = SetParent( child, NULL );
+        ok( hwnd == aware_hwnd, "SetParent returned %p, error %lu\n", hwnd, GetLastError() );
         same_monitor = MonitorFromWindow( aware_hwnd, MONITOR_DEFAULTTONEAREST ) == MonitorFromWindow( child, MONITOR_DEFAULTTONEAREST );
         if (!monitor_aware || same_monitor) ok( dpichanged_count == 0, "got dpichanged_count %u\n", dpichanged_count );
         else

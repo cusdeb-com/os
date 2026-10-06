@@ -18,21 +18,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "macdrv_cocoa.h"
+#import "config.h"
+#import "macdrv.h"
+
 #import "cocoa_app.h"
 #import "cocoa_event.h"
 #import "cocoa_window.h"
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
-#if !defined(MAC_OS_X_VERSION_10_14) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_14
-/* For older SDKs, #define the new names of constants deprecated/renamed in macOS 10.14. */
-#define NSBitmapImageFileTypeBMP        NSBMPFileType
-#define NSBitmapImageFileTypeGIF        NSGIFFileType
-#define NSBitmapImageFileTypeJPEG       NSJPEGFileType
-#define NSBitmapImageFileTypePNG        NSPNGFileType
-#define NSBitmapImageFileTypeTIFF       NSTIFFFileType
-#endif
+WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
 
 static int owned_change_count = -1;
 static int change_count = -1;
@@ -46,10 +41,9 @@ static NSString* const OwnershipSentinel = @"org.winehq.wine.winemac.pasteboard-
 /***********************************************************************
  *              macdrv_is_pasteboard_owner
  */
-bool macdrv_is_pasteboard_owner(macdrv_window w)
+bool macdrv_is_pasteboard_owner(WineWindow *window)
 {
     __block bool ret;
-    WineWindow* window = (WineWindow*)w;
 
     OnMainThread(^{
         NSPasteboard* pb = [NSPasteboard generalPasteboard];
@@ -132,7 +126,7 @@ CFArrayRef macdrv_copy_pasteboard_types(CFTypeRef pasteboard)
         }
         @catch (id e)
         {
-            ERR(@"Exception discarded while copying pasteboard types: %@\n", e);
+            ERR("Exception discarded while copying pasteboard types: %s\n", debugstr_cf(e));
         }
     });
 
@@ -175,7 +169,7 @@ CFDataRef macdrv_copy_pasteboard_data(CFTypeRef pasteboard, CFStringRef type)
         }
         @catch (id e)
         {
-            ERR(@"Exception discarded while copying pasteboard types: %@\n", e);
+            ERR("Exception discarded while copying pasteboard types: %s\n", debugstr_cf(e));
         }
     });
 
@@ -188,10 +182,8 @@ CFDataRef macdrv_copy_pasteboard_data(CFTypeRef pasteboard, CFStringRef type)
  *
  * Takes ownership of the Mac pasteboard and clears it of all data types.
  */
-void macdrv_clear_pasteboard(macdrv_window w)
+void macdrv_clear_pasteboard(WineWindow *window)
 {
-    WineWindow* window = (WineWindow*)w;
-
     OnMainThread(^{
         @try
         {
@@ -203,7 +195,7 @@ void macdrv_clear_pasteboard(macdrv_window w)
         }
         @catch (id e)
         {
-            ERR(@"Exception discarded while clearing pasteboard: %@\n", e);
+            ERR("Exception discarded while clearing pasteboard: %s\n", debugstr_cf(e));
         }
     });
 }
@@ -216,12 +208,11 @@ void macdrv_clear_pasteboard(macdrv_window w)
  * that type already on the pasteboard.  If data is NULL, promises the
  * type.
  *
- * Returns 0 on error, non-zero on success.
+ * Returns false on error, true on success.
  */
-int macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, macdrv_window w)
+bool macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, WineWindow *window)
 {
-    __block int ret = 0;
-    WineWindow* window = (WineWindow*)w;
+    __block bool ret = false;
 
     OnMainThread(^{
         @try
@@ -235,12 +226,12 @@ int macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, macdrv_window w
                 if (data)
                     ret = [pb setData:(NSData*)data forType:(NSString*)type];
                 else
-                    ret = 1;
+                    ret = true;
             }
         }
         @catch (id e)
         {
-            ERR(@"Exception discarded while copying pasteboard types: %@\n", e);
+            ERR("Exception discarded while copying pasteboard types: %s\n", debugstr_cf(e));
         }
     });
 

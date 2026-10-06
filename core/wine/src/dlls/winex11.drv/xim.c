@@ -99,7 +99,7 @@ static BOOL is_ime_hkl( HKL hkl )
     case MAKELANGID(LANG_TIGRINYA, SUBLANG_TIGRINYA_ETHIOPIA): return TRUE;
     case MAKELANGID(LANG_VIETNAMESE, SUBLANG_VIETNAMESE_VIETNAM): return TRUE;
     case MAKELANGID(LANG_YI, SUBLANG_YI_PRC): return TRUE;
-    default: return (HIWORD(hkl) & 0xe000) == 0xe000;
+    default: return (HIWORD(hkl) & 0xf000) == 0xe000;
     }
 }
 
@@ -116,9 +116,10 @@ static void activate_ime_hkl( HWND hwnd )
 
 static void post_ime_update( HWND hwnd, UINT cursor_pos, WCHAR *comp_str, WCHAR *result_str )
 {
+    const WCHAR *strings[] = { comp_str, result_str };
     activate_ime_hkl( hwnd );
-    NtUserMessageCall( hwnd, WINE_IME_POST_UPDATE, cursor_pos, (LPARAM)comp_str,
-                       result_str, NtUserImeDriverCall, FALSE );
+    NtUserMessageCall( hwnd, WINE_IME_POST_UPDATE, cursor_pos, (LPARAM)strings,
+                       NULL, NtUserImeDriverCall, FALSE );
 }
 
 static void xim_update_comp_string( UINT offset, UINT old_len, const WCHAR *text, UINT new_len )

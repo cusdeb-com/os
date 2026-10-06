@@ -94,6 +94,7 @@ enum wined3d_cs_op
     WINED3D_CS_OP_NOP,
     WINED3D_CS_OP_PRESENT,
     WINED3D_CS_OP_CLEAR,
+    WINED3D_CS_OP_DISCARD_RESOURCE,
     WINED3D_CS_OP_DISPATCH,
     WINED3D_CS_OP_DRAW,
     WINED3D_CS_OP_FLUSH,
@@ -188,6 +189,13 @@ struct wined3d_cs_clear_sysmem_texture
     unsigned int sub_resource_idx;
     struct wined3d_color color;
     RECT rect;
+};
+
+struct wined3d_cs_discard_resource
+{
+    enum wined3d_cs_op opcode;
+    struct wined3d_resource *resource;
+    struct wined3d_view_desc desc;
 };
 
 struct wined3d_cs_dispatch
@@ -587,6 +595,7 @@ static const char *debug_cs_op(enum wined3d_cs_op op)
         WINED3D_TO_STR(WINED3D_CS_OP_NOP);
         WINED3D_TO_STR(WINED3D_CS_OP_PRESENT);
         WINED3D_TO_STR(WINED3D_CS_OP_CLEAR);
+        WINED3D_TO_STR(WINED3D_CS_OP_DISCARD_RESOURCE);
         WINED3D_TO_STR(WINED3D_CS_OP_DISPATCH);
         WINED3D_TO_STR(WINED3D_CS_OP_DRAW);
         WINED3D_TO_STR(WINED3D_CS_OP_FLUSH);
@@ -934,6 +943,82 @@ HRESULT CDECL wined3d_device_context_clear_sysmem_texture(struct wined3d_device_
 
     wined3d_device_context_unlock(context);
     return S_OK;
+}
+
+static void wined3d_cs_exec_discard_resource(struct wined3d_cs *cs, const void *data)
+{
+    const struct wined3d_cs_discard_resource *op = data;
+    struct wined3d_resource *resource = op->resource;
+
+    if (resource->type == WINED3D_RTYPE_BUFFER)
+    {
+        struct wined3d_buffer *buffer = buffer_from_resource(resource);
+        unsigned int byte_size;
+
+        if (op->desc.format_id == WINED3DFMT_UNKNOWN)
+            byte_size = op->desc.u.buffer.count * max(buffer->structure_byte_stride, 1);
+        else
+            byte_size = op->desc.u.buffer.count
+                    * wined3d_get_format(cs->c.device->adapter, op->desc.format_id, 0)->byte_count;
+
+        if (!op->desc.u.buffer.start_idx && byte_size == buffer->resource.size)
+            wined3d_buffer_validate_location(buffer, WINED3D_LOCATION_DISCARDED);
+    }
+    else
+    {
+        struct wined3d_texture *texture = texture_from_resource(resource);
+
+        for (unsigned int i = 0; i < op->desc.u.texture.layer_count; ++i)
+        {
+            unsigned int layer = op->desc.u.texture.layer_idx + i;
+
+            for (unsigned int j = 0; j < op->desc.u.texture.level_count; ++j)
+            {
+                unsigned int level = op->desc.u.texture.level_idx + j;
+
+                wined3d_texture_validate_location(texture,
+                        layer * texture->level_count + level, WINED3D_LOCATION_DISCARDED);
+            }
+        }
+    }
+}
+
+void CDECL wined3d_device_context_discard_resource(struct wined3d_device_context *context,
+        struct wined3d_resource *resource, const struct wined3d_view_desc *desc)
+{
+    struct wined3d_cs_discard_resource *op;
+
+    wined3d_device_context_lock(context);
+    op = wined3d_device_context_require_space(context, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
+    op->opcode = WINED3D_CS_OP_DISCARD_RESOURCE;
+    op->resource = resource;
+    if (desc)
+    {
+        op->desc = *desc;
+    }
+    else
+    {
+        op->desc.format_id = WINED3DFMT_UNKNOWN;
+        op->desc.flags = 0;
+        if (resource->type == WINED3D_RTYPE_BUFFER)
+        {
+            unsigned int stride = buffer_from_resource(resource)->structure_byte_stride;
+
+            op->desc.u.buffer.start_idx = 0;
+            op->desc.u.buffer.count = stride ? resource->size / stride : resource->size;
+        }
+        else
+        {
+            op->desc.u.texture.level_idx = 0;
+            op->desc.u.texture.level_count = texture_from_resource(resource)->level_count;
+            op->desc.u.texture.layer_idx = 0;
+            op->desc.u.texture.layer_count = texture_from_resource(resource)->layer_count;
+        }
+    }
+
+    wined3d_device_context_reference_resource(context, resource);
+    wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
+    wined3d_device_context_unlock(context);
 }
 
 static void reference_shader_resources(struct wined3d_device_context *context, unsigned int shader_mask)
@@ -2991,6 +3076,7 @@ static void (* const wined3d_cs_op_handlers[])(struct wined3d_cs *cs, const void
     /* WINED3D_CS_OP_NOP                         */ wined3d_cs_exec_nop,
     /* WINED3D_CS_OP_PRESENT                     */ wined3d_cs_exec_present,
     /* WINED3D_CS_OP_CLEAR                       */ wined3d_cs_exec_clear,
+    /* WINED3D_CS_OP_DISCARD_RESOURCE            */ wined3d_cs_exec_discard_resource,
     /* WINED3D_CS_OP_DISPATCH                    */ wined3d_cs_exec_dispatch,
     /* WINED3D_CS_OP_DRAW                        */ wined3d_cs_exec_draw,
     /* WINED3D_CS_OP_FLUSH                       */ wined3d_cs_exec_flush,

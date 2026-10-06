@@ -18,16 +18,20 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#import "config.h"
+#import "macdrv.h"
+
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
 
-#include "macdrv_cocoa.h"
 #import "cocoa_event.h"
 #import "cocoa_app.h"
 #import "cocoa_window.h"
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
+
+WINE_DEFAULT_DEBUG_CHANNEL(event);
 
 
 static NSString* const WineEventQueueThreadDictionaryKey = @"WineEventQueueThreadDictionaryKey";
@@ -189,7 +193,7 @@ static const OSType WineHotKeySignature = 'Wine';
         } while (rc < 0 && errno == EINTR);
 
         if (rc < 0 && errno != EAGAIN)
-            ERR(@"%@: got error writing to event queue signaling pipe: %s\n", self, strerror(errno));
+            ERR("%s: got error writing to event queue signaling pipe: %s\n", debugstr_cf(self), strerror(errno));
     }
 
     - (void) postEventObject:(MacDrvEvent*)event
@@ -258,9 +262,9 @@ static const OSType WineHotKeySignature = 'Wine';
         if (rc == 0 || (rc < 0 && errno != EAGAIN))
         {
             if (rc == 0)
-                ERR(@"%@: event queue signaling pipe unexpectedly closed\n", self);
+                ERR("%s: event queue signaling pipe unexpectedly closed\n", debugstr_cf(self));
             else
-                ERR(@"%@: got error reading from event queue signaling pipe: %s\n", self, strerror(errno));
+                ERR("%s: got error reading from event queue signaling pipe: %s\n", debugstr_cf(self), strerror(errno));
             return nil;
         }
 
@@ -313,7 +317,7 @@ static const OSType WineHotKeySignature = 'Wine';
     {
         [self discardEventsPassingTest:^BOOL (macdrv_event* event){
             return ((event_mask_for_type(event->type) & mask) &&
-                    (!window || event->window == (macdrv_window)window));
+                    (!window || event->window == window));
         }];
     }
 
@@ -325,7 +329,7 @@ static const OSType WineHotKeySignature = 'Wine';
         BOOL timedout;
 
         type = (flags & WineQueryNoPreemptWait) ? QUERY_EVENT_NO_PREEMPT_WAIT : QUERY_EVENT;
-        event = macdrv_create_event(type, (WineWindow*)query->window);
+        event = macdrv_create_event(type, query->window);
         event->query_event.query = macdrv_retain_query(query);
         query->done = FALSE;
 
@@ -437,7 +441,7 @@ static const OSType WineHotKeySignature = 'Wine';
             status = InstallApplicationEventHandler(HotKeyHandler, 1, &eventType, self, &handler);
             if (status != noErr)
             {
-                ERR(@"InstallApplicationEventHandler() failed: %d\n", status);
+                ERR("InstallApplicationEventHandler() failed: %d\n", status);
                 handler = NULL;
                 return MACDRV_HOTKEY_FAILURE;
             }
@@ -461,7 +465,7 @@ static const OSType WineHotKeySignature = 'Wine';
             return MACDRV_HOTKEY_ALREADY_REGISTERED;
         if (status != noErr)
         {
-            ERR(@"RegisterEventHotKey() failed: %d\n", status);
+            ERR("RegisterEventHotKey() failed: %d\n", status);
             return MACDRV_HOTKEY_FAILURE;
         }
 
@@ -548,7 +552,7 @@ void OnMainThread(dispatch_block_t block)
  * Register this thread with the application on the main thread, and set
  * up an event queue on which it can deliver events to this thread.
  */
-macdrv_event_queue macdrv_create_event_queue(macdrv_event_handler handler)
+WineEventQueue *macdrv_create_event_queue(macdrv_event_handler handler)
 {
 @autoreleasepool
 {
@@ -567,7 +571,7 @@ macdrv_event_queue macdrv_create_event_queue(macdrv_event_handler handler)
         }
     }
 
-    return (macdrv_event_queue)queue;
+    return queue;
 }
 }
 
@@ -577,14 +581,13 @@ macdrv_event_queue macdrv_create_event_queue(macdrv_event_handler handler)
  * Tell the application that this thread is exiting and destroy the
  * associated event queue.
  */
-void macdrv_destroy_event_queue(macdrv_event_queue queue)
+void macdrv_destroy_event_queue(WineEventQueue *queue)
 {
 @autoreleasepool
 {
-    WineEventQueue* q = (WineEventQueue*)queue;
     NSMutableDictionary* threadDict = [[NSThread currentThread] threadDictionary];
 
-    [[WineApplicationController sharedController] unregisterEventQueue:q];
+    [[WineApplicationController sharedController] unregisterEventQueue:queue];
     [threadDict removeObjectForKey:WineEventQueueThreadDictionaryKey];
 }
 }
@@ -595,10 +598,9 @@ void macdrv_destroy_event_queue(macdrv_event_queue queue)
  * Get the file descriptor whose readability signals that there are
  * events on the event queue.
  */
-int macdrv_get_event_queue_fd(macdrv_event_queue queue)
+int macdrv_get_event_queue_fd(WineEventQueue *queue)
 {
-    WineEventQueue* q = (WineEventQueue*)queue;
-    return q->fds[0];
+    return queue->fds[0];
 }
 
 /***********************************************************************
@@ -611,14 +613,12 @@ int macdrv_get_event_queue_fd(macdrv_event_queue queue)
  * The caller is responsible for calling macdrv_release_event on any
  * event returned by this function.
  */
-int macdrv_copy_event_from_queue(macdrv_event_queue queue,
+int macdrv_copy_event_from_queue(WineEventQueue *queue,
         macdrv_event_mask mask, macdrv_event **event)
 {
 @autoreleasepool
 {
-    WineEventQueue* q = (WineEventQueue*)queue;
-
-    MacDrvEvent* macDrvEvent = [q getEventMatchingMask:mask];
+    MacDrvEvent* macDrvEvent = [queue getEventMatchingMask:mask];
     if (macDrvEvent)
         *event = macdrv_retain_event(macDrvEvent->event);
 
@@ -637,7 +637,7 @@ macdrv_event* macdrv_create_event(int type, WineWindow* window)
     event->refs = 1;
     event->deliver = INT_MAX;
     event->type = type;
-    event->window = (macdrv_window)[window retain];
+    event->window = [window retain];
     return event;
 }
 
@@ -666,10 +666,6 @@ void macdrv_release_event(macdrv_event *event)
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         switch (event->type)
         {
-            case IM_SET_TEXT:
-                if (event->im_set_text.text)
-                    CFRelease(event->im_set_text.text);
-                break;
             case KEYBOARD_CHANGED:
                 CFRelease(event->keyboard_changed.uchr);
                 CFRelease(event->keyboard_changed.input_source);
@@ -683,7 +679,7 @@ void macdrv_release_event(macdrv_event *event)
                 break;
         }
 
-        [(WineWindow*)event->window release];
+        [event->window release];
         free(event);
     }
 }
@@ -732,7 +728,7 @@ void macdrv_release_query(macdrv_query *query)
                     CFRelease(query->pasteboard_data.type);
                 break;
         }
-        [(WineWindow*)query->window release];
+        [query->window release];
         free(query);
     }
 }
@@ -769,10 +765,9 @@ void macdrv_set_query_done(macdrv_query *query)
 /***********************************************************************
  *              macdrv_register_hot_key
  */
-int macdrv_register_hot_key(macdrv_event_queue q, unsigned int vkey, unsigned int mod_flags,
+int macdrv_register_hot_key(WineEventQueue *queue, unsigned int vkey, unsigned int mod_flags,
                             unsigned int keycode, unsigned int modifiers)
 {
-    WineEventQueue* queue = (WineEventQueue*)q;
     __block int ret;
 
     OnMainThread(^{
@@ -786,10 +781,8 @@ int macdrv_register_hot_key(macdrv_event_queue q, unsigned int vkey, unsigned in
 /***********************************************************************
  *              macdrv_unregister_hot_key
  */
-void macdrv_unregister_hot_key(macdrv_event_queue q, unsigned int vkey, unsigned int mod_flags)
+void macdrv_unregister_hot_key(WineEventQueue *queue, unsigned int vkey, unsigned int mod_flags)
 {
-    WineEventQueue* queue = (WineEventQueue*)q;
-
     OnMainThreadAsync(^{
         [queue unregisterHotKey:vkey modFlags:mod_flags];
     });

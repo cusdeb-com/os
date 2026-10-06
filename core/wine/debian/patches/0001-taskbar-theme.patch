@@ -6,7 +6,7 @@ Last-Modified: Mon, 04 Aug 2026 18:30:00 +0300
 
 --- a/src/dlls/comctl32/toolbar.c
 +++ b/src/dlls/comctl32/toolbar.c
-@@ -5342,7 +5342,7 @@
+@@ -5341,7 +5341,7 @@
      infoPtr->hFont = infoPtr->hDefaultFont = CreateFontIndirectW (&logFont);
  
  #if __WINE_COMCTL32_VERSION == 6
@@ -15,7 +15,7 @@ Last-Modified: Mon, 04 Aug 2026 18:30:00 +0300
  #endif
  
      TOOLBAR_CheckStyle (infoPtr);
-@@ -6607,7 +6607,7 @@
+@@ -6606,7 +6606,7 @@
  {
  #if __WINE_COMCTL32_VERSION == 6
      CloseThemeData (infoPtr->hTheme);

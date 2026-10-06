@@ -193,7 +193,12 @@ static void check_property(int line, NCRYPT_KEY_HANDLE key, const struct expecte
         ok_(__FILE__, line)(ret == property->expected_status || broken(ret == property->broken_status),
                             "got unexpected return value %#lx\n", ret);
         if (ret == ERROR_SUCCESS)
+        {
             ok_(__FILE__, line)(size == property->expected_size, "got unexpected size %lu\n", size);
+
+            if (!wcscmp(property->name, NCRYPT_PROVIDER_HANDLE_PROPERTY))
+                NCryptFreeObject((NCRYPT_HANDLE)buffer);
+        }
 
         goto done;
     }
@@ -325,6 +330,9 @@ static void test_key_import_rsa(void)
                           sizeof(invalid_rsa_key_blob), 0);
     ok(ret == NTE_INVALID_PARAMETER, "got %#lx\n", ret);
 
+    ret = NCryptImportKey(prov, 0, BCRYPT_PUBLIC_KEY_BLOB, NULL, &key, NULL, 0, 0);
+    ok(ret == NTE_INVALID_PARAMETER, "got %#lx\n", ret);
+
     key = 0;
     ret = NCryptImportKey(prov, 0, BCRYPT_PUBLIC_KEY_BLOB, NULL, &key, rsa_key_blob_with_invalid_bit_length,
                           sizeof(rsa_key_blob_with_invalid_bit_length), 0);
@@ -438,6 +446,9 @@ static void test_set_property(void)
     keylength = 2048;
     ret = NCryptSetProperty(key, NCRYPT_LENGTH_PROPERTY, (BYTE *)&keylength, sizeof(keylength), 0);
     ok(ret == ERROR_SUCCESS, "got %#lx\n", ret);
+
+    ret = NCryptSetProperty(key, NCRYPT_PROVIDER_HANDLE_PROPERTY, (BYTE *)&prov, sizeof(prov), 0);
+    ok(ret == NTE_NOT_SUPPORTED, "got %#lx\n", ret);
 
     todo_wine
     {

@@ -44,23 +44,30 @@ static const struct {
     int token;
 } keywords[] = {
     {L"and",       tAND},
+    {L"as",        tRESERVED},
+    {L"boolean",   tRESERVED},
     {L"byref",     tBYREF},
+    {L"byte",      tRESERVED},
     {L"byval",     tBYVAL},
     {L"call",      tCALL},
     {L"case",      tCASE},
     {L"class",     tCLASS},
     {L"const",     tCONST},
+    {L"currency",  tRESERVED},
     {L"default",   tDEFAULT},
     {L"dim",       tDIM},
     {L"do",        tDO},
+    {L"double",    tRESERVED},
     {L"each",      tEACH},
     {L"else",      tELSE},
     {L"elseif",    tELSEIF},
     {L"empty",     tEMPTY},
     {L"end",       tEND},
+    {L"endif",     tRESERVED},
+    {L"enum",      tRESERVED},
     {L"eqv",       tEQV},
-    {L"erase",     tERASE},
     {L"error",     tERROR},
+    {L"event",     tRESERVED},
     {L"exit",      tEXIT},
     {L"explicit",  tEXPLICIT},
     {L"false",     tFALSE},
@@ -70,10 +77,15 @@ static const struct {
     {L"goto",      tGOTO},
     {L"if",        tIF},
     {L"imp",       tIMP},
+    {L"implements", tRESERVED},
     {L"in",        tIN},
+    {L"integer",   tRESERVED},
     {L"is",        tIS},
     {L"let",       tLET},
+    {L"like",      tRESERVED},
+    {L"long",      tRESERVED},
     {L"loop",      tLOOP},
+    {L"lset",      tRESERVED},
     {L"me",        tME},
     {L"mod",       tMOD},
     {L"new",       tNEW},
@@ -83,23 +95,33 @@ static const struct {
     {L"null",      tNULL},
     {L"on",        tON},
     {L"option",    tOPTION},
+    {L"optional",  tRESERVED},
     {L"or",        tOR},
+    {L"paramarray", tRESERVED},
     {L"preserve",  tPRESERVE},
     {L"private",   tPRIVATE},
     {L"property",  tPROPERTY},
     {L"public",    tPUBLIC},
+    {L"raiseevent", tRESERVED},
     {L"redim",     tREDIM},
     {L"rem",       tREM},
     {L"resume",    tRESUME},
+    {L"rset",      tRESERVED},
     {L"select",    tSELECT},
     {L"set",       tSET},
+    {L"shared",    tRESERVED},
+    {L"single",    tRESERVED},
+    {L"static",    tRESERVED},
     {L"step",      tSTEP},
     {L"stop",      tSTOP},
     {L"sub",       tSUB},
     {L"then",      tTHEN},
     {L"to",        tTO},
     {L"true",      tTRUE},
+    {L"type",      tRESERVED},
+    {L"typeof",    tRESERVED},
     {L"until",     tUNTIL},
+    {L"variant",   tRESERVED},
     {L"wend",      tWEND},
     {L"while",     tWHILE},
     {L"with",      tWITH},
@@ -386,6 +408,14 @@ static int hex_to_int(WCHAR c)
     return -1;
 }
 
+/* The error is reported at the '&' that starts the literal. */
+static int literal_overflow_error(parser_ctx_t *ctx)
+{
+    while(*ctx->ptr != '&')
+        ctx->ptr--;
+    return lex_error(ctx, MAKE_VBSERROR(VBSE_SYNTAX_ERROR));
+}
+
 static int parse_hex_literal(parser_ctx_t *ctx, LONG *ret)
 {
     const WCHAR *begin;
@@ -402,7 +432,7 @@ static int parse_hex_literal(parser_ctx_t *ctx, LONG *ret)
 
     if(begin + 9 /* max 8 significant digits + 1 */ < ctx->ptr) {
         WARN("overflow in hex literal\n");
-        return 0;
+        return literal_overflow_error(ctx);
     }
 
     if(*ctx->ptr == '&') {
@@ -430,7 +460,7 @@ static int parse_oct_literal(parser_ctx_t *ctx, LONG *ret)
         l = l*8 + d;
         if(l > UINT_MAX) {
             WARN("overflow in oct literal\n");
-            return 0;
+            return literal_overflow_error(ctx);
         }
     }
 
@@ -545,7 +575,9 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
         if('0' <= ctx->ptr[1] && ctx->ptr[1] <= '9')
             return parse_numeric_literal(ctx, lval);
         c = ctx->ptr > ctx->code ? ctx->ptr[-1] : '\n';
-        if (is_identifier_char(c) || c == ')') {
+        if ((is_identifier_char(c) || c == ')')
+                && (ctx->last_token == tIdentifier || ctx->last_token == ')'
+                || ctx->last_token == tEMPTYBRACKETS || ctx->last_token == tME)) {
             ctx->ptr++;
             return '.';
         }
@@ -581,6 +613,11 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
          */
         if(ctx->last_token == tIdentifier || ctx->last_token == ')' || ctx->last_token == tME
                 || ctx->last_token == tEMPTYBRACKETS)
+            return '(';
+        /* default and property are never followed by a bracket as keywords, so they
+         * are identifiers here. The parser needs this token as lookahead to tell,
+         * so it has not updated last_token yet. */
+        if(ctx->last_token == tDEFAULT || ctx->last_token == tPROPERTY)
             return '(';
         return tEXPRLBRACKET;
     case '[':

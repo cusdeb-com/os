@@ -585,7 +585,10 @@ static const IHttpSecurityVtbl HttpSecurityVtbl = {
 static BindStatusCallback *create_callback(DocHost *doc_host, LPCWSTR url, PBYTE post_data,
         ULONG post_data_len, LPCWSTR headers)
 {
-    BindStatusCallback *ret = malloc(sizeof(BindStatusCallback));
+    BindStatusCallback *ret;
+
+    if(!(ret = malloc(sizeof(BindStatusCallback))))
+        return NULL;
 
     ret->IBindStatusCallback_iface.lpVtbl = &BindStatusCallbackVtbl;
     ret->IHttpNegotiate_iface.lpVtbl      = &HttpNegotiateVtbl;
@@ -912,7 +915,7 @@ static HRESULT navigate_bsc(DocHost *This, BindStatusCallback *bsc, IMoniker *mo
 
     if(bsc->post_data) {
         post_data = SafeArrayCreateVector(VT_UI1, 0, bsc->post_data_len);
-        memcpy(post_data->pvData, post_data, bsc->post_data_len);
+        memcpy(post_data->pvData, bsc->post_data, bsc->post_data_len);
     }
 
     on_before_navigate2(This, bsc->url, post_data, bsc->headers, &cancel);
@@ -995,8 +998,9 @@ HRESULT navigate_url(DocHost *This, LPCWSTR url, const VARIANT *Flags,
 
     if(post_array) {
         LONG elem_max;
-        SafeArrayAccessData(post_array, (void**)&post_data);
-        SafeArrayGetUBound(post_array, 1, &elem_max);
+        if(FAILED(hres = SafeArrayAccessData(post_array, (void**)&post_data)) ||
+           FAILED(hres = SafeArrayGetUBound(post_array, 1, &elem_max)))
+            return hres;
         post_data_len = (elem_max+1) * SafeArrayGetElemsize(post_array);
     }
 
@@ -1031,8 +1035,10 @@ HRESULT navigate_url(DocHost *This, LPCWSTR url, const VARIANT *Flags,
         task_navigate_bsc_t *task;
 
         task = malloc(sizeof(*task));
-        task->bsc = create_callback(This, url, post_data, post_data_len, headers);
-        push_dochost_task(This, &task->header, navigate_bsc_proc, navigate_bsc_task_destr, This->url == NULL);
+        if((task->bsc = create_callback(This, url, post_data, post_data_len, headers)))
+            push_dochost_task(This, &task->header, navigate_bsc_proc, navigate_bsc_task_destr, This->url == NULL);
+        else
+            hres = E_OUTOFMEMORY;
     }
 
     if(post_data)
@@ -1083,8 +1089,10 @@ static HRESULT navigate_hlink(DocHost *This, IMoniker *mon, IBindCtx *bindctx,
     if(This->doc_navigate) {
         hres = async_doc_navigate(This, url, headers, post_data, post_data_len, FALSE);
     }else {
-        bsc = create_callback(This, url, post_data, post_data_len, headers);
-        hres = navigate_bsc(This, bsc, mon);
+        if((bsc = create_callback(This, url, post_data, post_data_len, headers)))
+            hres = navigate_bsc(This, bsc, mon);
+        else
+            hres = E_OUTOFMEMORY;
         IBindStatusCallback_Release(&bsc->IBindStatusCallback_iface);
     }
 

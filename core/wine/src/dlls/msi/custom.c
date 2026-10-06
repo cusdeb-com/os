@@ -176,13 +176,12 @@ static WCHAR *get_deferred_action(const WCHAR *action, const WCHAR *actiondata, 
     LPWSTR deferred;
     DWORD len;
 
-    if (!actiondata)
-        return wcsdup(action);
+    if (!usersid || !prodcode) return NULL;
+    if (!actiondata) return wcsdup(action);
 
-    len = lstrlenW(action) + lstrlenW(actiondata) +
-          lstrlenW(usersid) + lstrlenW(prodcode) +
+    len = lstrlenW(action) + lstrlenW(actiondata) + lstrlenW(usersid) + lstrlenW(prodcode) +
           lstrlenW(L"[%s<=>%s<=>%s]%s") - 7;
-    deferred = malloc(len * sizeof(WCHAR));
+    if (!(deferred = malloc(len * sizeof(WCHAR)))) return NULL;
 
     swprintf(deferred, len, L"[%s<=>%s<=>%s]%s", actiondata, usersid, prodcode, action);
     return deferred;
@@ -331,9 +330,8 @@ static UINT custom_get_thread_return( MSIPACKAGE *package, HANDLE thread )
     case ERROR_SUCCESS:
     case ERROR_INSTALL_USEREXIT:
     case ERROR_INSTALL_FAILURE:
-        return rc;
     case ERROR_NO_MORE_ITEMS:
-        return ERROR_SUCCESS;
+        return rc;
     case ERROR_INSTALL_SUSPEND:
         ACTION_ForceReboot( package );
         return ERROR_SUCCESS;
@@ -603,10 +601,12 @@ static DWORD custom_start_server(MSIPACKAGE *package, DWORD arch)
 
     swprintf(buffer, ARRAY_SIZE(buffer), L"\\\\.\\pipe\\msica_%x_%d",
              GetCurrentProcessId(), arch == SCS_32BIT_BINARY ? 32 : 64);
-    pipe = CreateNamedPipeW(buffer, PIPE_ACCESS_DUPLEX, 0, 1, sizeof(DWORD64),
-        sizeof(GUID), 0, NULL);
+    pipe = CreateNamedPipeW(buffer, PIPE_ACCESS_DUPLEX, 0, 1, sizeof(DWORD64), sizeof(GUID), 0, NULL);
     if (pipe == INVALID_HANDLE_VALUE)
+    {
         ERR("failed to create custom action client pipe: %lu\n", GetLastError());
+        return GetLastError();
+    }
 
     if ((sizeof(void *) == 8 || is_wow64) && arch == SCS_32BIT_BINARY)
         GetSystemWow64DirectoryW(path, MAX_PATH - ARRAY_SIZE(L"\\msiexec.exe"));
@@ -767,9 +767,7 @@ static custom_action_info *do_msidbCustomActionTypeDll(
     RPC_STATUS status;
     BOOL ret;
 
-    info = malloc( sizeof *info );
-    if (!info)
-        return NULL;
+    if (!(info = calloc( 1, sizeof(*info) ))) return NULL;
 
     msiobj_addref( &package->hdr );
     info->package = package;
@@ -793,6 +791,7 @@ static custom_action_info *do_msidbCustomActionTypeDll(
         if (status != RPC_S_OK)
         {
             ERR("RpcServerUseProtseqEp failed: %#lx\n", status);
+            free_custom_action_data( info );
             return NULL;
         }
 
@@ -801,6 +800,7 @@ static custom_action_info *do_msidbCustomActionTypeDll(
         if (status != RPC_S_OK)
         {
             ERR("RpcServerRegisterIfEx failed: %#lx\n", status);
+            free_custom_action_data( info );
             return NULL;
         }
 
@@ -997,18 +997,23 @@ static UINT HANDLE_CustomType19( MSIPACKAGE *package, const WCHAR *source, const
 
 static WCHAR *build_msiexec_args( const WCHAR *filename, const WCHAR *params )
 {
-    UINT len_filename = lstrlenW( filename ), len_params = lstrlenW( params );
+    UINT len_filename = wcslen( filename ), len_params = 0;
     UINT len = ARRAY_SIZE(L"/qb /i ") - 1;
     WCHAR *ret;
 
+    if (params) len_params = wcslen( params );
     if (!(ret = malloc( (len + len_filename + len_params + 4) * sizeof(WCHAR) ))) return NULL;
+
     memcpy( ret, L"/qb /i ", sizeof(L"/qb /i ") );
     ret[len++] = '"';
     memcpy( ret + len, filename, len_filename * sizeof(WCHAR) );
     len += len_filename;
     ret[len++] = '"';
-    ret[len++] = ' ';
-    lstrcpyW( ret + len, params );
+    if (params)
+    {
+        ret[len++] = ' ';
+        wcscpy( ret + len, params );
+    }
     return ret;
 }
 
@@ -1515,7 +1520,7 @@ UINT ACTION_CustomAction(MSIPACKAGE *package, const WCHAR *action)
         break;
     case 7: /* Concurrent install from substorage */
         deformat_string( package, target, &deformated );
-        rc = HANDLE_CustomType7( package, source, target, type, action );
+        rc = HANDLE_CustomType7( package, source, deformated, type, action );
         free( deformated );
         break;
     case 17:

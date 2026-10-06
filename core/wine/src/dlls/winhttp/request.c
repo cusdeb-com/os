@@ -1043,7 +1043,8 @@ static WCHAR *build_request_string( struct request *request )
     return ret;
 }
 
-#define QUERY_MODIFIER_MASK (WINHTTP_QUERY_FLAG_REQUEST_HEADERS | WINHTTP_QUERY_FLAG_SYSTEMTIME | WINHTTP_QUERY_FLAG_NUMBER)
+#define QUERY_MODIFIER_MASK (WINHTTP_QUERY_FLAG_REQUEST_HEADERS | WINHTTP_QUERY_FLAG_SYSTEMTIME | WINHTTP_QUERY_FLAG_NUMBER \
+                             | WINHTTP_QUERY_FLAG_NUMBER64)
 
 static DWORD query_headers( struct request *request, DWORD level, const WCHAR *name, void *buffer, DWORD *buflen,
                             DWORD *index )
@@ -1198,6 +1199,23 @@ static DWORD query_headers( struct request *request, DWORD level, const WCHAR *n
             ret = ERROR_SUCCESS;
         }
         *buflen = sizeof(DWORD);
+    }
+    else if (level & WINHTTP_QUERY_FLAG_NUMBER64)
+    {
+        if (attr != WINHTTP_QUERY_CONTENT_LENGTH)
+        {
+            WARN( "WINHTTP_QUERY_FLAG_NUMBER64 with attr %lu.\n", attr );
+            return ERROR_WINHTTP_INVALID_QUERY_REQUEST;
+        }
+        if (!buffer || sizeof(ULONG64) > *buflen) ret = ERROR_INSUFFICIENT_BUFFER;
+        else
+        {
+            ULONG64 *number = buffer;
+            *number = wcstoull( header->value, NULL, 10 );
+            TRACE( "returning number: %I64u\n", *number );
+            ret = ERROR_SUCCESS;
+        }
+        *buflen = sizeof(ULONG64);
     }
     else if (level & WINHTTP_QUERY_FLAG_SYSTEMTIME)
     {
@@ -2185,7 +2203,7 @@ static DWORD add_host_header( struct request *request, DWORD modifier )
     {
         return process_header( request, L"Host", connect->hostname, modifier, TRUE );
     }
-    len = lstrlenW( connect->hostname ) + 7; /* sizeof(":65335") */
+    len = lstrlenW( connect->hostname ) + 7; /* sizeof(":65535") */
     if (!(host = malloc( len * sizeof(WCHAR) ))) return ERROR_OUTOFMEMORY;
     swprintf( host, len, L"%s:%u", connect->hostname, port );
     ret = process_header( request, L"Host", host, modifier, TRUE );
@@ -2209,34 +2227,35 @@ static void clear_response_headers( struct request *request )
 
 static void finished_reading( struct request *request )
 {
-    BOOL close = FALSE, close_request_headers;
+    BOOL close = FALSE, close_request_headers = FALSE;
     WCHAR connection[20];
-    DWORD size = sizeof(connection);
+    DWORD size = sizeof(connection), size2 = size;
 
     if (!request->netconn) return;
 
     if (request->netconn->socket == -1) close = TRUE;
     else if (request->hdr.disable_flags & WINHTTP_DISABLE_KEEP_ALIVE) close = TRUE;
     else if (!query_headers( request, WINHTTP_QUERY_CONNECTION, NULL, connection, &size, NULL ) ||
-             !query_headers( request, WINHTTP_QUERY_PROXY_CONNECTION, NULL, connection, &size, NULL ))
+             !query_headers( request, WINHTTP_QUERY_PROXY_CONNECTION, NULL, connection, &size2, NULL ))
     {
         if (!wcsicmp( connection, L"close" )) close = TRUE;
     }
     else if (!wcscmp( request->version, L"HTTP/1.0" )) close = TRUE;
 
-    size = sizeof(connection);
-    close_request_headers =
-            (!query_headers( request, WINHTTP_QUERY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS, NULL, connection, &size, NULL )
-             || !query_headers( request, WINHTTP_QUERY_PROXY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS, NULL, connection, &size, NULL ))
-             && !wcsicmp( connection, L"close" );
+    size = size2 = sizeof(connection);
+    if (!query_headers( request, WINHTTP_QUERY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS, NULL, connection, &size, NULL ) ||
+        !query_headers( request, WINHTTP_QUERY_PROXY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS, NULL, connection, &size2, NULL ))
+    {
+        if (!wcsicmp( connection, L"close" )) close_request_headers = TRUE;
+    }
+
     if (close || close_request_headers)
     {
         if (close_request_headers) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION, 0, 0 );
         netconn_release( request->netconn );
         if (close_request_headers) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED, 0, 0 );
     }
-    else
-        cache_connection( request->netconn );
+    else cache_connection( request->netconn );
     request->netconn = NULL;
 }
 
@@ -2476,7 +2495,7 @@ static DWORD send_request( struct request *request, const WCHAR *headers, DWORD 
                                || !wcscmp( request->verb, L"PUT" )))))
     {
         WCHAR length[21]; /* decimal long int + null */
-        swprintf( length, ARRAY_SIZE(length), L"%ld", total_len );
+        swprintf( length, ARRAY_SIZE(length), L"%lu", total_len );
         process_header( request, L"Content-Length", length, WINHTTP_ADDREQ_FLAG_ADD_IF_NEW, TRUE );
     }
     if (request->flags & REQUEST_FLAG_WEBSOCKET_UPGRADE)

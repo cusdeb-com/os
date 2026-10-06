@@ -61,7 +61,7 @@ static DEVICE_OBJECT *lower_device, *upper_device;
 static IRP *queued_async_irps[2];
 static unsigned int queued_async_count;
 
-static POBJECT_TYPE *pExEventObjectType, *pIoFileObjectType, *pPsThreadType, *pIoDriverObjectType;
+static POBJECT_TYPE *pExEventObjectType, *pIoFileObjectType, *pPsThreadType, *pIoDriverObjectType, *pSeTokenObjectType;
 static PEPROCESS *pPsInitialSystemProcess;
 static void *create_caller_thread;
 
@@ -280,31 +280,109 @@ static void test_queue(void)
 static void test_mdl_map(void)
 {
     char buffer[20] = "test buffer";
-    void *addr;
+    void *addr, *pool;
     MDL *mdl;
 
     mdl = IoAllocateMdl(buffer, sizeof(buffer), FALSE, FALSE, NULL);
     ok(mdl != NULL, "IoAllocateMdl failed\n");
+    ok(!(mdl->MdlFlags & MDL_PAGES_LOCKED), "got flags %#x\n", mdl->MdlFlags);
+    ok(!(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA), "got flags %#x\n", mdl->MdlFlags);
 
     MmProbeAndLockPages(mdl, KernelMode, IoReadAccess);
+    ok(mdl->MdlFlags & MDL_PAGES_LOCKED, "got flags %#x\n", mdl->MdlFlags);
 
     addr = MmMapLockedPages(mdl, KernelMode);
     ok(addr != NULL, "MmMapLockedPages failed\n");
+    ok(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA, "got flags %#x\n", mdl->MdlFlags);
+    ok(mdl->MappedSystemVa == addr, "got %p, expected %p\n", mdl->MappedSystemVa, addr);
     if (addr != NULL)
         ok(!kmemcmp(addr, buffer, sizeof(buffer)), "Unexpected data in mapped memory\n");
 
     MmUnmapLockedPages(addr, mdl);
+    ok(!(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA), "got flags %#x\n", mdl->MdlFlags);
+    ok(mdl->MdlFlags & MDL_PAGES_LOCKED, "got flags %#x\n", mdl->MdlFlags);
 
     addr = MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmCached, NULL, FALSE, NormalPagePriority);
-    todo_wine
     ok(addr != NULL, "MmMapLockedPagesSpecifyCache failed\n");
+    ok(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA, "got flags %#x\n", mdl->MdlFlags);
+    ok(mdl->MappedSystemVa == addr, "got %p, expected %p\n", mdl->MappedSystemVa, addr);
     if (addr != NULL)
         ok(!kmemcmp(addr, buffer, sizeof(buffer)), "Unexpected data in mapped memory\n");
 
     MmUnmapLockedPages(addr, mdl);
+    ok(!(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA), "got flags %#x\n", mdl->MdlFlags);
 
     MmUnlockPages(mdl);
+    ok(!(mdl->MdlFlags & MDL_PAGES_LOCKED), "got flags %#x\n", mdl->MdlFlags);
     IoFreeMdl(mdl);
+
+    pool = ExAllocatePool(NonPagedPool, sizeof(buffer));
+    ok(pool != NULL, "ExAllocatePool failed\n");
+    memcpy(pool, buffer, sizeof(buffer));
+
+    mdl = IoAllocateMdl(pool, sizeof(buffer), FALSE, FALSE, NULL);
+    ok(mdl != NULL, "IoAllocateMdl failed\n");
+    ok(!(mdl->MdlFlags & MDL_SOURCE_IS_NONPAGED_POOL), "got flags %#x\n", mdl->MdlFlags);
+
+    MmBuildMdlForNonPagedPool(mdl);
+    ok(mdl->MdlFlags & MDL_SOURCE_IS_NONPAGED_POOL, "got flags %#x\n", mdl->MdlFlags);
+    ok(mdl->MappedSystemVa == (char *)mdl->StartVa + mdl->ByteOffset,
+       "got %p, expected %p\n", mdl->MappedSystemVa, (char *)mdl->StartVa + mdl->ByteOffset);
+    ok(!(mdl->MdlFlags & MDL_PAGES_LOCKED), "got flags %#x\n", mdl->MdlFlags);
+    ok(!(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA), "got flags %#x\n", mdl->MdlFlags);
+
+    addr = MmMapLockedPages(mdl, KernelMode);
+    ok(addr != NULL, "MmMapLockedPages failed\n");
+    ok(mdl->MdlFlags & MDL_MAPPED_TO_SYSTEM_VA, "got flags %#x\n", mdl->MdlFlags);
+    if (addr != NULL)
+        ok(!kmemcmp(addr, buffer, sizeof(buffer)), "Unexpected data in mapped memory\n");
+
+    IoFreeMdl(mdl);
+    ExFreePool(pool);
+}
+
+static void test_physical_memory_ranges(void)
+{
+    NTSTATUS (WINAPI *pZwQuerySystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
+    ULONGLONG total = 0, expect, prev_end = 0;
+    SYSTEM_BASIC_INFORMATION info;
+    PHYSICAL_MEMORY_RANGE *ranges;
+    unsigned int i;
+    NTSTATUS status;
+
+    pZwQuerySystemInformation = get_proc_address("ZwQuerySystemInformation");
+    ok(!!pZwQuerySystemInformation, "ZwQuerySystemInformation not found\n");
+
+    ranges = MmGetPhysicalMemoryRanges();
+    ok(ranges != NULL, "MmGetPhysicalMemoryRanges failed\n");
+    if (!ranges) return;
+
+    for (i = 0; ranges[i].BaseAddress.QuadPart || ranges[i].NumberOfBytes.QuadPart; ++i)
+    {
+        ok(ranges[i].NumberOfBytes.QuadPart > 0, "range %u: got size %#I64x\n",
+           i, ranges[i].NumberOfBytes.QuadPart);
+        ok(!(ranges[i].BaseAddress.QuadPart & (PAGE_SIZE - 1)), "range %u: got unaligned base %#I64x\n",
+           i, ranges[i].BaseAddress.QuadPart);
+        ok(!(ranges[i].NumberOfBytes.QuadPart & (PAGE_SIZE - 1)), "range %u: got unaligned size %#I64x\n",
+           i, ranges[i].NumberOfBytes.QuadPart);
+        ok(ranges[i].BaseAddress.QuadPart >= prev_end, "range %u: got base %#I64x, previous range ends at %#I64x\n",
+           i, ranges[i].BaseAddress.QuadPart, prev_end);
+        prev_end = ranges[i].BaseAddress.QuadPart + ranges[i].NumberOfBytes.QuadPart;
+        total += ranges[i].NumberOfBytes.QuadPart;
+    }
+    ok(i > 0, "got no ranges\n");
+
+    if (pZwQuerySystemInformation)
+    {
+        status = pZwQuerySystemInformation(SystemBasicInformation, &info, sizeof(info), NULL);
+        ok(!status, "got status %#lx\n", status);
+        expect = (ULONGLONG)info.MmNumberOfPhysicalPages * info.PageSize;
+        ok(total == expect, "got total %#I64x, expected %#I64x\n", total, expect);
+        ok(ranges[0].BaseAddress.QuadPart == (ULONGLONG)info.MmLowestPhysicalPage * info.PageSize,
+           "got base %#I64x\n", ranges[0].BaseAddress.QuadPart);
+    }
+
+    ExFreePool(ranges);
 }
 
 static void test_init_funcs(void)
@@ -444,12 +522,20 @@ static NTSTATUS wait_single_handle(HANDLE handle, ULONGLONG timeout)
 
 static void test_current_thread(BOOL is_system)
 {
+    UNICODE_STRING image, *image_name, *expect_name;
     PROCESS_BASIC_INFORMATION info;
+    char expect_file_name[15];
     DISPATCHER_HEADER *header;
     HANDLE process_handle, id;
+    KERNEL_USER_TIMES times;
+    const char *file_name;
+    LONGLONG create_time;
+    ULONG session_id, len;
     PEPROCESS current;
     PETHREAD thread;
+    WCHAR *p, *end;
     NTSTATUS ret;
+    PEB *peb;
 
     current = IoGetCurrentProcess();
     ok(current != NULL, "Expected current process to be non-NULL\n");
@@ -474,6 +560,9 @@ static void test_current_thread(BOOL is_system)
     ok(PsGetThreadId((PETHREAD)KeGetCurrentThread()) == PsGetCurrentThreadId(), "thread IDs don't match\n");
     ok(PsIsSystemThread((PETHREAD)KeGetCurrentThread()) == is_system, "unexpected system thread\n");
     ok(ExGetPreviousMode() == is_system ? KernelMode : UserMode, "previous mode is not correct\n");
+    ok(PsGetThreadProcess(thread) == current, "got process %p, expected %p\n",
+       PsGetThreadProcess(thread), current);
+
     if (!is_system)
     {
         ok(create_caller_thread == KeGetCurrentThread(), "thread is not create caller thread\n");
@@ -488,6 +577,72 @@ static void test_current_thread(BOOL is_system)
 
     id = PsGetProcessInheritedFromUniqueProcessId(current);
     ok(id == (HANDLE)info.InheritedFromUniqueProcessId, "unexpected process id %p\n", id);
+
+    session_id = 0xdeadbeef;
+    ret = ZwQueryInformationProcess(process_handle, ProcessSessionInformation, &session_id, sizeof(session_id), NULL);
+    ok(!ret, "ZwQueryInformationProcess failed: %#lx\n", ret);
+    ok(PsGetProcessSessionId(current) == session_id, "got session id %lu, expected %lu\n",
+       PsGetProcessSessionId(current), session_id);
+
+    /* the system process reports session 0 on windows */
+    todo_wine ok(!PsGetProcessSessionId(*pPsInitialSystemProcess), "got session id %lu for the system process\n",
+                 PsGetProcessSessionId(*pPsInitialSystemProcess));
+
+    memset(&times, 0xcc, sizeof(times));
+    ret = ZwQueryInformationProcess(process_handle, ProcessTimes, &times, sizeof(times), NULL);
+    ok(!ret, "ZwQueryInformationProcess failed: %#lx\n", ret);
+    create_time = PsGetProcessCreateTimeQuadPart(current);
+    ok(create_time == times.CreateTime.QuadPart, "got create time %#I64x, expected %#I64x\n",
+       create_time, times.CreateTime.QuadPart);
+
+    create_time = PsGetProcessCreateTimeQuadPart(*pPsInitialSystemProcess);
+    ok(create_time != 0, "got create time %#I64x for the system process\n", create_time);
+
+    peb = PsGetProcessPeb(current);
+    ok(peb == info.PebBaseAddress, "got peb %p, expected %p\n", peb, info.PebBaseAddress);
+
+    if (!is_system)
+    {
+        ret = ZwQueryInformationProcess(process_handle, ProcessImageFileName, &image, sizeof(image), &len);
+        ok(ret == STATUS_INFO_LENGTH_MISMATCH, "got %#lx\n", ret);
+        expect_name = ExAllocatePool(PagedPool, len);
+
+        ret = ZwQueryInformationProcess(process_handle, ProcessImageFileName, expect_name, len, NULL);
+        ok(!ret, "ZwQueryInformationProcess failed: %#lx\n", ret);
+        if (!ret)
+        {
+            ret = SeLocateProcessImageName(current, &image_name);
+            ok(!ret, "SeLocateProcessImageName failed: %#lx\n", ret);
+            if (!ret)
+            {
+                ok(RtlEqualUnicodeString(image_name, expect_name, FALSE), "got %.*ls, expected %.*ls\n",
+                   (int)(image_name->Length / sizeof(WCHAR)), image_name->Buffer,
+                   (int)(expect_name->Length / sizeof(WCHAR)), expect_name->Buffer);
+
+                ok(image_name->MaximumLength == image_name->Length + sizeof(WCHAR), "got length %u, maximum %u\n",
+                   image_name->Length, image_name->MaximumLength);
+                ok(!image_name->Buffer[image_name->Length / sizeof(WCHAR)], "got %#x\n",
+                   image_name->Buffer[image_name->Length / sizeof(WCHAR)]);
+
+                ExFreePool(image_name);
+            }
+
+            end = expect_name->Buffer + expect_name->Length / sizeof(WCHAR);
+            p = end;
+            while (p > expect_name->Buffer && p[-1] != '\\')
+                p--;
+
+            memset(expect_file_name, 0, sizeof(expect_file_name));
+            RtlUnicodeToMultiByteN(expect_file_name, sizeof(expect_file_name) - 1, NULL, p, (end - p) * sizeof(WCHAR));
+
+            file_name = PsGetProcessImageFileName(current);
+            ok(!!file_name, "got NULL image file name\n");
+            if (file_name)
+                ok(!strncmp(file_name, expect_file_name, sizeof(expect_file_name)), "got %.*s, expected %s\n",
+                   (int)sizeof(expect_file_name), file_name, expect_file_name);
+        }
+        ExFreePool(expect_name);
+    }
 
     ret = ZwClose(process_handle);
     ok(!ret, "ZwClose failed: %#lx\n", ret);
@@ -1750,6 +1905,81 @@ static void test_lookup_thread(void)
        "PsLookupThreadByThreadId returned %#lx\n", status);
 }
 
+static void test_context_thread(const struct main_test_input *test_input)
+{
+    NTSTATUS (WINAPI *pZwAllocateVirtualMemory)(HANDLE,void**,ULONG_PTR,SIZE_T*,ULONG,ULONG);
+    NTSTATUS (WINAPI *pZwFreeVirtualMemory)(HANDLE,void**,SIZE_T*,ULONG);
+    CONTEXT *context = NULL;
+    SIZE_T size = sizeof(*context);
+    NTSTATUS status;
+    PETHREAD thread;
+
+    pZwAllocateVirtualMemory = get_proc_address("ZwAllocateVirtualMemory");
+    pZwFreeVirtualMemory = get_proc_address("ZwFreeVirtualMemory");
+    if (!pZwAllocateVirtualMemory || !pZwFreeVirtualMemory) return;
+
+    status = PsLookupThreadByThreadId(UlongToHandle(test_input->thread_id), &thread);
+    ok(!status, "PsLookupThreadByThreadId failed: %#lx\n", status);
+    if (status) return;
+
+    status = pZwAllocateVirtualMemory(NtCurrentProcess(), (void **)&context, 0, &size,
+                                      MEM_COMMIT, PAGE_READWRITE);
+    ok(!status, "ZwAllocateVirtualMemory failed: %#lx\n", status);
+    if (!status)
+    {
+        context->ContextFlags = CONTEXT_CONTROL;
+        status = PsGetContextThread(thread, context, UserMode);
+        ok(!status, "PsGetContextThread failed: %#lx\n", status);
+        ok(!kmemcmp(context, &test_input->thread_context, sizeof(*context)), "context differs\n");
+
+        status = PsGetContextThread(thread, context, KernelMode);
+        ok(status == STATUS_UNSUCCESSFUL, "got status %#lx\n", status);
+
+        pZwFreeVirtualMemory(NtCurrentProcess(), (void **)&context, &size, MEM_RELEASE);
+    }
+
+    ObDereferenceObject(thread);
+}
+
+static void test_primary_token(const struct main_test_input *test_input)
+{
+    NTSTATUS (WINAPI *pZwQueryInformationToken)(HANDLE,TOKEN_INFORMATION_CLASS,void*,ULONG,ULONG*);
+    PACCESS_TOKEN token, token2;
+    TOKEN_STATISTICS stats;
+    NTSTATUS status;
+    HANDLE handle;
+    ULONG len;
+
+    pZwQueryInformationToken = get_proc_address("ZwQueryInformationToken");
+    if (!pZwQueryInformationToken) return;
+
+    token = PsReferencePrimaryToken(PsGetCurrentProcess());
+    ok(!!token, "PsReferencePrimaryToken returned NULL\n");
+    if (!token) return;
+
+    /* the same token object needs to be returned on every call */
+    token2 = PsReferencePrimaryToken(PsGetCurrentProcess());
+    ok(token2 == token, "got token %p, expected %p\n", token2, token);
+    if (token2) PsDereferencePrimaryToken(token2);
+
+    status = ObOpenObjectByPointer(token, OBJ_KERNEL_HANDLE, NULL, TOKEN_QUERY,
+                                   *pSeTokenObjectType, KernelMode, &handle);
+    ok(!status, "ObOpenObjectByPointer failed: %#lx\n", status);
+    if (!status)
+    {
+        memset(&stats, 0, sizeof(stats));
+        status = pZwQueryInformationToken(handle, TokenStatistics, &stats, sizeof(stats), &len);
+        ok(!status, "ZwQueryInformationToken failed: %#lx\n", status);
+        ok(!kmemcmp(&stats.TokenId, &test_input->token_id, sizeof(LUID)),
+           "got token id %08lx%08lx, expected %08lx%08lx\n",
+           stats.TokenId.HighPart, stats.TokenId.LowPart,
+           test_input->token_id.HighPart, test_input->token_id.LowPart);
+        ZwClose(handle);
+    }
+
+    PsDereferencePrimaryToken(token);
+}
+
 static void test_stack_limits(void)
 {
     ULONG_PTR low = 0, high = 0;
@@ -2031,6 +2261,36 @@ static void test_dir_kernel_object(void)
     }
 
     ZwClose(dir_handle);
+}
+
+static void test_token_kernel_object(void)
+{
+    NTSTATUS (WINAPI *pZwOpenProcessToken)(HANDLE,DWORD,HANDLE*);
+    HANDLE token_handle, handle;
+    void *token_obj;
+    NTSTATUS status;
+
+    pZwOpenProcessToken = get_proc_address("ZwOpenProcessToken");
+    if (!pZwOpenProcessToken) return;
+
+    status = pZwOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &token_handle);
+    ok(!status, "ZwOpenProcessToken failed: %#lx\n", status);
+    if (status) return;
+
+    status = ObReferenceObjectByHandle(token_handle, TOKEN_QUERY, *pSeTokenObjectType, KernelMode,
+                                       &token_obj, NULL);
+    ok(!status, "ObReferenceObjectByHandle failed: %#lx\n", status);
+    if (!status)
+    {
+        status = ObOpenObjectByPointer(token_obj, OBJ_KERNEL_HANDLE, NULL, TOKEN_QUERY,
+                                       *pSeTokenObjectType, KernelMode, &handle);
+        ok(!status, "ObOpenObjectByPointer failed: %#lx\n", status);
+        if (!status)
+            ZwClose(handle);
+        ObDereferenceObject(token_obj);
+    }
+
+    ZwClose(token_handle);
 }
 
 static void test_fsrtl_get_file_size(void)
@@ -2621,6 +2881,9 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     pPsThreadType = get_proc_address("PsThreadType");
     ok(!!pPsThreadType, "IofileObjectType not found\n");
 
+    pSeTokenObjectType = get_proc_address("SeTokenObjectType");
+    ok(!!pSeTokenObjectType, "SeTokenObjectType not found\n");
+
     pPsInitialSystemProcess = get_proc_address("PsInitialSystemProcess");
     ok(!!pPsInitialSystemProcess, "PsInitialSystemProcess not found\n");
 
@@ -2628,6 +2891,7 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     test_current_thread(FALSE);
     test_critical_region(TRUE);
     test_mdl_map();
+    test_physical_memory_ranges();
     test_init_funcs();
     test_load_driver();
     test_sync();
@@ -2638,9 +2902,12 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     test_ob_reference();
     test_resource();
     test_lookup_thread();
+    test_context_thread(test_input);
+    test_primary_token(test_input);
     test_IoAttachDeviceToDeviceStack();
     test_object_name();
     test_dir_kernel_object();
+    test_token_kernel_object();
     test_fsrtl_get_file_size();
 #if defined(__i386__) || defined(__x86_64__)
     test_executable_pool();
@@ -2831,6 +3098,13 @@ static NTSTATUS WINAPI driver_Create(DEVICE_OBJECT *device, IRP *irp)
 {
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
     struct file_context *context = ExAllocatePool(PagedPool, sizeof(*context));
+
+    if (irpsp->Parameters.Create.ShareAccess & FILE_SHARE_DELETE)
+    {
+        irp->IoStatus.Status = STATUS_DEVICE_NOT_READY;
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        return STATUS_DEVICE_NOT_READY;
+    }
 
     if (!context)
     {

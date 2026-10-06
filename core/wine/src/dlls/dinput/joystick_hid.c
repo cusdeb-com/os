@@ -65,7 +65,7 @@ DEFINE_GUID( device_path_guid, 0x00000000, 0x0000, 0x0000, 0x8d, 0x4a, 0x23, 0x9
  */
 #define UUID_TIME_TO_SYSTEM_TIME_DAYS ((ULONG64)((365 * 18) + 5 + 17 + 30 + 31))
 #define UUID_TIME_TO_SYSTEM_TIME_NS_DIFFERENCE ((UUID_TIME_TO_SYSTEM_TIME_DAYS) * 24 * 60 * 60 * 10000000)
-DEFINE_GUID( dinput_joystick_uuid_init, 0x00000000, 0x0000, 0x1000, 0x80, 0x00, 0x00, 0x00, 'D', 'E', 'S', 'T' );
+DEFINE_GUID( dinput_joystick_uuid_init, 0x00000000, 0x0000, 0x1000, 0x80, 0x00, 'D', 'E', 'S', 'T', 0x00, 0x00 );
 
 static GUID create_instance_uuid(void)
 {
@@ -1464,7 +1464,7 @@ static BOOL read_device_state_value( struct dinput_device *device, UINT index, s
 
     if (instance->wReportId != impl->base.device_state_report_id) return DIENUM_CONTINUE;
 
-    status = HidP_GetUsageValue( HidP_Input, instance->wUsagePage, 0, instance->wUsage,
+    status = HidP_GetUsageValue( HidP_Input, instance->wUsagePage, instance->wCollectionNumber, instance->wUsage,
                                  &logical_value, impl->preparsed, report_buf, report_len );
     if (status != HIDP_STATUS_SUCCESS) WARN( "HidP_GetUsageValue %04x:%04x returned %#lx\n",
                                              instance->wUsagePage, instance->wUsage, status );

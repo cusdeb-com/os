@@ -41,6 +41,7 @@
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
+#include "color-management-v1-client-protocol.h"
 
 #include "windef.h"
 #include "winbase.h"
@@ -185,6 +186,7 @@ struct wayland
     struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
     struct wp_pointer_warp_v1 *wp_pointer_warp_v1;
     struct wp_alpha_modifier_v1 *wp_alpha_modifier_v1;
+    struct wp_color_manager_v1 *wp_color_manager_v1;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -256,6 +258,7 @@ struct wayland_client_surface
     struct wl_surface *wl_surface;
     struct wl_subsurface *wl_subsurface;
     struct wp_viewport *wp_viewport;
+    struct wp_color_management_surface_v1 *color_management;
 };
 
 extern struct wayland_client_surface *impl_from_client_surface(struct client_surface *client);
@@ -324,6 +327,9 @@ void wayland_output_use_xdg_extension(struct wayland_output *output);
 /**********************************************************************
  *          Wayland surface
  */
+
+extern const struct wp_color_manager_v1_listener color_manager_listener;
+void color_management_init(void);
 
 struct wayland_surface *wayland_surface_create(HWND hwnd);
 void wayland_surface_destroy(struct wayland_surface *surface);
@@ -470,7 +476,7 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags,
                               const struct window_rects *new_rects, struct window_surface *surface);
 BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
-struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format);
+struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format, BOOL raw);
 BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
 UINT WAYLAND_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
 UINT WAYLAND_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);

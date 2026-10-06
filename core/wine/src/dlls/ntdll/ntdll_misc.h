@@ -82,11 +82,10 @@ extern void set_native_thread_name( DWORD tid, const char *name );
 /* init routines */
 extern void loader_init( CONTEXT *context, void **entry );
 extern void version_init(void);
-extern void debug_init(void);
 extern void actctx_init(void);
 extern void locale_init(void);
 extern void init_user_process_params(void);
-extern void get_resource_lcids( LANGID *user, LANGID *user_neutral, LANGID *system );
+extern ULONG get_resource_lcids( LANGID *langs, ULONG size, LCID lcid );
 
 /* module handling */
 extern FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,

@@ -2063,6 +2063,15 @@ static void test_video_window_position(IVideoWindow *window, HWND hwnd, HWND our
     ok(top == 200, "Got top %ld.\n", top);
     ok(width == 300, "Got width %ld.\n", width);
     ok(height == 400, "Got height %ld.\n", height);
+
+    left = top = width = height = 0xdeadbeef;
+    hr = IVideoWindow_GetRestorePosition(window, &left, &top, &width, &height);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(left == 100, "Got left %ld.\n", left);
+    ok(top == 200, "Got top %ld.\n", top);
+    ok(width == 300, "Got width %ld.\n", width);
+    ok(height == 400, "Got height %ld.\n", height);
+
     GetWindowRect(hwnd, &rect);
     ok(rect.left == 100, "Got window left %ld.\n", rect.left);
     ok(rect.top == 200, "Got window top %ld.\n", rect.top);
@@ -2817,8 +2826,13 @@ static void test_basic_video(void)
 
     hr = IBasicVideo_get_VideoWidth(video, NULL);
     ok(hr == E_POINTER, "Got hr %#lx.\n", hr);
+    hr = IBasicVideo_get_VideoWidth(video, &l);
+    ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
+
     hr = IBasicVideo_get_VideoHeight(video, NULL);
     ok(hr == E_POINTER, "Got hr %#lx.\n", hr);
+    hr = IBasicVideo_get_VideoHeight(video, &l);
+    ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
 
     hr = IBasicVideo_get_SourceLeft(video, NULL);
     ok(hr == E_POINTER, "Got hr %#lx.\n", hr);
@@ -2888,6 +2902,16 @@ static void test_basic_video(void)
     hr = IBasicVideo_get_BitErrorRate(video, &l);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(!l, "Got bit rate %ld.\n", l);
+
+    l = 0xdeadbeef;
+    hr = IBasicVideo_get_VideoWidth(video, &l);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(l == 600, "Got video width %ld.\n", l);
+
+    l = 0xdeadbeef;
+    hr = IBasicVideo_get_VideoHeight(video, &l);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(l == 400, "Got video height %ld.\n", l);
 
     hr = IBasicVideo_GetVideoPaletteEntries(video, 0, 1, &l, NULL);
     todo_wine ok(hr == VFW_E_NO_PALETTE_AVAILABLE, "Got hr %#lx.\n", hr);

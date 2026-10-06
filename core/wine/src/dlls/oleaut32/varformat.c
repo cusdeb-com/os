@@ -313,7 +313,7 @@ static const BYTE fmtMediumTime[0x11] =
 
 static const BYTE fmtLongTime[0x0d] =
 {
-  0x0a,FMT_TYPE_DATE,sizeof(FMT_SHORT_HEADER),
+  0x0d,FMT_TYPE_DATE,sizeof(FMT_SHORT_HEADER),
   0x0,0x0,0x0,0x0,0x0,
   FMT_DATE_TIME_SYS,FMT_GEN_END
 };
@@ -822,7 +822,7 @@ HRESULT WINAPI VarTokenizeFormatString(LPOLESTR lpszFormat, LPBYTE rgbTok,
        */
       header->type = FMT_TYPE_DATE;
       NEED_SPACE(sizeof(BYTE));
-      pFormat += ARRAY_SIZE(szAMSlashPM);
+      pFormat++;
       *pOut++ = FMT_DATE_GENERAL;
       TRACE("gen date\n");
     }
@@ -1961,7 +1961,7 @@ static HRESULT VARIANT_FormatString(LPVARIANT pVarIn, LPOLESTR lpszFormat,
   if ((strHeader->flags & (FMT_FLAG_LT|FMT_FLAG_GT)) == FMT_FLAG_GT)
     bUpper = TRUE;
   blanks_first = strHeader->copy_chars - lstrlenW(pSrc);
-  pToken = (const BYTE*)strHeader + sizeof(FMT_DATE_HEADER);
+  pToken = (const BYTE*)strHeader + sizeof(FMT_STRING_HEADER);
 
   while (*pToken != FMT_GEN_END)
   {
@@ -2383,7 +2383,7 @@ HRESULT WINAPI VarFormatPercent(LPVARIANT pVarIn, INT nDigits, INT nLeading, INT
       if (SUCCEEDED(hRet))
       {
         DWORD dwLen = lstrlenW(*pbstrOut);
-        BOOL bBracket = (*pbstrOut)[dwLen] == ')';
+        BOOL bBracket = (*pbstrOut)[dwLen - 1] == ')';
 
         dwLen -= bBracket;
         memcpy(buff, *pbstrOut, dwLen * sizeof(WCHAR));

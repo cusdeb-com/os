@@ -30,8 +30,18 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <stdarg.h>
-#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+
+/* we need both XInput.h and XInput2.h or neither */
+#if defined(HAVE_X11_EXTENSIONS_XINPUT2_H) && defined(HAVE_X11_EXTENSIONS_XINPUT_H)
+#include <X11/extensions/XInput.h>
 #include <X11/extensions/XInput2.h>
+#else
+#ifdef HAVE_X11_EXTENSIONS_XINPUT_H
+#undef HAVE_X11_EXTENSIONS_XINPUT_H
+#endif
+#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+#undef HAVE_X11_EXTENSIONS_XINPUT2_H
+#endif
 #endif
 
 #ifdef SONAME_LIBXCURSOR
@@ -133,6 +143,9 @@ MAKE_FUNCPTR(XIFreeDeviceInfo);
 MAKE_FUNCPTR(XIQueryDevice);
 MAKE_FUNCPTR(XIQueryVersion);
 MAKE_FUNCPTR(XISelectEvents);
+MAKE_FUNCPTR(XOpenDevice);
+MAKE_FUNCPTR(XCloseDevice);
+MAKE_FUNCPTR(XGetDeviceButtonMapping);
 #undef MAKE_FUNCPTR
 #endif
 
@@ -223,6 +236,60 @@ static void set_window_cursor( Window window, HCURSOR handle )
 }
 
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+
+struct mouse_button_mapping
+{
+    int deviceid;
+    unsigned int button_count;
+    unsigned char buttons[256];
+};
+
+static struct mouse_button_mapping *pointer_mapping;
+static struct mouse_button_mapping *device_mapping;
+
+void x11drv_init_mouse( Display *display )
+{
+    struct mouse_button_mapping *tmp;
+
+    if (!(tmp = malloc( sizeof(*tmp) )))
+    {
+        WARN("Unable to allocate device mapping.\n");
+        return;
+    }
+
+    tmp->button_count = ARRAY_SIZE( tmp->buttons );
+    tmp->button_count = XGetPointerMapping( display, tmp->buttons, tmp->button_count );
+
+    free( InterlockedExchangePointer( (void**)&pointer_mapping, tmp ) );
+}
+
+static void update_device_mapping( Display *display, int deviceid )
+{
+    struct mouse_button_mapping *tmp;
+    XDevice *device;
+
+    if (!deviceid || !(device = pXOpenDevice( display, deviceid )))
+    {
+        WARN( "Unable to open cursor device %d\n", deviceid );
+        return;
+    }
+
+    if (!(tmp = malloc( sizeof(*tmp) )))
+    {
+        WARN( "Unable to allocate device mapping.\n" );
+        pXCloseDevice( display, device );
+        return;
+    }
+
+    tmp->deviceid = deviceid;
+    tmp->button_count = ARRAY_SIZE( tmp->buttons );
+    tmp->button_count = pXGetDeviceButtonMapping( display, device, tmp->buttons, tmp->button_count );
+
+    free( InterlockedExchangePointer( (void**)&device_mapping, tmp ) );
+
+    pXCloseDevice( display, device );
+}
+
 /***********************************************************************
  *              update_relative_valuators
  */
@@ -247,6 +314,8 @@ static void update_relative_valuators( XIAnyClassInfo **classes, int num_classes
 
     thread_data->x_valuator.value = 0;
     thread_data->y_valuator.value = 0;
+    thread_data->raw_x = 0;
+    thread_data->raw_y = 0;
 }
 
 
@@ -260,24 +329,24 @@ void x11drv_xinput2_enable( Display *display, Window window )
 
     if (!xinput2_available) return;
 
+    if (window == DefaultRootWindow( display ))
+    {
+        struct x11drv_thread_data *data = x11drv_thread_data();
+        TRACE( "Incrementing root_window_users to %d\n", data->root_window_users + 1 );
+        if (data->root_window_users++) return;
+        XISetMask( data->root_mask, XI_RawMotion );
+        pXISelectEvents( data->display, DefaultRootWindow( data->display ), &data->root_events, 1 );
+        return;
+    }
+
     mask.mask     = mask_bits;
     mask.mask_len = sizeof(mask_bits);
     mask.deviceid = XIAllMasterDevices;
     memset( mask_bits, 0, sizeof(mask_bits) );
 
-    if (window == DefaultRootWindow( display ))
-    {
-        if (x11drv_thread_data()->root_window_users++) return;
-        XISetMask( mask_bits, XI_DeviceChanged );
-        XISetMask( mask_bits, XI_RawMotion );
-        XISetMask( mask_bits, XI_ButtonPress );
-    }
-    else
-    {
-        XISetMask( mask_bits, XI_TouchBegin );
-        XISetMask( mask_bits, XI_TouchUpdate );
-        XISetMask( mask_bits, XI_TouchEnd );
-    }
+    XISetMask( mask_bits, XI_TouchBegin );
+    XISetMask( mask_bits, XI_TouchUpdate );
+    XISetMask( mask_bits, XI_TouchEnd );
 
     pXISelectEvents( display, window, &mask, 1 );
 }
@@ -293,16 +362,20 @@ void x11drv_xinput2_disable( Display *display, Window window )
 
     if (!xinput2_available) return;
 
+    if (window == DefaultRootWindow( display ))
+    {
+        struct x11drv_thread_data *data = x11drv_thread_data();
+        TRACE( "Decrementing root_window_users to %d\n", data->root_window_users - 1 );
+        if (--data->root_window_users) return;
+        XIClearMask( data->root_mask, XI_RawMotion );
+        pXISelectEvents( data->display, DefaultRootWindow( data->display ), &data->root_events, 1 );
+        return;
+    }
+
     mask.mask     = mask_bits;
     mask.mask_len = sizeof(mask_bits);
     mask.deviceid = XIAllMasterDevices;
     memset( mask_bits, 0, sizeof(mask_bits) );
-
-    if (window == DefaultRootWindow( display ))
-    {
-        if (--x11drv_thread_data()->root_window_users) return;
-        XISetMask( mask_bits, XI_DeviceChanged );
-    }
 
     pXISelectEvents( display, window, &mask, 1 );
 }
@@ -313,9 +386,7 @@ void x11drv_xinput2_disable( Display *display, Window window )
  */
 void x11drv_xinput2_init( struct x11drv_thread_data *data )
 {
-    unsigned char mask_bits[XIMaskLen(XI_LASTEVENT)];
     int major = 2, minor = 2;
-    XIEventMask mask;
     int count;
 
     if (!xinput2_available || pXIQueryVersion( data->display, &major, &minor ))
@@ -325,12 +396,12 @@ void x11drv_xinput2_init( struct x11drv_thread_data *data )
         return;
     }
 
-    mask.mask     = mask_bits;
-    mask.mask_len = sizeof(mask_bits);
-    mask.deviceid = XIAllMasterDevices;
-    memset( mask_bits, 0, sizeof(mask_bits) );
-    XISetMask( mask_bits, XI_DeviceChanged );
-    pXISelectEvents( data->display, DefaultRootWindow( data->display ), &mask, 1 );
+    data->root_events.deviceid = XIAllMasterDevices;
+    data->root_events.mask_len = sizeof(data->root_mask);
+    data->root_events.mask = data->root_mask;
+
+    XISetMask( data->root_mask, XI_DeviceChanged );
+    pXISelectEvents( data->display, DefaultRootWindow( data->display ), &data->root_events, 1 );
 
     if (!pXIGetClientPointer( data->display, None, &data->xinput2_pointer ))
         WARN( "Failed to get xinput2 master pointer device\n" );
@@ -345,6 +416,10 @@ void x11drv_xinput2_init( struct x11drv_thread_data *data )
 }
 
 #else /* HAVE_X11_EXTENSIONS_XINPUT2_H */
+
+void x11drv_init_mouse( Display *display )
+{
+}
 
 void x11drv_xinput2_enable( Display *display, Window window )
 {
@@ -391,6 +466,12 @@ static BOOL grab_clipping_window( const RECT *clip )
         WARN( "XInput2 not supported, refusing to clip to %s\n", wine_dbgstr_rect(clip) );
         NtUserClipCursor( NULL );
         return TRUE;
+    }
+
+    if (!data->clipping_cursor)
+    {
+        XISetMask( data->root_mask, XI_ButtonPress );
+        pXISelectEvents( data->display, DefaultRootWindow( data->display ), &data->root_events, 1 );
     }
 
     TRACE( "clipping to %s win %lx\n", wine_dbgstr_rect(clip), clip_window );
@@ -449,6 +530,11 @@ void ungrab_clipping_window(void)
     if (clipping_cursor) XUngrabPointer( data->display, CurrentTime );
     clipping_cursor = FALSE;
     data->clipping_cursor = FALSE;
+
+#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+    XIClearMask( data->root_mask, XI_ButtonPress );
+    pXISelectEvents( data->display, DefaultRootWindow( data->display ), &data->root_events, 1 );
+#endif
 }
 
 /***********************************************************************
@@ -1585,7 +1671,11 @@ static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
     struct x11drv_thread_data *data = x11drv_thread_data();
 
     if (event->deviceid != data->xinput2_pointer) return FALSE;
+    if (event->reason != XISlaveSwitch) return FALSE;
+
     update_relative_valuators( event->classes, event->num_classes );
+    update_device_mapping( event->display, event->sourceid );
+
     return TRUE;
 }
 
@@ -1616,13 +1706,17 @@ static POINT map_raw_event_coords( XIRawEvent *event, POINT *raw )
         if (!XIMaskIsSet( event->valuators.mask, i )) continue;
         if (i == x->number)
         {
-            raw->x = *raw_values;
+            thread_data->raw_x += *raw_values;
+            raw->x = round( thread_data->raw_x );
+            thread_data->raw_x -= raw->x;
             x_value = *values;
             x->value += x_value * x_scale;
         }
         if (i == y->number)
         {
-            raw->y = *raw_values;
+            thread_data->raw_y += *raw_values;
+            raw->y = round( thread_data->raw_y );
+            thread_data->raw_y -= raw->y;
             y_value = *values;
             y->value += y_value * y_scale;
         }
@@ -1669,6 +1763,44 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
 
     pt = map_raw_event_coords( event, raw.data );
     send_mouse_input( NULL, pt, 0, 0, time, &raw );
+    return TRUE;
+}
+
+/***********************************************************************
+ *           X11DRV_RawButtonEvent
+ */
+static BOOL X11DRV_RawButtonEvent( XGenericEventCookie *cookie )
+{
+    XIRawEvent *event = cookie->data;
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    UINT data, flags, time = EVENT_x11_time_to_win32_time( event->time );
+    struct raw_mouse raw = { .count = 1 };
+    int button = event->detail - 1;
+    POINT pt;
+
+    if (!device_mapping || device_mapping->deviceid != event->sourceid)
+        update_device_mapping( event->display, event->sourceid );
+    if (event->deviceid != thread_data->xinput2_pointer) return FALSE;
+
+    if (button >= 0 && device_mapping)  button = device_mapping->buttons[button] - 1;
+    if (button >= 0 && pointer_mapping) button = pointer_mapping->buttons[button] - 1;
+    if (button < 0 || button >= NB_BUTTONS) return FALSE;
+
+    if (event->evtype == XI_RawButtonRelease)
+    {
+        TRACE( "raw button %u (raw: %u) up\n", button, event->detail );
+        data = button_up_data[button];
+        flags = button_up_flags[button];
+    }
+    else
+    {
+        TRACE( "raw button %u (raw: %u) down\n", button, event->detail );
+        data = button_down_data[button];
+        flags = button_down_flags[button];
+    }
+
+    pt = map_raw_event_coords( event, raw.data );
+    send_mouse_input( NULL, pt, flags, data, time, &raw );
     return TRUE;
 }
 
@@ -1738,6 +1870,9 @@ void x11drv_xinput2_load(void)
     LOAD_FUNCPTR(XIQueryDevice);
     LOAD_FUNCPTR(XIQueryVersion);
     LOAD_FUNCPTR(XISelectEvents);
+    LOAD_FUNCPTR(XOpenDevice);
+    LOAD_FUNCPTR(XCloseDevice);
+    LOAD_FUNCPTR(XGetDeviceButtonMapping);
 #undef LOAD_FUNCPTR
 
     xinput2_available = XQueryExtension( gdi_display, "XInputExtension", &xinput2_opcode, &event, &error );
@@ -1773,7 +1908,10 @@ BOOL X11DRV_GenericEvent( HWND hwnd, XEvent *xev )
     case XI_RawMotion:
         ret = X11DRV_RawMotion( event );
         break;
-
+    case XI_RawButtonPress:
+    case XI_RawButtonRelease:
+        ret = X11DRV_RawButtonEvent( event );
+        break;
     case XI_TouchBegin:
     case XI_TouchUpdate:
     case XI_TouchEnd:

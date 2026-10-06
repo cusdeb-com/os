@@ -3627,6 +3627,20 @@ static void test_string_functions(void)
     rc.Y = 0;
     rc.Width = 0;
     rc.Height = 0;
+    status = GdipMeasureDriverString(graphics, teststring, 4, font, positions,
+        DriverStringOptionsCmapLookup|DriverStringOptionsRealizedAdvance|DriverStringOptionsVertical,
+        identity, &rc);
+    expect(Ok, status);
+
+    ok(rc.X < 0.0, "unexpected X %0.2f\n", rc.X);
+    expectf(0.0, rc.Y);
+    expectf(char_height, rc.Width);
+    ok(rc.Height < char_width, "got Height %0.2f, expecting less than %0.2f\n", rc.Height, char_width);
+
+    rc.X = 0;
+    rc.Y = 0;
+    rc.Width = 0;
+    rc.Height = 0;
     status = GdipMeasureDriverString(graphics, teststring2, 1, font, positions,
         DriverStringOptionsCmapLookup|DriverStringOptionsRealizedAdvance,
         identity, &rc);
@@ -3636,6 +3650,34 @@ static void test_string_functions(void)
     ok(rc.Y < 0.0, "unexpected Y %0.2f\n", rc.Y);
     ok(rc.Width > 0, "unexpected Width %0.2f\n", rc.Width);
     expectf(rc.Height, char_height);
+
+    rc.X = 0;
+    rc.Y = 0;
+    rc.Width = 0;
+    rc.Height = 0;
+    status = GdipMeasureDriverString(graphics, teststring2, 1, font, positions,
+        DriverStringOptionsCmapLookup|DriverStringOptionsRealizedAdvance|DriverStringOptionsVertical,
+        identity, &rc);
+    expect(Ok, status);
+
+    ok(rc.X < 0.0, "unexpected X %0.2f\n", rc.X);
+    expectf(rc.Y, 0.0);
+    expectf(rc.Width, char_height);
+    ok(rc.Height > 0, "unexpected Height %0.2f\n", rc.Height);
+
+    rc.X = -1;
+    rc.Y = -1;
+    rc.Width = -1;
+    rc.Height = -1;
+    status = GdipMeasureDriverString(graphics, teststring2, 0, font, positions,
+        DriverStringOptionsCmapLookup|DriverStringOptionsRealizedAdvance,
+        identity, &rc);
+    expect(Ok, status);
+
+    expectf(rc.X, 0.0);
+    expectf(rc.Y, 0.0);
+    expectf(rc.Width, 0.0);
+    expectf(rc.Height, 0.0);
 
     GdipDeleteMatrix(identity);
     GdipDeleteStringFormat(format);
@@ -4639,7 +4681,6 @@ static void test_measure_string(void)
 
     status = GdipCreateStringFormat(StringFormatFlagsNoWrap, LANG_NEUTRAL, &format);
     expect(Ok, status);
-    expect(Ok, status);
 
     status = GdipCreateRegion(&region);
     expect(Ok, status);
@@ -5082,6 +5123,487 @@ static void test_measure_string(void)
     expect(Ok, status);
     expectf_(width_M_M, bounds.Width, 0.1);
     expect(3, glyphs);
+    expect(1, lines);
+
+    status = GdipDeleteFont(font);
+    expect(Ok, status);
+
+    status = GdipDeleteGraphics(graphics);
+    expect(Ok, status);
+    DeleteDC(hdc);
+
+    GdipDeleteFontFamily(family);
+    GdipDeleteRegion(region);
+    GdipDeleteStringFormat(format);
+    GdipDeleteStringFormat(format_no_wrap);
+}
+
+static void test_measure_string_vertical(void)
+{
+    static const WCHAR string[] = L"A01";
+    static const WCHAR string2[] = L"M MM";
+    HDC hdc;
+    GpStringFormat *format, *format_no_wrap;
+    CharacterRange range;
+    GpRegion *region;
+    GpGraphics *graphics;
+    GpFontFamily *family;
+    GpFont *font;
+    GpStatus status;
+    RectF bounds, rect;
+    REAL width, height, height_1, height_2, height_MM, height_M_M;
+    REAL margin_x, margin_y, width_rgn, height_rgn;
+    int lines, glyphs;
+
+    status = GdipCreateStringFormat(StringFormatFlagsNoWrap|StringFormatFlagsDirectionVertical, LANG_NEUTRAL, &format);
+    expect(Ok, status);
+
+    status = GdipCreateRegion(&region);
+    expect(Ok, status);
+
+    status = GdipCreateFontFamilyFromName(L"Tahoma", NULL, &family);
+    expect(Ok, status);
+
+    hdc = CreateCompatibleDC(0);
+    status = GdipCreateFromHDC(hdc, &graphics);
+
+    status = GdipCreateFont(family, 2048, FontStyleRegular, UnitPixel, &font);
+    expect(Ok, status);
+
+    margin_x = 2048.0 / 8.0;
+    margin_y = 2048.0 / 6.0;
+
+    set_rect_empty(&rect);
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    width = bounds.Width;
+    height = bounds.Height;
+
+    set_rect_empty(&rect);
+    rect.Width = width / 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width / 2.0, bounds.Width);
+    expectf(height, bounds.Height);
+
+    range.First = 0;
+    range.Length = lstrlenW(string);
+    status = GdipSetStringFormatMeasurableCharacterRanges(format, 1, &range);
+    expect(Ok, status);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = 32000.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(261.0, bounds.X);
+    expectf_(5.0 + margin_y, bounds.Y, 1.0);
+    todo_wine
+    expectf_(width - margin_x, bounds.Width, 1.0);
+    expectf_(height - margin_y*2.0, bounds.Height, 1.0);
+
+    width_rgn = bounds.Width;
+    height_rgn = bounds.Height;
+
+    range.First = 0;
+    range.Length = 1;
+    status = GdipSetStringFormatMeasurableCharacterRanges(format, 1, &range);
+    expect(Ok, status);
+
+    set_rect_empty(&rect);
+    rect.Width = 32000.0;
+    rect.Height = 32000.0;
+    status = GdipMeasureCharacterRanges(graphics, string, 1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(256.0, bounds.X);
+    expectf_(margin_y, bounds.Y, 1.0);
+    expectf(width_rgn, bounds.Width);
+    ok(bounds.Height < height_rgn / 2.0, "height of 1 glyph is wrong\n");
+    height_1 = bounds.Height;
+
+    range.First = 0;
+    range.Length = lstrlenW(string);
+    status = GdipSetStringFormatMeasurableCharacterRanges(format, 1, &range);
+    expect(Ok, status);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(0.0, bounds.Width);
+    expectf(0.0, bounds.Height);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = height_rgn / 2.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(261.0, bounds.X);
+    todo_wine
+    expectf_(5.0 + margin_y, bounds.Y, 1.0);
+    todo_wine
+    expectf_(width - margin_x, bounds.Width, 1.0);
+    todo_wine
+    expectf_(height_1, bounds.Height, 1.0);
+
+    status = GdipSetStringFormatFlags(format, StringFormatFlagsNoWrap | StringFormatFlagsNoClip | StringFormatFlagsDirectionVertical);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(261.0, bounds.X);
+    expectf_(5.0 + margin_y, bounds.Y, 1.0);
+    expectf(width_rgn, bounds.Width);
+    expectf(height_rgn, bounds.Height);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = height_rgn / 2.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(261.0, bounds.X);
+    todo_wine
+    expectf_(5.0 + margin_y, bounds.Y, 1.0);
+    todo_wine
+    expectf(width_rgn, bounds.Width);
+    todo_wine
+    expectf_(height_1, bounds.Height, 1.0);
+
+    set_rect_empty(&rect);
+    rect.Width = width / 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    todo_wine
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    set_rect_empty(&rect);
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, 1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(1, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    ok(bounds.Height < height / 2.0, "height of 1 glyph is wrong\n");
+    height_1 = bounds.Height;
+
+    set_rect_empty(&rect);
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, 2, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(2, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    ok(bounds.Height < height, "height of 2 glyphs is wrong\n");
+    ok(bounds.Height > height_1, "height of 2 glyphs is wrong\n");
+    height_2 = bounds.Height;
+
+    set_rect_empty(&rect);
+    rect.Height = height / 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(1, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    expectf_(height_1, bounds.Height, 0.01);
+
+    set_rect_empty(&rect);
+    rect.Height = height - 5;
+    rect.Width = width;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(2, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    expectf_(height_2, bounds.Height, 0.01);
+
+    set_rect_empty(&rect);
+    rect.Width = width;
+    rect.Height = height_2 - 0.6;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(1, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    expectf_(height_1, bounds.Height, 0.01);
+
+    set_rect_empty(&rect);
+    rect.Width = width;
+    rect.Height = height_2 - 0.004;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(2, glyphs);
+    expect(1, lines);
+    expectf(0.0, bounds.X);
+    expectf(0.0, bounds.Y);
+    expectf(width, bounds.Width);
+    expectf_(height_2, bounds.Height, 0.01);
+
+    /* Default (Near) alignment */
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = width * 2.0;
+    rect.Height = height * 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(5.0, bounds.X);
+    expectf(5.0, bounds.Y);
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = 32000.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf(261.0, bounds.X);
+    expectf_(5.0 + margin_y, bounds.Y, 1.0);
+    todo_wine
+    expectf_(width - margin_x, bounds.Width, 1.0);
+    expectf_(height - margin_y*2.0, bounds.Height, 1.0);
+
+    width_rgn = bounds.Width;
+    height_rgn = bounds.Height;
+
+    /* Center alignment */
+    GdipSetStringFormatAlign(format, StringAlignmentCenter);
+    GdipSetStringFormatLineAlign(format, StringAlignmentCenter);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = width * 2.0;
+    rect.Height = height * 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(5.0 + width/2.0, bounds.X);
+    expectf_(5.0 + height/2.0, bounds.Y, 1);
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(5.0 - width/2.0, bounds.X);
+    expectf_(5.0 - floorf(height/2.0), bounds.Y, 1);
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = width_rgn * 2.0;
+    rect.Height = height_rgn * 2.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf_(133.0 + width_rgn/2.0, bounds.X, 1.0);
+    expectf_(5.0 + height_rgn/2.0, bounds.Y, 1.0);
+    expectf_(width_rgn, bounds.Width, 1.0);
+    expectf_(height_rgn, bounds.Height, 1.0);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    todo_wine
+    expectf_(133.0 - width_rgn/2.0, bounds.X, 1.0);
+    todo_wine
+    expectf_(5.0 - height_rgn/2.0, bounds.Y, 1.0);
+    expectf_(width_rgn, bounds.Width, 1.0);
+    expectf_(height_rgn, bounds.Height, 1.0);
+
+    /* Far alignment */
+    GdipSetStringFormatAlign(format, StringAlignmentFar);
+    GdipSetStringFormatLineAlign(format, StringAlignmentFar);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = width * 2.0;
+    rect.Height = height * 2.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(5.0 + width, bounds.X);
+    expectf_(5.0 + height, bounds.Y, 0.01);
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    set_rect_empty(&bounds);
+    status = GdipMeasureString(graphics, string, -1, font, &rect, format, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    expectf(5.0 - width, bounds.X);
+    expectf_(5.0 - height, bounds.Y, 0.01);
+    expectf(width, bounds.Width);
+    expectf_(height, bounds.Height, 0.01);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = width_rgn * 2.0;
+    rect.Height = height_rgn * 2.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    expectf_(5.0 + width_rgn, bounds.X, 1.0);
+    expectf_(-336.0 + height_rgn, bounds.Y, 2.0);
+    expectf_(width_rgn, bounds.Width, 1.0);
+    expectf_(height_rgn, bounds.Height, 1.0);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 0.0;
+    rect.Height = 0.0;
+    status = GdipMeasureCharacterRanges(graphics, string, -1, font, &rect, format, 1, &region);
+    expect(Ok, status);
+    set_rect_empty(&bounds);
+    status = GdipGetRegionBounds(region, graphics, &bounds);
+    expect(Ok, status);
+    expectf_(5.0 - width_rgn, bounds.X, 1.0);
+    todo_wine
+    expectf_(-336.0 - height_rgn, bounds.Y, 2.0);
+    expectf_(width_rgn, bounds.Width, 1.0);
+    expectf_(height_rgn, bounds.Height, 1.0);
+
+    /* Measure "MM" */
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = 32000.0;
+    status = GdipMeasureString(graphics, string2 + 2, 2, font, &rect, NULL, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(2, glyphs);
+    expect(1, lines);
+    height_MM = bounds.Height;
+
+    /* Measure "M M" */
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = 32000.0;
+    status = GdipMeasureString(graphics, string2, 3, font, &rect, NULL, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expect(3, glyphs);
+    expect(1, lines);
+    height_M_M = bounds.Height;
+
+    /* With wrap */
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = height_M_M;
+    status = GdipMeasureString(graphics, string2, -1, font, &rect, NULL, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expectf_(height_MM, bounds.Height, 0.1);
+    expect(4, glyphs);
+    expect(1, lines);
+
+    /* Without wrap */
+    status = GdipCreateStringFormat(StringFormatFlagsNoWrap, LANG_NEUTRAL, &format_no_wrap);
+    expect(Ok, status);
+
+    rect.X = 5.0;
+    rect.Y = 5.0;
+    rect.Width = 32000.0;
+    rect.Height = height_M_M;
+    status = GdipMeasureString(graphics, string2, -1, font, &rect, format_no_wrap, &bounds, &glyphs, &lines);
+    expect(Ok, status);
+    expectf_(height_M_M, bounds.Height, 0.1);
+    expect(4, glyphs);
     expect(1, lines);
 
     status = GdipDeleteFont(font);
@@ -7561,6 +8083,7 @@ START_TEST(graphics)
     test_clipping_2();
     test_measured_extra_space();
     test_measure_string();
+    test_measure_string_vertical();
     test_font_height_scaling();
     test_transform();
     test_set_page_transform();

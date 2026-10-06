@@ -182,11 +182,7 @@ static const UINT_PTR host_page_mask = 0xfff;
 #endif
 
 /* Note: these are Windows limits, you cannot change them. */
-#if defined(__i386__) || defined(__x86_64__)
-static void *address_space_start = (void *)0x110000; /* keep DOS area clear */
-#else
 static void *address_space_start = (void *)0x10000;
-#endif
 #ifdef _WIN64
 static void *address_space_limit = (void *)0x7fffffff0000;  /* top of the total available address space */
 static void *user_space_limit    = (void *)0x7fffffff0000;  /* top of the user address space */
@@ -208,6 +204,7 @@ struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
 static void *teb_block;
 static void **next_free_teb;
 static int teb_block_pos;
+static size_t teb_block_size;
 static struct list teb_list = LIST_INIT( teb_list );
 
 #define ROUND_ADDR(addr,mask) ((void *)((UINT_PTR)(addr) & ~(UINT_PTR)(mask)))
@@ -236,8 +233,6 @@ static int uffd_fd, pagemap_fd;
 
 static struct file_view *view_block_start, *view_block_end, *next_free_view;
 static const size_t view_block_size = 0x100000;
-static void *preload_reserve_start;
-static void *preload_reserve_end;
 static BOOL force_exec_prot;  /* whether to force PROT_EXEC on all PROT_READ mmaps */
 static BOOL enable_write_exceptions;  /* raise exception on writes to executable memory */
 
@@ -259,6 +254,13 @@ static inline BOOL is_beyond_limit( const void *addr, size_t size, const void *l
 static inline BOOL is_vprot_exec_write( BYTE vprot )
 {
     return (vprot & VPROT_EXEC) && (vprot & (VPROT_WRITE | VPROT_WRITECOPY));
+}
+
+/* address-space layout randomization */
+static inline BOOL use_aslr(void)
+{
+    return (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
+           (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
 }
 
 /* mmap() anonymous memory at a fixed address */
@@ -442,7 +444,7 @@ static void mmap_add_reserved_area( void *addr, SIZE_T size )
     assert( !((UINT_PTR)addr & host_page_mask) );
     assert( !(size & host_page_mask) );
 
-    if (!((intptr_t)addr + size)) size--;  /* avoid wrap-around */
+    if (!((intptr_t)addr + size)) size -= host_page_size;  /* avoid wrap-around */
     end = (char *)addr + size;
 
     LIST_FOR_EACH( ptr, &reserved_areas )
@@ -494,7 +496,7 @@ static void mmap_remove_reserved_area( void *addr, SIZE_T size )
     assert( !((UINT_PTR)addr & host_page_mask) );
     assert( !(size & host_page_mask) );
 
-    if (!((intptr_t)addr + size)) size--;  /* avoid wrap-around */
+    if (!((intptr_t)addr + size)) size -= host_page_size;  /* avoid wrap-around */
 
     ptr = list_head( &reserved_areas );
     /* find the first area covering address */
@@ -554,9 +556,10 @@ static int mmap_is_in_reserved_area( void *addr, SIZE_T size )
 
     LIST_FOR_EACH_ENTRY( area, &reserved_areas, struct reserved_area, entry )
     {
-        if (area->base > addr) break;
+        if ((char *)area->base > (char *)addr + size) break;
         if ((char *)area->base + area->size <= (char *)addr) continue;
         /* area must contain block completely */
+        if (area->base > addr) return -1;
         if ((char *)area->base + area->size < (char *)addr + size) return -1;
         return 1;
     }
@@ -746,13 +749,10 @@ static void mmap_init( const struct preload_info *preload_info )
         reserve_area( user_space_limit, 0 );
 
 #else
-
+    reserve_area( (void *)0x7ffff0000000, (void *)0x7ffffe000000 ); /* top-down area */
     if (preload_info) return;
-    /* if we don't have a preloader, try to reserve the space now */
     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
-    reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
-
 #endif
 }
 
@@ -1586,8 +1586,8 @@ static void *map_free_area( void *base, void *end, size_t size, int top_down, in
         while (first)
         {
             struct file_view *view = WINE_RB_ENTRY_VALUE( first, struct file_view, entry );
-            if ((start = try_map_free_area( (char *)view->base + view->size, (char *)start + size, step,
-                                            start, size, unix_prot ))) break;
+            if ((start = try_map_free_area( max( (char *)base, (char *)view->base + view->size ),
+                                            (char *)start + size, step, start, size, unix_prot ))) break;
             start = ROUND_ADDR( (char *)view->base - size, align_mask );
             /* stop if remaining space is not large enough */
             if (!start || start >= end || start < base) return NULL;
@@ -1602,7 +1602,7 @@ static void *map_free_area( void *base, void *end, size_t size, int top_down, in
         while (first)
         {
             struct file_view *view = WINE_RB_ENTRY_VALUE( first, struct file_view, entry );
-            if ((start = try_map_free_area( start, view->base, step,
+            if ((start = try_map_free_area( start, min( end, view->base ), step,
                                             start, size, unix_prot ))) break;
             start = ROUND_ADDR( (char *)view->base + view->size + align_mask, align_mask );
             /* stop if remaining space is not large enough */
@@ -1698,6 +1698,37 @@ static void remove_reserved_area( void *addr, size_t size )
         addr = (char *)view->base + view_size;
     }
     munmap( addr, size );
+}
+
+
+/***********************************************************************
+ *           free_reserved_memory
+ *
+ * Free reserved areas within a given range.
+ */
+static void free_reserved_memory( char *base, char *limit )
+{
+    struct reserved_area *area;
+
+    for (;;)
+    {
+        int removed = 0;
+
+        LIST_FOR_EACH_ENTRY( area, &reserved_areas, struct reserved_area, entry )
+        {
+            char *area_base = area->base;
+            char *area_end = area_base + area->size;
+
+            if (area_end <= base) continue;
+            if (area_base >= limit) return;
+            if (area_base < base) area_base = base;
+            if (area_end > limit) area_end = limit;
+            remove_reserved_area( area_base, area_end - area_base );
+            removed = 1;
+            break;
+        }
+        if (!removed) return;
+    }
 }
 
 
@@ -2097,44 +2128,6 @@ static inline void *unmap_extra_space( void *ptr, size_t total_size, size_t want
 
 
 /***********************************************************************
- *           find_reserved_free_area_outside_preloader
- *
- * Find a free area inside a reserved area, skipping the preloader reserved range.
- * virtual_mutex must be held by caller.
- */
-static void *find_reserved_free_area_outside_preloader( void *start, void *end, size_t size,
-                                                        int top_down, size_t align_mask )
-{
-    void *ret;
-
-    if (preload_reserve_end >= end)
-    {
-        if (preload_reserve_start <= start) return NULL;  /* no space in that area */
-        if (preload_reserve_start < end) end = preload_reserve_start;
-    }
-    else if (preload_reserve_start <= start)
-    {
-        if (preload_reserve_end > start) start = preload_reserve_end;
-    }
-    else /* range is split in two by the preloader reservation, try both parts */
-    {
-        if (top_down)
-        {
-            ret = find_reserved_free_area( preload_reserve_end, end, size, top_down, align_mask );
-            if (ret) return ret;
-            end = preload_reserve_start;
-        }
-        else
-        {
-            ret = find_reserved_free_area( start, preload_reserve_start, size, top_down, align_mask );
-            if (ret) return ret;
-            start = preload_reserve_end;
-        }
-    }
-    return find_reserved_free_area( start, end, size, top_down, align_mask );
-}
-
-/***********************************************************************
  *           map_reserved_area
  *
  * Try to map some space inside a reserved area.
@@ -2157,7 +2150,7 @@ static void *map_reserved_area( void *limit_low, void *limit_high, size_t size, 
             if (end <= limit_low) return NULL;
             if (start < limit_low) start = (void *)ROUND_SIZE( 0, limit_low, host_page_mask );
             if (end > limit_high) end = ROUND_ADDR( limit_high, host_page_mask );
-            ptr = find_reserved_free_area_outside_preloader( start, end, size, top_down, align_mask );
+            ptr = find_reserved_free_area( start, end, size, top_down, align_mask );
             if (ptr) break;
         }
     }
@@ -2172,7 +2165,7 @@ static void *map_reserved_area( void *limit_low, void *limit_high, size_t size, 
             if (end <= limit_low) continue;
             if (start < limit_low) start = (void *)ROUND_SIZE( 0, limit_low, host_page_mask );
             if (end > limit_high) end = ROUND_ADDR( limit_high, host_page_mask );
-            ptr = find_reserved_free_area_outside_preloader( start, end, size, top_down, align_mask );
+            ptr = find_reserved_free_area( start, end, size, top_down, align_mask );
             if (ptr) break;
         }
     }
@@ -2284,7 +2277,7 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
 
     if (base)
     {
-        if (is_beyond_limit( base, size, address_space_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
+        if (is_beyond_limit( base, size, user_space_limit )) return STATUS_INVALID_PARAMETER;
         if (limit_low && base < (void *)limit_low) return STATUS_CONFLICTING_ADDRESSES;
         if (limit_high && is_beyond_limit( base, size, (void *)limit_high )) return STATUS_CONFLICTING_ADDRESSES;
         if (is_beyond_limit( base, size, host_addr_space_limit )) return STATUS_CONFLICTING_ADDRESSES;
@@ -2798,6 +2791,18 @@ static void *get_host_addr_space_limit(void)
 #ifdef __aarch64__
 
 /***********************************************************************
+ *           is_emulated_code
+ */
+BOOL is_emulated_code( ULONG_PTR ptr )
+{
+    const UINT64 *map = arm64ec_view->base;
+    ULONG_PTR page = ptr / page_size;
+    if (!is_arm64ec() || ptr >= (ULONG_PTR)user_space_limit) return FALSE;
+    return !((map[page / 64] >> (page & 63)) & 1);
+}
+
+
+/***********************************************************************
  *           alloc_arm64ec_map
  */
 static void alloc_arm64ec_map(void)
@@ -2812,7 +2817,7 @@ static void alloc_arm64ec_map(void)
         ERR( "failed to allocate ARM64EC map: %08x\n", status );
         exit(1);
     }
-    peb->EcCodeBitMap = arm64ec_view->base;
+    if (peb) peb->EcCodeBitMap = arm64ec_view->base;
 }
 
 
@@ -3619,10 +3624,23 @@ done:
 
 
 /* allocate some space for the virtual heap, if possible from a reserved area */
+#ifndef _WIN64
 static void *alloc_virtual_heap( SIZE_T size )
 {
     struct reserved_area *area;
-    void *ret;
+    const char *preload = getenv( "WINEPRELOADRESERVE" );
+    void *ret, *preload_reserve_start = NULL, *preload_reserve_end = NULL;
+
+    if (preload)
+    {
+        unsigned long start, end;
+        if (sscanf( preload, "%lx-%lx", &start, &end ) == 2)
+        {
+            preload_reserve_start = ROUND_ADDR( start, host_page_mask );
+            preload_reserve_end = (void *)ROUND_SIZE( 0, end, host_page_mask );
+        }
+        unsetenv( "WINEPRELOADRESERVE" );
+    }
 
     size = ROUND_SIZE( 0, size, host_page_mask );
 
@@ -3633,7 +3651,6 @@ static void *alloc_virtual_heap( SIZE_T size )
 
         if (is_beyond_limit( base, area->size, address_space_limit ))
             address_space_limit = host_addr_space_limit = end;
-        if (is_win64 && base < (void *)0x80000000) break;
         if (preload_reserve_end >= end)
         {
             if (preload_reserve_start <= base) continue;  /* no space in that area */
@@ -3653,6 +3670,7 @@ static void *alloc_virtual_heap( SIZE_T size )
     }
     return anon_mmap_alloc( size, PROT_READ | PROT_WRITE );
 }
+#endif
 
 /***********************************************************************
  *           virtual_init
@@ -3660,11 +3678,10 @@ static void *alloc_virtual_heap( SIZE_T size )
 void virtual_init(void)
 {
     const struct preload_info **preload_info = dlsym( RTLD_DEFAULT, "wine_main_preload_info" );
-    const char *preload;
-    size_t size;
     int i;
     pthread_mutexattr_t attr;
 
+    pthread_key_create( &thread_data_key, NULL );
     pthread_mutexattr_init( &attr );
     pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
     pthread_mutex_init( &virtual_mutex, &attr );
@@ -3683,61 +3700,34 @@ void virtual_init(void)
     host_addr_space_limit = address_space_limit;
 #endif
 
-    kernel_writewatch_init();
-
     if (preload_info && *preload_info)
         for (i = 0; (*preload_info)[i].size; i++)
             mmap_add_reserved_area( (*preload_info)[i].addr, (*preload_info)[i].size );
 
     mmap_init( preload_info ? *preload_info : NULL );
 
-    if ((preload = getenv("WINEPRELOADRESERVE")))
-    {
-        unsigned long start, end;
-        if (sscanf( preload, "%lx-%lx", &start, &end ) == 2)
-        {
-            preload_reserve_start = ROUND_ADDR( start, host_page_mask );
-            preload_reserve_end = (void *)ROUND_SIZE( 0, end, host_page_mask );
-            /* some apps start inside the DOS area */
-            if (preload_reserve_start)
-                address_space_start = min( address_space_start, preload_reserve_start );
-        }
-        unsetenv( "WINEPRELOADRESERVE" );
-    }
-
-    /* try to find space in a reserved area for the views and pages protection table */
 #ifdef _WIN64
     pages_vprot_size = ((size_t)host_addr_space_limit >> page_shift >> pages_vprot_shift) + 1;
-    size = 2 * view_block_size + pages_vprot_size * sizeof(*pages_vprot);
+    view_block_start = anon_mmap_alloc( view_block_size, PROT_READ | PROT_WRITE );
+    view_block_end = view_block_start + view_block_size / sizeof(*view_block_start);
+    free_ranges = anon_mmap_alloc( view_block_size, PROT_READ | PROT_WRITE );
+    pages_vprot = anon_mmap_alloc( pages_vprot_size * sizeof(*pages_vprot), PROT_READ | PROT_WRITE );
 #else
-    size = 2 * view_block_size + (1U << (32 - page_shift));
-#endif
-    view_block_start = alloc_virtual_heap( size );
-    assert( view_block_start != MAP_FAILED );
+    /* try to find space in a reserved area for the views and pages protection table */
+    view_block_start = alloc_virtual_heap( 2 * view_block_size + (1U << (32 - page_shift)) );
     view_block_end = view_block_start + view_block_size / sizeof(*view_block_start);
     free_ranges = (void *)((char *)view_block_start + view_block_size);
     pages_vprot = (void *)((char *)view_block_start + 2 * view_block_size);
+#endif
+    assert( view_block_start != MAP_FAILED );
+    assert( free_ranges != MAP_FAILED );
+    assert( pages_vprot != MAP_FAILED );
     wine_rb_init( &views_tree, compare_view );
+    kernel_writewatch_init();
 
     free_ranges[0].base = (void *)0;
     free_ranges[0].end = (void *)~0;
     free_ranges_end = free_ranges + 1;
-
-    /* make the DOS area accessible (except the low 64K) to hide bugs in broken apps like Excel 2003 */
-    size = (char *)address_space_start - (char *)0x10000;
-    if (size && mmap_is_in_reserved_area( (void*)0x10000, size ) == 1)
-        anon_mmap_fixed( (void *)0x10000, size, PROT_READ | PROT_WRITE, 0 );
-}
-
-
-/***********************************************************************
- *           get_system_affinity_mask
- */
-ULONG_PTR get_system_affinity_mask(void)
-{
-    ULONG num_cpus = peb->NumberOfProcessors;
-    if (num_cpus >= sizeof(ULONG_PTR) * 8) return ~(ULONG_PTR)0;
-    return ((ULONG_PTR)1 << num_cpus) - 1;
 }
 
 
@@ -3789,7 +3779,7 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
     info->AllocationGranularity   = granularity_mask + 1;
     info->LowestUserAddress       = (void *)0x10000;
     info->ActiveProcessorsAffinityMask = get_system_affinity_mask();
-    info->NumberOfProcessors      = peb->NumberOfProcessors;
+    info->NumberOfProcessors      = cpu_count;
     if (wow64) info->HighestUserAddress = (char *)get_wow_user_space_limit() - 1;
     else info->HighestUserAddress = (char *)user_space_limit - 1;
 }
@@ -3841,31 +3831,32 @@ NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size
 
 
 /***********************************************************************
- *           virtual_map_module
+ *           virtual_map_main_module
  */
-NTSTATUS virtual_map_module( HANDLE mapping, void **module, SIZE_T *size, SECTION_IMAGE_INFORMATION *info,
-                             ULONG_PTR limit_low, ULONG_PTR limit_high, USHORT machine )
+NTSTATUS virtual_map_main_module( HANDLE mapping, USHORT machine )
 {
     unsigned int status;
     mem_size_t full_size;
     unsigned int sec_flags;
     struct pe_mapping_info *pe_mapping;
+    SIZE_T size = 0;
+    ULONG_PTR limit_high = 0;
 
     if ((status = get_mapping_info( mapping, SECTION_MAP_READ, &sec_flags, &full_size, &pe_mapping )))
         return status;
 
     if (!pe_mapping) return STATUS_INVALID_PARAMETER;
 
-    *module = NULL;
-    *size = 0;
+    if (!is_machine_64bit( pe_mapping->image.machine )) limit_high = (limit_2g - 1) & ~granularity_mask;
+    main_module = NULL;
 
     /* check if we can replace that mapping with the builtin */
-    status = load_builtin( pe_mapping, machine, info, module, size, limit_low, limit_high, 0 );
+    status = load_builtin( pe_mapping, machine, &main_image_info, &main_module, &size, 0, limit_high, 0 );
     if (status == STATUS_IMAGE_ALREADY_LOADED)
     {
-        status = virtual_map_image( mapping, module, size, limit_low, limit_high, 0,
+        status = virtual_map_image( mapping, &main_module, &size, 0, limit_high, 0,
                                     pe_mapping, machine, FALSE, 0 );
-        virtual_fill_image_information( &pe_mapping->image, info );
+        virtual_fill_image_information( &pe_mapping->image, &main_image_info );
     }
     free_pe_mapping_info( pe_mapping );
     return status;
@@ -3995,97 +3986,193 @@ NTSTATUS virtual_relocate_module( void *module )
 
 
 /* set some initial values in a new TEB */
-static TEB *init_teb( void *ptr, BOOL is_wow )
+static void init_teb( struct thread_data *data, void *ptr )
 {
-    TEB *teb;
-    TEB64 *teb64 = ptr;
-    TEB32 *teb32 = (TEB32 *)((char *)ptr + teb_offset);
+    TEB *teb = ptr;
 
 #ifdef _WIN64
-    teb = (TEB *)teb64;
-    teb32->Peb = PtrToUlong( (char *)peb + page_size );
-    teb32->Tib.Self = PtrToUlong( teb32 );
-    teb32->Tib.ExceptionList = ~0u;
-    teb32->Tib.FiberData = 0x1e00;
-    teb32->ActivationContextStackPointer = PtrToUlong( &teb32->ActivationContextStack );
-    teb32->ActivationContextStack.FrameListCache.Flink =
-        teb32->ActivationContextStack.FrameListCache.Blink =
-            PtrToUlong( &teb32->ActivationContextStack.FrameListCache );
-    teb32->StaticUnicodeString.Buffer = PtrToUlong( teb32->StaticUnicodeBuffer );
-    teb32->StaticUnicodeString.MaximumLength = sizeof( teb32->StaticUnicodeBuffer );
-    teb32->GdiBatchCount = PtrToUlong( teb64 );
-    teb32->WowTebOffset  = -teb_offset;
-    if (is_wow) teb64->WowTebOffset = teb_offset;
-#else
-    teb = (TEB *)teb32;
-    teb32->Tib.ExceptionList = ~0u;
-    teb32->Tib.FiberData = 0x1e00;
-    teb64->Peb = PtrToUlong( (char *)peb - page_size );
-    teb64->Tib.Self = PtrToUlong( teb64 );
-    teb64->Tib.ExceptionList = PtrToUlong( teb32 );
-    teb64->Tib.FiberData = 0x1e00;
-    teb64->ActivationContextStackPointer = PtrToUlong( &teb64->ActivationContextStack );
-    teb64->ActivationContextStack.FrameListCache.Flink =
-        teb64->ActivationContextStack.FrameListCache.Blink =
-            PtrToUlong( &teb64->ActivationContextStack.FrameListCache );
-    teb64->StaticUnicodeString.Buffer = PtrToUlong( teb64->StaticUnicodeBuffer );
-    teb64->StaticUnicodeString.MaximumLength = sizeof( teb64->StaticUnicodeBuffer );
-    teb64->WowTebOffset = teb_offset;
-    if (is_wow)
+    if (wow_peb)
     {
-        teb32->GdiBatchCount = PtrToUlong( teb64 );
+        TEB32 *teb32 = (TEB32 *)((char *)ptr + teb_offset);
+
+        teb32->Peb = PtrToUlong( wow_peb );
+        teb32->Tib.Self = PtrToUlong( teb32 );
+        teb32->Tib.ExceptionList = ~0u;
+        teb32->Tib.FiberData = 0x1e00;
+        teb32->ClientId.UniqueProcess = pid;
+        teb32->ClientId.UniqueThread  = data->tid;
+        teb32->ActivationContextStackPointer = PtrToUlong( &teb32->ActivationContextStack );
+        teb32->ActivationContextStack.FrameListCache.Flink =
+            teb32->ActivationContextStack.FrameListCache.Blink =
+                PtrToUlong( &teb32->ActivationContextStack.FrameListCache );
+        teb32->StaticUnicodeString.Buffer = PtrToUlong( teb32->StaticUnicodeBuffer );
+        teb32->StaticUnicodeString.MaximumLength = sizeof( teb32->StaticUnicodeBuffer );
+        teb32->RealClientId  = teb32->ClientId;
+        teb32->GdiBatchCount = PtrToUlong( teb );
         teb32->WowTebOffset  = -teb_offset;
+        teb->Tib.ExceptionList = (void *)teb32;
+        teb->WowTebOffset = teb_offset;
     }
+#else
+    if (wow_peb)
+    {
+        TEB64 *teb64 = ptr;
+
+        teb = (TEB *)((char *)ptr + teb_offset);
+        teb64->Peb = PtrToUlong( wow_peb );
+        teb64->Tib.Self = PtrToUlong( teb64 );
+        teb64->Tib.ExceptionList = PtrToUlong( teb );
+        teb64->Tib.FiberData = 0x1e00;
+        teb64->ClientId.UniqueProcess = pid;
+        teb64->ClientId.UniqueThread  = data->tid;
+        teb64->ActivationContextStackPointer = PtrToUlong( &teb64->ActivationContextStack );
+        teb64->ActivationContextStack.FrameListCache.Flink =
+            teb64->ActivationContextStack.FrameListCache.Blink =
+                PtrToUlong( &teb64->ActivationContextStack.FrameListCache );
+        teb64->StaticUnicodeString.Buffer = PtrToUlong( teb64->StaticUnicodeBuffer );
+        teb64->StaticUnicodeString.MaximumLength = sizeof( teb64->StaticUnicodeBuffer );
+        teb64->TlsSlots[WOW64_TLS_FILESYSREDIR] = data->filesys_redir;
+        teb64->RealClientId = teb64->ClientId;
+        teb64->WowTebOffset = teb_offset;
+        teb->GdiBatchCount = PtrToUlong( teb64 );
+        teb->WowTebOffset  = -teb_offset;
+    }
+    teb->Tib.ExceptionList = (void *)~0u;
 #endif
     teb->Peb = peb;
     teb->Tib.Self = &teb->Tib;
     teb->Tib.StackBase = (void *)~0ul;
     teb->Tib.FiberData = (void *)0x1e00;
+    teb->ClientId = make_client_id( pid, data->tid );
     teb->ActivationContextStackPointer = &teb->ActivationContextStack;
     InitializeListHead( &teb->ActivationContextStack.FrameListCache );
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
-    return teb;
+    teb->RealClientId = teb->ClientId;
+    data->teb = teb;
+    list_add_head( &teb_list, &data->entry );
+}
+
+static struct thread_data *init_thread_data( void *ptr )
+{
+    struct thread_data *data = ptr;
+    data->request_fd = -1;
+    data->reply_fd   = -1;
+    data->wait_fd[0] = -1;
+    data->wait_fd[1] = -1;
+    data->alert_fd   = -1;
+#ifdef VALGRIND_STACK_REGISTER
+    VALGRIND_STACK_REGISTER( (char *)data + signal_stack_mask + 1, (char *)data + kernel_stack_size );
+#endif
+    return data;
+}
+
+/* enable use of a large address space when allowed by the application */
+static void set_large_address_space(void)
+{
+    if (main_image_info.Machine == IMAGE_FILE_MACHINE_I386)
+    {
+        /* reserve the DOS area, and make it accessible (except the low 64K)
+         * to hide bugs in broken apps like Excel 2003 */
+        char *end, *start = address_space_start;  /* low 64K */
+        address_space_start = (void *)0x110000;
+        end = min( address_space_start, main_module );
+        if (end > start && mmap_is_in_reserved_area( start, end - start ) == 1)
+            anon_mmap_fixed( start, end - start, PROT_READ | PROT_WRITE, 0 );
+    }
+
+    if (is_win64)
+    {
+        if (!is_wow64())
+        {
+#ifndef __APPLE__  /* don't free the zerofill section on macOS */
+            if (use_aslr()) free_reserved_memory( 0, (char *)0x7ffe0000 );
+#endif
+        }
+        else if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+        {
+            user_space_wow_limit = limit_4g - 1;
+            /* reserve space for top-down allocations; some apps break if the entire high 2G is available */
+            reserve_area( (void *)0xfff00000, (void *)0xffff0000 );
+        }
+        else user_space_wow_limit = limit_2g - 1;
+    }
+    else
+    {
+        if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) return;
+        free_reserved_memory( (char *)0x80000000, address_space_limit );
+    }
+    user_space_limit = working_set_limit = address_space_limit;
 }
 
 
 /***********************************************************************
- *           virtual_alloc_first_teb
+ *           virtual_alloc_first_thread_data
  */
-TEB *virtual_alloc_first_teb(void)
+struct thread_data *virtual_alloc_first_thread_data(void)
 {
-    void *ptr;
-    TEB *teb;
     unsigned int status;
-    SIZE_T data_size = page_size;
-    SIZE_T block_size = 4 * page_size;
-    SIZE_T total = 32 * block_size;
     struct thread_data *thread_data;
+    struct file_view *view;
 
     /* reserve space for shared user data */
-    status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&user_shared_data, 0, &data_size,
-                                      MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+    status = map_view( &view, user_shared_data, page_size, 0, VPROT_READ | VPROT_COMMITTED, 0, 0, 0 );
     if (status)
     {
         ERR( "wine: failed to map the shared user data: %08x\n", status );
         exit(1);
     }
 
-    NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, is_win64 ? limit_2g - 1 : 0, &total,
-                             MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
-    teb_block_pos = 30;
-    ptr = (char *)teb_block + 30 * block_size;
-    data_size = 2 * block_size;
-    NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
-    peb = (PEB *)((char *)teb_block + 31 * block_size + (is_win64 ? 0 : page_size));
-    teb = init_teb( ptr, FALSE );
-
-    thread_data = virtual_alloc_thread_data();
-    thread_data->teb = teb;
-    list_add_head( &teb_list, &thread_data->entry );
-    pthread_key_create( &thread_data_key, NULL );
+    status = map_view( &view, NULL, signal_stack_mask + 1 + kernel_stack_size, MEM_TOP_DOWN,
+                       VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, 4 * limit_4g, 0, 0 );
+    assert( !status );
+    thread_data = init_thread_data( view->base );
     pthread_setspecific( thread_data_key, thread_data );
-    return teb;
+    return thread_data;
+}
+
+
+/***********************************************************************
+ *           virtual_alloc_first_teb
+ */
+void virtual_alloc_first_teb(void)
+{
+    void *ptr;
+    unsigned int status;
+    struct file_view *view;
+    struct thread_data *data = get_thread_data();
+    ULONG_PTR limit_low = 0, limit_high = 0;
+
+    set_large_address_space();
+
+    teb_block_size = ROUND_SIZE( 0, sizeof(TEB), page_mask );
+    if (is_wow64()) teb_block_size += ROUND_SIZE( 0, sizeof(WOW_TEB), page_mask );
+    teb_block_size += page_size;  /* for debug info */
+
+    if (user_space_wow_limit) limit_high = user_space_wow_limit & ~granularity_mask;
+    else if (use_aslr()) limit_low = limit_4g;
+
+    status = map_view( &view, NULL, 16 * teb_block_size, 0,
+                       VPROT_READ | VPROT_WRITE, limit_low, limit_high, 0 );
+    assert( !status );
+    teb_block = view->base;
+    teb_block_pos = 14;
+    ptr = (char *)teb_block + 14 * teb_block_size;
+    peb = (PEB *)((char *)ptr + teb_block_size);
+    if (is_wow64())
+    {
+#ifdef _WIN64
+        wow_peb = (PEB32 *)((char *)peb + page_size);
+#else
+        wow_peb = (PEB64 *)peb;
+        peb = (PEB *)((char *)peb + page_size);
+#endif
+    }
+    set_protection( view, ptr, 2 * teb_block_size, PAGE_READWRITE );
+
+    if (arm64ec_view) peb->EcCodeBitMap = arm64ec_view->base;
+    init_teb( data, ptr );
+    VIRTUAL_DEBUG_DUMP_VIEW( view );
 }
 
 
@@ -4095,38 +4182,42 @@ TEB *virtual_alloc_first_teb(void)
 NTSTATUS virtual_alloc_teb( struct thread_data *data )
 {
     sigset_t sigset;
-    void *ptr = NULL;
+    void *ptr;
+    SIZE_T size;
     NTSTATUS status = STATUS_SUCCESS;
-    SIZE_T block_size = 4 * page_size;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     if (next_free_teb)
     {
         ptr = next_free_teb;
         next_free_teb = *(void **)ptr;
-        memset( ptr, 0, block_size );
+        memset( ptr, 0, teb_block_size );
     }
     else
     {
         if (!teb_block_pos)
         {
-            SIZE_T total = 32 * block_size;
+            struct file_view *view;
+            ULONG_PTR limit_low = 0, limit_high = 0;
 
-            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, user_space_wow_limit,
-                                                   &total, MEM_RESERVE, PAGE_READWRITE )))
+            if (user_space_wow_limit) limit_high = user_space_wow_limit & ~granularity_mask;
+            else if (use_aslr()) limit_low = limit_4g;
+
+            if ((status = map_view( &view, NULL, 32 * teb_block_size, 0,
+                                    VPROT_READ | VPROT_WRITE, limit_low, limit_high, 0 )))
             {
                 server_leave_uninterrupted_section( &virtual_mutex, &sigset );
                 return status;
             }
-            teb_block = ptr;
+            teb_block = view->base;
             teb_block_pos = 32;
         }
-        ptr = ((char *)teb_block + --teb_block_pos * block_size);
-        NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size,
+        ptr = ((char *)teb_block + --teb_block_pos * teb_block_size);
+        size = teb_block_size;
+        NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &size,
                                  MEM_COMMIT, PAGE_READWRITE );
     }
-    data->teb = init_teb( ptr, is_wow64() );
-    list_add_head( &teb_list, &data->entry );
+    init_teb( data, ptr );
 
     if ((status = signal_alloc_thread( data->teb )))
     {
@@ -4153,15 +4244,7 @@ struct thread_data *virtual_alloc_thread_data(void)
     status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, limit_4g, 0, 0 );
     if (!status)
     {
-        data = view->base;
-        data->request_fd = -1;
-        data->reply_fd   = -1;
-        data->wait_fd[0] = -1;
-        data->wait_fd[1] = -1;
-        data->alert_fd   = -1;
-#ifdef VALGRIND_STACK_REGISTER
-        VALGRIND_STACK_REGISTER( (char *)data + signal_stack_mask + 1, (char *)data + view->size );
-#endif
+        data = init_thread_data( view->base );
         VIRTUAL_DEBUG_DUMP_VIEW( view );
     }
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -4204,7 +4287,7 @@ void virtual_free_thread_data( struct thread_data *data )
     signal_free_thread( teb );
     list_remove( &data->entry );
     ptr = teb;
-    if (!is_win64) ptr = (char *)ptr - teb_offset;
+    if (is_old_wow64()) ptr = (char *)ptr - teb_offset;
     *(void **)ptr = next_free_teb;
     next_free_teb = ptr;
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -4518,7 +4601,7 @@ void virtual_init_user_shared_data(void)
     data->SystemCall            = 1;
     data->NumberOfPhysicalPages = info.MmNumberOfPhysicalPages;
     data->NXSupportPolicy       = NX_SUPPORT_POLICY_OPTIN;
-    data->ActiveProcessorCount  = peb->NumberOfProcessors;
+    data->ActiveProcessorCount  = cpu_count;
     data->ActiveGroupCount      = 1;
 
     switch (native_machine)
@@ -5039,32 +5122,6 @@ void virtual_enable_write_exceptions( BOOL enable )
 }
 
 
-/* free reserved areas within a given range */
-static void free_reserved_memory( char *base, char *limit )
-{
-    struct reserved_area *area;
-
-    for (;;)
-    {
-        int removed = 0;
-
-        LIST_FOR_EACH_ENTRY( area, &reserved_areas, struct reserved_area, entry )
-        {
-            char *area_base = area->base;
-            char *area_end = area_base + area->size;
-
-            if (area_end <= base) continue;
-            if (area_base >= limit) return;
-            if (area_base < base) area_base = base;
-            if (area_end > limit) area_end = limit;
-            remove_reserved_area( area_base, area_end - area_base );
-            removed = 1;
-            break;
-        }
-        if (!removed) return;
-    }
-}
-
 #ifndef _WIN64
 
 /***********************************************************************
@@ -5081,35 +5138,6 @@ static void virtual_release_address_space(void)
 }
 
 #endif  /* _WIN64 */
-
-
-/***********************************************************************
- *           virtual_set_large_address_space
- *
- * Enable use of a large address space when allowed by the application.
- */
-void virtual_set_large_address_space(void)
-{
-    if (is_win64)
-    {
-        if (!is_wow64())
-        {
-            address_space_start = (void *)0x10000;
-#ifndef __APPLE__  /* don't free the zerofill section on macOS */
-            if ((main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
-                (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
-                free_reserved_memory( 0, (char *)0x7ffe0000 );
-#endif
-        }
-        else user_space_wow_limit = ((main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) ? limit_4g : limit_2g) - 1;
-    }
-    else
-    {
-        if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) return;
-        free_reserved_memory( (char *)0x80000000, address_space_limit );
-    }
-    user_space_limit = working_set_limit = address_space_limit;
-}
 
 
 /***********************************************************************
@@ -5165,7 +5193,19 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
         WARN("called with wrong alloc type flags (%08x) !\n", type);
         return STATUS_INVALID_PARAMETER;
     }
-
+    switch (type & (MEM_PHYSICAL | MEM_LARGE_PAGES))
+    {
+    case MEM_PHYSICAL:
+        if (type & (MEM_COMMIT | MEM_RESET)) return STATUS_INVALID_PARAMETER;
+        break;
+    case MEM_LARGE_PAGES:
+        if (size & (user_shared_data->LargePageMinimum - 1)) return STATUS_INVALID_PARAMETER;
+        if (!(type & MEM_COMMIT)) return STATUS_INVALID_PARAMETER;
+        return STATUS_PRIVILEGE_NOT_HELD;
+    case MEM_PHYSICAL | MEM_LARGE_PAGES:
+        if (size & granularity_mask) return STATUS_INVALID_PARAMETER;
+        break;
+    }
     if (type & MEM_RESERVE_PLACEHOLDER && (protect != PAGE_NOACCESS)) return STATUS_INVALID_PARAMETER;
     if (!arm64ec_view && (attributes & MEM_EXTENDED_PARAMETER_EC_CODE)) return STATUS_INVALID_PARAMETER;
 
@@ -5246,7 +5286,8 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR zero_bits,
                                          SIZE_T *size_ptr, ULONG type, ULONG protect )
 {
-    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET;
+    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_TOP_DOWN |
+                                   MEM_PHYSICAL | MEM_LARGE_PAGES | MEM_WRITE_WATCH;
     ULONG_PTR limit;
 
     TRACE("%p %p %08lx %x %08x\n", process, *ret, *size_ptr, type, protect );
@@ -5264,6 +5305,8 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
         union apc_call call;
         union apc_result result;
         unsigned int status;
+
+        if (is_old_wow64() && !zero_bits) zero_bits = ~0u;
 
         memset( &call, 0, sizeof(call) );
 
@@ -5317,10 +5360,6 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
         case MemExtendedParameterAddressRequirements:
         {
             MEM_ADDRESS_REQUIREMENTS *r = parameters[i].Pointer;
-            ULONG_PTR limit;
-
-            if (is_wow64()) limit = get_wow_user_space_limit();
-            else limit = (ULONG_PTR)user_space_limit;
 
             if (r->Alignment)
             {
@@ -5334,7 +5373,7 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
             if (r->LowestStartingAddress)
             {
                 *limit_low = (ULONG_PTR)r->LowestStartingAddress;
-                if (*limit_low >= limit || (*limit_low & granularity_mask))
+                if (*limit_low >= (ULONG_PTR)user_space_limit || (*limit_low & granularity_mask))
                 {
                     WARN( "Invalid limit %p.\n", r->LowestStartingAddress );
                     return STATUS_INVALID_PARAMETER;
@@ -5343,7 +5382,7 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
             if (r->HighestEndingAddress)
             {
                 *limit_high = (ULONG_PTR)r->HighestEndingAddress;
-                if (*limit_high > limit ||
+                if (*limit_high > (ULONG_PTR)user_space_limit ||
                     *limit_high <= *limit_low ||
                     ((*limit_high + 1) & (page_mask - 1)))
                 {
@@ -5385,8 +5424,9 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
                                            ULONG protect, MEM_EXTENDED_PARAMETER *parameters,
                                            ULONG count )
 {
-    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH
-                                   | MEM_RESET | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER;
+    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_TOP_DOWN |
+                                   MEM_PHYSICAL | MEM_LARGE_PAGES | MEM_WRITE_WATCH |
+                                   MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER;
     ULONG_PTR limit_low = 0;
     ULONG_PTR limit_high = 0;
     ULONG_PTR align = 0;
@@ -5409,6 +5449,8 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
     {
         union apc_call call;
         union apc_result result;
+
+        if (is_old_wow64() && !limit_high && !*ret) limit_high = ~0u;
 
         memset( &call, 0, sizeof(call) );
 
@@ -5772,8 +5814,11 @@ static unsigned int get_basic_memory_info( HANDLE process, LPCVOID addr,
             info->AllocationProtect = result.virtual_query.alloc_prot;
             info->State             = (DWORD)result.virtual_query.state << 12;
             info->Type              = (DWORD)result.virtual_query.alloc_type << 16;
-            if (info->RegionSize != result.virtual_query.size)  /* truncated */
-                return STATUS_INVALID_PARAMETER;  /* FIXME */
+#ifndef _WIN64
+            if (result.virtual_query.base >= ~granularity_mask) return STATUS_INVALID_PARAMETER;
+            if ((result.virtual_query.base + result.virtual_query.size) >> 32)  /* overflow */
+                info->RegionSize = ~granularity_mask - result.virtual_query.base;
+#endif
             if (res_len) *res_len = sizeof(*info);
         }
         return result.virtual_query.status;
@@ -6354,6 +6399,8 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
         union apc_call call;
         union apc_result result;
 
+        if (is_old_wow64() && !zero_bits) zero_bits = ~0u;
+
         memset( &call, 0, sizeof(call) );
 
         call.map_view.type         = APC_MAP_VIEW;
@@ -6427,6 +6474,8 @@ NTSTATUS WINAPI NtMapViewOfSectionEx( HANDLE handle, HANDLE process, PVOID *addr
     {
         union apc_call call;
         union apc_result result;
+
+        if (is_old_wow64() && !limit_high && !*addr_ptr) limit_high = ~0u;
 
         memset( &call, 0, sizeof(call) );
 

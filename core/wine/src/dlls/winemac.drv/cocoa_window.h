@@ -45,9 +45,6 @@
     void* hwnd;
     WineEventQueue* queue;
 
-    CGDirectDisplayID _lastDisplayID;
-    NSTimeInterval _lastDisplayTime;
-
     NSRect wineFrame;
     NSRect roundedWineFrame;
 
@@ -60,7 +57,7 @@
     NSRect frameAtResizeStart;
     BOOL resizingFromLeft, resizingFromTop;
 
-    void* himc;
+    void* ime_update;
     BOOL commandDone;
 
     NSSize savedContentMinSize;

@@ -63,7 +63,7 @@ NTSTATUS WINAPI NtCreateToken( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIB
             type, token_id, expire, user, groups, privs, owner, group, dacl, source );
 
     *handle = 0;
-    if ((status = alloc_object_attributes( attr, &objattr, &objattr_size ))) return status;
+    if ((status = wine_server_alloc_object_attributes( attr, &objattr, &objattr_size ))) return status;
 
     if (attr->SecurityQualityOfService)
     {
@@ -231,7 +231,7 @@ NTSTATUS WINAPI NtDuplicateToken( HANDLE token, ACCESS_MASK access, OBJECT_ATTRI
         FIXME( "ignoring effective-only flag\n" );
 
     *handle = 0;
-    if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     if (attr && attr->SecurityQualityOfService)
     {
@@ -366,7 +366,17 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
         0,    /* TokenRestrictedDeviceGroups */
         0,    /* TokenSecurityAttributes */
         0,    /* TokenIsRestricted */
-        0     /* TokenProcessTrustLevel */
+        0,    /* TokenProcessTrustLevel */
+        0,    /* TokenPrivateNameSpace  */
+        0,    /* TokenSingletonAttributes */
+        0,    /* TokenBnoIsolation */
+        0,    /* TokenChildProcessFlags */
+        0,    /* TokenIsLessPrivilegedAppContainer */
+        0,    /* TokenIsSandboxed */
+        0,    /* TokenIsAppSilo  */
+        0,    /* TokenLoggingInformation */
+        0,    /* TokenLearningMode */
+
     };
 
     ULONG len = 0;
@@ -374,7 +384,7 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
 
     TRACE( "(%p,%s,%p,%d,%p)\n", token, debugstr_TokenInformationClass(class), info, length, retlen );
 
-    if (class < MaxTokenInfoClass) len = info_len[class];
+    if (class < ARRAY_SIZE(info_len)) len = info_len[class];
     if (retlen) *retlen = len;
     if (length < len) return STATUS_BUFFER_TOO_SMALL;
 
@@ -903,7 +913,7 @@ NTSTATUS WINAPI NtAccessCheck( PSECURITY_DESCRIPTOR descr, HANDLE token, ACCESS_
 
     /* reuse the object attribute SD marshalling */
     InitializeObjectAttributes( &attr, NULL, 0, 0, descr );
-    if ((status = alloc_object_attributes( &attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( &attr, &objattr, &len ))) return status;
 
     SERVER_START_REQ( access_check )
     {
@@ -1060,7 +1070,7 @@ NTSTATUS WINAPI NtSetSecurityObject( HANDLE handle, SECURITY_INFORMATION info, P
 
     /* reuse the object attribute SD marshalling */
     InitializeObjectAttributes( &attr, NULL, 0, 0, descr );
-    if ((status = alloc_object_attributes( &attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( &attr, &objattr, &len ))) return status;
     sd = (struct security_descriptor *)(objattr + 1);
     if (info & OWNER_SECURITY_INFORMATION && !sd->owner_len)
     {

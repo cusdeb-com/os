@@ -554,6 +554,7 @@ static HRESULT WINAPI vector_hstring_InsertAt( IVector_HSTRING *iface, UINT32 in
         if (!(impl->elements = realloc(impl->elements, impl->capacity * sizeof(*impl->elements))))
         {
             impl->elements = tmp2;
+            WindowsDeleteString(tmp);
             return E_OUTOFMEMORY;
         }
     }
@@ -751,7 +752,11 @@ HRESULT vector_hstring_create_copy( IIterable_HSTRING *iterable, IVector_HSTRING
     impl = impl_from_IVector_HSTRING(*out);
     impl->size = 0;
     impl->capacity = capacity;
-    if (!(impl->elements = realloc(impl->elements, impl->capacity * sizeof(*impl->elements)))) goto error;
+    if (!(impl->elements = malloc(capacity * sizeof(*impl->elements))))
+    {
+        hr = E_OUTOFMEMORY;
+        goto error;
+    }
 
     if (FAILED(hr = IIterable_HSTRING_First(iterable, &iterator))) goto error;
 
