@@ -1,3 +1,10 @@
+cdex (0.0.14-1cd) trixie; urgency=medium
+
+  * runtime/bin/cdex-registry: register ReactOS Shell32 handlers to add
+    “Copy to folder” and “Move to folder” to filesystem context menus.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 06 Oct 2026 17:28:49 +0300
+
 cdex (0.0.13-1cd) trixie; urgency=medium
 
   * debian/patches/0003-iconcache-ilc-color32.patch: keep shell icon
