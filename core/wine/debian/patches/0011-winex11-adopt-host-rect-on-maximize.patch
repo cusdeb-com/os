@@ -28,7 +28,7 @@ Last-Modified: Tue, 18 Aug 2026 14:10:00 +0300
 
 --- a/src/dlls/winex11.drv/window.c
 +++ b/src/dlls/winex11.drv/window.c
-@@ -3385,16 +3385,32 @@
+@@ -3379,16 +3379,32 @@
          }
          goto done;
      }
@@ -70,7 +70,7 @@ Last-Modified: Tue, 18 Aug 2026 14:10:00 +0300
  
      TRACE( "win %p/%lx cmd %d at %s flags %08x\n",
             hwnd, data->whole_window, cmd, wine_dbgstr_rect(rect), swp );
-@@ -3405,6 +3421,14 @@
+@@ -3399,6 +3415,14 @@
      pos = root_to_virtual_screen( x, y );
      SetRect( rect, pos.x, pos.y, pos.x + width, pos.y + height );
      *rect = window_rect_from_visible( &data->rects, *rect );
