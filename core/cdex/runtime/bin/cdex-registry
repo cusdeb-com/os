@@ -18,6 +18,26 @@ reg_add() {
   esac
 }
 
+# Register a 32-bit shell class without mirroring it into the 64-bit view.
+reg_add_32() {
+  WINEDEBUG=-all wine reg add "$@" /reg:32 >/dev/null
+}
+
+# Install only the requested ReactOS shell context-menu class in the 32-bit
+# registry view used by ReactOS Explorer.
+register_shell32_context_handler_32bit() {
+  local name="$1"
+  local clsid="$2"
+  local description="$3"
+  local key="HKLM\\Software\\Classes\\CLSID\\${clsid}"
+
+  reg_add_32 "$key" /ve /t REG_SZ /d "$description" /f
+  reg_add_32 "$key" /v flags /t REG_DWORD /d 1 /f
+  reg_add_32 "${key}\\InprocServer32" /ve /t REG_SZ /d "C:\\reactos\\shell32.dll" /f
+  reg_add_32 "${key}\\InprocServer32" /v ThreadingModel /t REG_SZ /d Apartment /f
+  reg_add_32 "HKLM\\Software\\Classes\\AllFilesystemObjects\\shellex\\ContextMenuHandlers\\${name}" /ve /t REG_SZ /d "$clsid" /f
+}
+
 # Build a Windows LOGFONTW as a REG_BINARY value for wine reg add.
 # $1 — registry key, $2 — value name, $3 — signed lfHeight, $4 — hex-encoded
 # LOGFONTW tail (everything after the lfHeight field).
@@ -159,6 +179,10 @@ configure_reactos_registry() {
   reg_add "HKLM\\Software\\Classes\\CLSID\\{7BA4C740-9E81-11CF-99D3-00AA004AE837}\\InprocServer32" /ve /t REG_SZ /d "C:\\windows\\system32\\shell32.dll" /f
   reg_add "HKLM\\Software\\Classes\\CLSID\\{7BA4C740-9E81-11CF-99D3-00AA004AE837}\\InprocServer32" /v ThreadingModel /t REG_SZ /d Apartment /f
   reg_add "HKLM\\Software\\Classes\\AllFilesystemObjects\\shellex\\ContextMenuHandlers\\SendTo" /ve /t REG_SZ /d "{7BA4C740-9E81-11CF-99D3-00AA004AE837}" /f
+
+  register_shell32_context_handler_32bit "CopyTo" "{C2FBB630-2971-11D1-A18C-00C04FD75D13}" "ReactOS CopyTo Object Service"
+  register_shell32_context_handler_32bit "MoveTo" "{C2FBB631-2971-11D1-A18C-00C04FD75D13}" "ReactOS MoveTo Object Service"
+
   reg_add "HKLM\\Software\\Classes\\CLSID\\{9E56BE61-C50F-11CF-9A2C-00A0C90A90CE}" /ve /t REG_SZ /d DeskLink /f
   reg_add "HKLM\\Software\\Classes\\CLSID\\{9E56BE61-C50F-11CF-9A2C-00A0C90A90CE}" /v NeverShowExt /t REG_SZ /d "" /f
   reg_add "HKLM\\Software\\Classes\\CLSID\\{9E56BE61-C50F-11CF-9A2C-00A0C90A90CE}\\DefaultIcon" /ve /t REG_EXPAND_SZ /d "%SystemRoot%\\explorer.exe,-103" /f
