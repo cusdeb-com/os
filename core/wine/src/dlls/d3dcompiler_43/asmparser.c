@@ -1198,7 +1198,11 @@ static void asmparser_predicate_supported(struct asm_parser *parser, const struc
     if (!parser->shader)
         return;
     if (parser->shader->num_instrs == 0)
-        ERR("Predicate without an instruction.\n");
+    {
+        asmparser_message(parser, "Line %u: Predicate on the first shader instruction\n", parser->line_no);
+        set_parse_status(&parser->status, PARSE_ERR);
+        return;
+    }
     /* Set the predicate of the last instruction added to the shader. */
     parser->shader->instr[parser->shader->num_instrs - 1]->has_predicate = TRUE;
     parser->shader->instr[parser->shader->num_instrs - 1]->predicate = *predicate;
@@ -1218,6 +1222,7 @@ static void asmparser_coissue_supported(struct asm_parser *parser)
     {
         asmparser_message(parser, "Line %u: Coissue flag on the first shader instruction\n", parser->line_no);
         set_parse_status(&parser->status, PARSE_ERR);
+        return;
     }
     /* Set the coissue flag of the last instruction added to the shader. */
     parser->shader->instr[parser->shader->num_instrs - 1]->coissue = TRUE;

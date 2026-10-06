@@ -116,7 +116,6 @@ typedef enum {
     STAT_DIM,
     STAT_DOUNTIL,
     STAT_DOWHILE,
-    STAT_ERASE,
     STAT_EXITDO,
     STAT_EXITFOR,
     STAT_EXITFUNC,
@@ -176,8 +175,10 @@ typedef struct _dim_statement_t {
 
 typedef struct _redim_decl_t {
     const WCHAR *identifier;
+    unsigned loc;
     expression_t *dims;
     struct _redim_decl_t *next;
+    struct _redim_decl_t *next_declared;
 } redim_decl_t;
 
 typedef struct {
@@ -186,13 +187,9 @@ typedef struct {
     redim_decl_t *redim_decls;
 } redim_statement_t;
 
-typedef struct {
-    statement_t stat;
-    const WCHAR *identifier;
-} erase_statement_t;
-
 typedef struct _arg_decl_t {
     const WCHAR *name;
+    unsigned loc;
     BOOL by_ref;
     struct _arg_decl_t *next;
 } arg_decl_t;

@@ -549,8 +549,20 @@ static bool handle_instance_limit(FACTCue *cue, FACTAudioCategory *category)
 		if (cursor == cue || !cursor->playingSound || (cursor->state & (FACT_STATE_STOPPING | FACT_STATE_STOPPED)))
 			continue;
 
-		if (category && category != &engine->categories[cursor->playingSound->sound->category])
-			continue;
+		if (category)
+		{
+			if (category != &engine->categories[cursor->playingSound->sound->category])
+			{
+				continue;
+			}
+		}
+		else
+		{
+			if (cursor->index != cue->index)
+			{
+				continue;
+			}
+		}
 
 		/* FIXME: How does QUEUE differ from REPLACE_OLDEST? */
 		if (behaviour == MAX_INSTANCE_BEHAVIOR_QUEUE
@@ -2245,12 +2257,32 @@ uint32_t FACT_INTERNAL_ParseAudioEngine(
 	return FAUDIO_OK;
 }
 
-void FACT_INTERNAL_ParseTrackEvents(
-	const uint8_t **ptr,
-	bool se,
-	FACTTrack *track,
-	FAudioMallocFunc pMalloc
-) {
+static uint16_t variation_flags_from_3_0(uint8_t old_flags)
+{
+	uint16_t flags = 0;
+
+	if (old_flags & 0x01)
+		flags |= VARIATION_FLAG_VOLUME_ADD;
+	if (old_flags & 0x02)
+		FAudio_Log("Ignoring unknown 3.0 variation flag 0x2.\n");
+	if (old_flags & 0x04)
+		flags |= VARIATION_FLAG_PITCH_ADD;
+	if (old_flags & 0x08)
+		FAudio_Log("Ignoring unknown 3.0 variation flag 0x8.\n");
+	if (old_flags & 0x10)
+		flags |= VARIATION_FLAG_PITCH_NEW_ON_LOOP;
+	if (old_flags & 0x20)
+		flags |= VARIATION_FLAG_VOLUME_NEW_ON_LOOP;
+	if (old_flags & 0x40)
+		flags |= VARIATION_FLAG_PITCH;
+	if (old_flags & 0x80)
+		flags |= VARIATION_FLAG_VOLUME;
+	return flags;
+}
+
+static void parse_track_events(const uint8_t **ptr, bool se, FACTTrack *track,
+	FAudioMallocFunc pMalloc, uint16_t content_version)
+{
 	FACTEvent *events;
 	uint32_t evtInfo;
 	uint8_t minWeight, maxWeight, separator;
@@ -2338,11 +2370,18 @@ void FACT_INTERNAL_ParseTrackEvents(
 			event->wave.maxPitch = read_s16(ptr, se);
 			event->wave.minVolume = read_volbyte(ptr);
 			event->wave.maxVolume = read_volbyte(ptr);
-			event->wave.minFrequency = read_f32(ptr, se);
-			event->wave.maxFrequency = read_f32(ptr, se);
-			event->wave.minQFactor = read_f32(ptr, se);
-			event->wave.maxQFactor = read_f32(ptr, se);
-			event->wave.variationFlags = read_u16(ptr, se);
+			if (content_version > FACT_CONTENT_VERSION_3_0)
+			{
+				event->wave.minFrequency = read_f32(ptr, se);
+				event->wave.maxFrequency = read_f32(ptr, se);
+				event->wave.minQFactor = read_f32(ptr, se);
+				event->wave.maxQFactor = read_f32(ptr, se);
+				event->wave.variationFlags = read_u16(ptr, se);
+			}
+			else
+			{
+				event->wave.variationFlags = variation_flags_from_3_0(read_u8(ptr));
+			}
 		}
 		else if (EVTTYPE(FACTEVENT_PLAYWAVETRACKEFFECTVARIATION))
 		{
@@ -2360,11 +2399,18 @@ void FACT_INTERNAL_ParseTrackEvents(
 			event->wave.maxPitch = read_s16(ptr, se);
 			event->wave.minVolume = read_volbyte(ptr);
 			event->wave.maxVolume = read_volbyte(ptr);
-			event->wave.minFrequency = read_f32(ptr, se);
-			event->wave.maxFrequency = read_f32(ptr, se);
-			event->wave.minQFactor = read_f32(ptr, se);
-			event->wave.maxQFactor = read_f32(ptr, se);
-			event->wave.variationFlags = read_u16(ptr, se);
+			if (content_version > FACT_CONTENT_VERSION_3_0)
+			{
+				event->wave.minFrequency = read_f32(ptr, se);
+				event->wave.maxFrequency = read_f32(ptr, se);
+				event->wave.minQFactor = read_f32(ptr, se);
+				event->wave.maxQFactor = read_f32(ptr, se);
+				event->wave.variationFlags = read_u16(ptr, se);
+			}
+			else
+			{
+				event->wave.variationFlags = variation_flags_from_3_0(read_u8(ptr));
+			}
 
 			/* Track Variation */
 			evtInfo = read_u32(ptr, se);
@@ -2702,7 +2748,7 @@ uint32_t FACT_INTERNAL_ParseSoundBank(
 				FACTTrack *track = &tracks[j];
 
 				ptr = start + track->code;
-				FACT_INTERNAL_ParseTrackEvents(&ptr, se, track, pEngine->pMalloc);
+				parse_track_events(&ptr, se, track, pEngine->pMalloc, contentVersion);
 			}
 		}
 	}
@@ -3057,9 +3103,22 @@ uint32_t FACT_INTERNAL_ParseWaveBank(
 		/* Native forbids creating an in-memory wave bank when the flags
 		 * include STREAMING. It allows creating a streaming wave bank
 		 * when the flags do not include STREAMING, but subsequent
-		 * attempts to use the wave bank crash. Forbid both. */
-		pEngine->pFree(wb);
-		return FACTENGINE_E_INVALIDUSAGE;
+		 * attempts to use the wave bank crash.
+		 *
+		 * We _should_ forbid both, but for whatever reason XAudio2
+		 * thought it could handle this case. Fortunately, FAudio _does_
+		 * handle this without crashing, so leave it a bit broken here.
+		 */
+		if (wb->streaming)
+		{
+			pEngine->pFree(wb);
+			return FACTENGINE_E_INVALIDUSAGE;
+		}
+		else
+		{
+			/* Per the above, just pretend we're streaming in this case */
+			wb->streaming = isStreaming;
+		}
 	}
 
 	wb->entryCount = wbinfo.dwEntryCount;

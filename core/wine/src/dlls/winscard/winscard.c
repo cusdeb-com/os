@@ -282,6 +282,8 @@ LONG WINAPI SCardStatusA( SCARDHANDLE connect, char *names, DWORD *names_len, DW
     TRACE( "%Ix, %p, %p, %p, %p, %p, %p\n", connect, names, names_len, state, protocol, atr, atr_len );
 
     if (!handle || handle->magic != CONNECT_MAGIC) return ERROR_INVALID_HANDLE;
+    if (!names_len) return SCARD_E_INVALID_PARAMETER;
+
     if (atr_len && *atr_len == SCARD_AUTOALLOCATE)
     {
         FIXME( "SCARD_AUTOALLOCATE not supported for attr\n" );
@@ -384,6 +386,8 @@ LONG WINAPI SCardStatusW( SCARDHANDLE connect, WCHAR *names, DWORD *names_len, D
     TRACE( "%Ix, %p, %p, %p, %p, %p, %p\n", connect, names, names_len, state, protocol, atr, atr_len );
 
     if (!handle || handle->magic != CONNECT_MAGIC) return ERROR_INVALID_HANDLE;
+    if (!names_len) return SCARD_E_INVALID_PARAMETER;
+
     if (atr_len && *atr_len == SCARD_AUTOALLOCATE)
     {
         FIXME( "SCARD_AUTOALLOCATE not supported for attr\n" );
@@ -478,7 +482,6 @@ LONG WINAPI SCardListReadersW( SCARDCONTEXT context, const WCHAR *groups, WCHAR 
     params.readers_len = &readers_len_utf8;
     if ((ret = UNIX_CALL( scard_list_readers, &params ))) goto done;
 
-    params.handle = handle->unix_handle;
     if (!(params.readers = malloc( readers_len_utf8 )))
     {
         free( (void *)params.groups );
@@ -529,7 +532,6 @@ LONG WINAPI SCardListReaderGroupsA( SCARDCONTEXT context, char *groups, DWORD *g
     params.groups_len = &groups_len_utf8;
     if ((ret = UNIX_CALL( scard_list_reader_groups, &params ))) goto done;
 
-    params.handle = handle->unix_handle;
     if (!(params.groups = malloc( groups_len_utf8 ))) return SCARD_E_NO_MEMORY;
     if (!(ret = UNIX_CALL( scard_list_reader_groups, &params )))
     {
@@ -668,7 +670,7 @@ LONG WINAPI SCardGetStatusChangeW( SCARDCONTEXT context, DWORD timeout, SCARD_RE
     params.timeout = timeout;
     params.states = states_utf8;
     params.count = count;
-    if (!(ret = UNIX_CALL( scard_get_status_change, &params )))
+    if (!(ret = UNIX_CALL( scard_get_status_change, &params )) && states)
     {
         map_states_out( states_utf8, (SCARD_READERSTATEA *)states, count );
     }

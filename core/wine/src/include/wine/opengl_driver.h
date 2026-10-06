@@ -62,24 +62,45 @@ struct wgl_pixel_format
 enum opengl_extension
 {
 #define USE_GL_EXT(x) x,
+    ALL_EGL_EXTS
     ALL_GL_EXTS
     ALL_WGL_EXTS
 #undef USE_GL_EXT
     GL_EXTENSION_COUNT,
 };
 
+struct opengl_context_attrs
+{
+    int format;
+    int major;
+    int minor;
+    GLuint flags;
+    GLuint profile;
+    BOOL no_error;
+};
+
+static inline const char *debugstr_opengl_context_attrs( const struct opengl_context_attrs *attrs )
+{
+    if (!attrs) return "(null)";
+    return wine_dbg_sprintf( "{format %d major %d minor %d flags %#x profile %#x no_error %u}", attrs->format,
+                             attrs->major, attrs->minor, attrs->flags, attrs->profile, attrs->no_error );
+}
+
 struct opengl_client_context
 {
     struct HGLRC__              obj;            /* client object header */
     UINT64                      unix_handle;
     UINT64                      unix_funcs;
+    UINT64                      root_context;                           /* handle to the root shared context */
+    struct opengl_context_attrs attrs;                                  /* context creation / actual attributes */
     DWORD                       current_tid;                            /* thread that the context is current in */
     GLenum                      last_error;
-    GLint                       context_flags;
-    GLint                       profile_mask;
-    int                         major_version;
-    int                         minor_version;
-    BOOL                        broken_sharing;                         /* context couldn't be shared (for macOS) */
+    char                        version_str[64];
+    char                        vendor_name[64];
+    char                        device_name[64];
+    UINT64                      debug_callback;                         /* callback pointer for glDebugMessageCallback */
+    UINT64                      debug_user;                             /* user pointer for glDebugMessageCallback */
+    BOOLEAN                     initialized;                            /* context has been initialized */
     BOOLEAN                     extensions[GL_EXTENSION_COUNT];         /* exposed client extensions */
     UINT32                      extension_count;                        /* size of supported extensions */
     UINT16                      extension_array[GL_EXTENSION_COUNT];    /* array of supported extensions */
@@ -87,7 +108,7 @@ struct opengl_client_context
 
 static inline struct opengl_client_context *opengl_client_context_from_client( HGLRC client_context )
 {
-    return CONTAINING_RECORD( client_context, struct opengl_client_context, obj );
+    return client_context ? CONTAINING_RECORD( client_context, struct opengl_client_context, obj ) : NULL;
 }
 
 struct opengl_client_pbuffer
@@ -108,22 +129,36 @@ struct __GLsync
     UINT64                      unix_handle;
 };
 
+struct opengl_wow64_str
+{
+    UINT    len;
+    GLubyte ptr[];
+};
+
 #ifdef WINE_UNIX_LIB
 
 #include "wine/gdi_driver.h"
 
 /* Wine internal opengl driver version, needs to be bumped upon opengl_funcs changes. */
-#define WINE_OPENGL_DRIVER_VERSION 38
+#define WINE_OPENGL_DRIVER_VERSION 41
 
 struct opengl_drawable;
 
 struct opengl_context
 {
     HGLRC                       client_context;     /* client side context pointer */
-    void                       *driver_private;     /* driver context / private data */
-    int                         format;             /* pixel format of the context */
+    void                       *host_context;       /* host-specific context */
+    struct opengl_context      *root_context;       /* root context this is shared with */
+    struct opengl_context_attrs attrs;              /* context creation / actual attributes */
     struct opengl_drawable     *draw;               /* currently bound draw surface */
     struct opengl_drawable     *read;               /* currently bound read surface */
+    GLuint                      draw_fbo;           /* currently bound draw FBO name */
+    GLuint                      read_fbo;           /* currently bound read FBO name */
+    GLenum                      read_buffer;        /* currently bound default FBO read buffers */
+    GLenum                      draw_buffers[16];   /* currently bound default FBO draw buffers */
+    GLuint                      draw_buffer_count;  /* number of draw buffers set */
+    BOOLEAN                     initialized;        /* context has been initialized */
+    BOOLEAN                     extensions[GL_EXTENSION_COUNT]; /* available extensions */
 };
 
 static inline struct opengl_context *opengl_context_from_handle( HGLRC client_context )
@@ -136,20 +171,41 @@ static inline struct opengl_context *opengl_context_from_handle( HGLRC client_co
 struct opengl_funcs
 {
 #define USE_GL_FUNC(x) PFN_##x p_##x;
-    ALL_WGL_FUNCS
-    ALL_WGL_EXT_FUNCS
     ALL_EGL_FUNCS
     ALL_EGL_EXT_FUNCS
     ALL_GL_FUNCS
     ALL_GL_EXT_FUNCS
 #undef USE_GL_FUNC
-    void (*p_init_extensions)( BOOLEAN extensions[GL_EXTENSION_COUNT] );
+
+    PFN_wglGetProcAddress p_wglGetProcAddress;
+    PFN_wglGetPixelFormat p_wglGetPixelFormat;
+    PFN_wglSetPixelFormat p_wglSetPixelFormat;
+    PFN_wglSetPixelFormatWINE p_wglSetPixelFormatWINE;
+    PFN_wglSwapBuffers p_wglSwapBuffers;
+    PFN_wglSwapIntervalEXT p_wglSwapIntervalEXT;
+    PFN_wglGetSwapIntervalEXT p_wglGetSwapIntervalEXT;
+    PFN_wglDestroyPbufferARB p_wglDestroyPbufferARB;
+    PFN_wglGetPbufferDCARB p_wglGetPbufferDCARB;
+    PFN_wglReleasePbufferDCARB p_wglReleasePbufferDCARB;
+    PFN_wglQueryPbufferARB p_wglQueryPbufferARB;
+    PFN_wglBindTexImageARB p_wglBindTexImageARB;
+    PFN_wglReleaseTexImageARB p_wglReleaseTexImageARB;
+    PFN_wglSetPbufferAttribARB p_wglSetPbufferAttribARB;
+    PFN_wglQueryCurrentRendererIntegerWINE p_wglQueryCurrentRendererIntegerWINE;
+    PFN_wglQueryCurrentRendererStringWINE p_wglQueryCurrentRendererStringWINE;
+    PFN_wglQueryRendererIntegerWINE p_wglQueryRendererIntegerWINE;
+    PFN_wglQueryRendererStringWINE p_wglQueryRendererStringWINE;
+    PFN_wglAllocateMemoryNV p_wglAllocateMemoryNV;
+    PFN_wglFreeMemoryNV p_wglFreeMemoryNV;
+
+    void (*p_set_root_context)( struct opengl_context *root );
     void (*p_get_pixel_formats)( struct wgl_pixel_format *formats, UINT max_formats, UINT *num_formats, UINT *num_onscreen_formats );
     BOOL (*p_query_renderer)( UINT attribute, void *value );
+    struct opengl_context *(*p_context_create)( HDC hdc, struct opengl_context *shared, const int *attribs );
     BOOL (*p_context_flush)( struct opengl_context *context, void (*flush)(void), UINT flags );
-    BOOL (*p_context_create)( struct opengl_context *context, HDC hdc, const int *attribs );
     BOOL (*p_context_destroy)( struct opengl_context *context );
-    BOOL (*p_pbuffer_create)( HDC hdc, int format, int width, int height, const int *attribs, HPBUFFERARB client_pbuffer );
+    BOOL (*p_make_current)( HDC draw_hdc, HDC read_hdc, struct opengl_context *context );
+    BOOL (*p_pbuffer_create)( HDC hdc, int format, SIZE size, const int *attribs, HPBUFFERARB client_pbuffer );
     void *egl_handle;
 };
 
@@ -166,8 +222,7 @@ struct egl_platform
     EGLDisplay           display;
     UINT                 config_count;
     EGLConfig           *configs;
-    BOOL                 has_EGL_EXT_present_opaque;
-    BOOL                 has_EGL_EXT_pixel_format_float;
+    BOOLEAN              extensions[GL_EXTENSION_COUNT]; /* supported EGL extensions */
 
     /* WGL_WINE_query_renderer info */
     UINT                 device_id;
@@ -185,6 +240,7 @@ struct egl_platform
 
 struct opengl_drawable_funcs
 {
+    const UINT size; /* size of the implementation struct */
     void (*destroy)( struct opengl_drawable *iface );
     /* flush and update the drawable front buffer, called from render thread */
     void (*flush)( struct opengl_drawable *iface, UINT flags );
@@ -198,6 +254,7 @@ struct opengl_drawable_funcs
 #define GL_FLUSH_UPDATED       0x04
 #define GL_FLUSH_PRESENT       0x08
 #define GL_FLUSH_FORCE_SWAP    0x10
+#define GL_FLUSH_ACTIVATE      0x20
 
 /* a driver opengl drawable, either a client surface of a pbuffer */
 struct opengl_drawable
@@ -209,8 +266,11 @@ struct opengl_drawable
     HDC                                 owner_hdc;      /* HDC owning the drawable, if any (for pbuffer / D3D swapchains) */
     int                                 format;         /* pixel format of the drawable */
     int                                 interval;       /* last set surface swap interval */
+    SIZE                                virtual_size;   /* size in virtual coordinate space */
+    SIZE                                monitor_size;   /* size in raw physical coordinate space */
     BOOL                                doublebuffer;   /* pixel format is double buffered */
     BOOL                                stereo;         /* pixel format is stereo buffered */
+    BOOL                                srgb;           /* default framebuffer is SRGB */
     EGLSurface                          surface;        /* surface for EGL based drivers */
     GLuint                              read_fbo;       /* default read FBO name when emulating framebuffer */
     GLuint                              draw_fbo;       /* default draw FBO name when emulating framebuffer */
@@ -228,7 +288,8 @@ static inline void opengl_drawable_map_buffer( struct opengl_drawable *drawable,
     drawable->buffer_map[buffer - GL_FRONT_LEFT] = set;
 }
 
-W32KAPI void *opengl_drawable_create( UINT size, const struct opengl_drawable_funcs *funcs, int format, struct client_surface *client );
+W32KAPI void *opengl_drawable_create( const struct opengl_drawable_funcs *funcs, int format,
+                                      struct client_surface *client, const SIZE *size );
 W32KAPI void opengl_drawable_add_ref( struct opengl_drawable *drawable );
 W32KAPI void opengl_drawable_release( struct opengl_drawable *drawable );
 
@@ -243,14 +304,14 @@ struct opengl_driver_funcs
     BOOL (*p_describe_pixel_format)(int,struct wgl_pixel_format*);
     void (*p_init_extensions)( struct opengl_funcs *funcs, BOOLEAN extensions[GL_EXTENSION_COUNT] );
     BOOL (*p_surface_create)( struct client_surface *client, int format, struct opengl_drawable **drawable );
-    BOOL (*p_context_create)( int format, void *share, const int *attribs, void **context, BOOL *shared );
-    BOOL (*p_context_destroy)(void*);
-    BOOL (*p_make_current)( struct opengl_drawable *draw, struct opengl_drawable *read, void *private );
-    BOOL (*p_pbuffer_create)( HDC hdc, int format, BOOL largest, GLenum texture_format, GLenum texture_target,
-                              GLint max_level, GLsizei *width, GLsizei *height, struct opengl_drawable **drawable );
-    BOOL (*p_pbuffer_updated)( HDC hdc, struct opengl_drawable *drawable, GLenum cube_face, GLint mipmap_level );
-    UINT (*p_pbuffer_bind)( HDC hdc, struct opengl_drawable *drawable, GLenum buffer );
+    struct opengl_context *(*p_context_create)( const struct opengl_context_attrs *attrs, struct opengl_context *share );
+    BOOL (*p_context_destroy)( struct opengl_context *context );
+    BOOL (*p_context_activate)( struct opengl_context *context, struct opengl_drawable *draw, struct opengl_drawable *read );
+    BOOL (*p_pbuffer_create)( HDC hdc, int format, SIZE size, BOOL largest, GLenum texture_format, GLenum texture_target,
+                              GLint max_level, struct opengl_drawable **drawable );
     BOOL (*p_null_surface_create)( int format, struct opengl_drawable **drawable );
+    BOOL (*p_cleanup_thread)(void);
+    BOOL broken_sharing;
 };
 
 #endif /* WINE_UNIX_LIB */

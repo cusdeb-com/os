@@ -682,12 +682,25 @@ HRESULT WINAPI BaseControlWindowImpl_GetMaxIdealImageSize(IVideoWindow *iface, L
     return S_OK;
 }
 
-HRESULT WINAPI BaseControlWindowImpl_GetRestorePosition(IVideoWindow *iface, LONG *pLeft, LONG *pTop, LONG *pWidth, LONG *pHeight)
+HRESULT WINAPI BaseControlWindowImpl_GetRestorePosition(IVideoWindow *iface, LONG *left, LONG *top, LONG *width, LONG *height)
 {
-    struct video_window *This = impl_from_IVideoWindow(iface);
+    struct video_window *window = impl_from_IVideoWindow(iface);
+    MONITORINFO info = { .cbSize = sizeof(info) };
+    WINDOWPLACEMENT p;
+    HMONITOR mon;
 
-    FIXME("(%p/%p)->(%p, %p, %p, %p): stub !!!\n", This, iface, pLeft, pTop, pWidth, pHeight);
+    TRACE("window %p, left %p, top %p, width %p, height %p.\n", window, left, top, width, height);
 
+    if (!GetMonitorInfoW((mon = MonitorFromWindow(window->hwnd, MONITOR_DEFAULTTONEAREST)), &info))
+        return E_FAIL;
+
+    if (!GetWindowPlacement(window->hwnd, &p))
+        return E_FAIL;
+
+    *left = p.rcNormalPosition.left + info.rcWork.left;
+    *top = p.rcNormalPosition.top + info.rcWork.top;
+    *width = p.rcNormalPosition.right - p.rcNormalPosition.left;
+    *height = p.rcNormalPosition.bottom - p.rcNormalPosition.top;
     return S_OK;
 }
 
@@ -849,6 +862,8 @@ static HRESULT WINAPI basic_video_get_VideoWidth(IBasicVideo *iface, LONG *width
 
     if (!width)
         return E_POINTER;
+    if (!window->pPin->peer)
+        return VFW_E_NOT_CONNECTED;
 
     *width = get_bitmap_header(window)->biWidth;
 
@@ -863,6 +878,8 @@ static HRESULT WINAPI basic_video_get_VideoHeight(IBasicVideo *iface, LONG *heig
 
     if (!height)
         return E_POINTER;
+    if (!window->pPin->peer)
+        return VFW_E_NOT_CONNECTED;
 
     *height = abs(get_bitmap_header(window)->biHeight);
 

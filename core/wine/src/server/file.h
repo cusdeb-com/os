@@ -57,6 +57,8 @@ struct fd_ops
     void (*poll_event)(struct fd *,int event);
     /* get file information */
     enum server_fd_type (*get_fd_type)(struct fd *fd);
+    /* perform an asynchronous create */
+    void (*create)( struct fd *, struct async *, unsigned int access, unsigned int sharing, unsigned int options );
     /* perform a read on the file */
     void (*read)(struct fd *, struct async *, file_pos_t );
     /* perform a write on the file */
@@ -244,8 +246,7 @@ typedef void (*async_completion_callback)( void *private );
 
 extern void free_async_queue( struct async_queue *queue );
 extern struct async *create_async( struct fd *fd, struct thread *thread, const struct async_data *data, struct iosb *iosb );
-extern struct async *create_request_async( struct fd *fd, unsigned int comp_flags, const struct async_data *data,
-                                           int is_system );
+extern struct async *create_request_async( struct fd *fd, const struct async_data *data, int is_system );
 extern obj_handle_t async_handoff( struct async *async, data_size_t *result, int force_blocking );
 extern void queue_async( struct async_queue *queue, struct async *async );
 extern void async_set_timeout( struct async *async, timeout_t timeout, unsigned int status );

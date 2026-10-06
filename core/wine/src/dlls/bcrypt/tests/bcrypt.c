@@ -459,6 +459,10 @@ static void test_BcryptHash(void)
     format_hash( md5, sizeof(md5), str );
     ok(!strcmp(str, expected), "got %s\n", str);
 
+    /* With a secret but without BCRYPT_ALG_HANDLE_HMAC_FLAG */
+    ret = pBCryptHash(alg, (UCHAR *)"key", sizeof("key"), (UCHAR *)"test", sizeof("test"), md5, sizeof(md5));
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
+
     ret = BCryptCloseAlgorithmProvider(alg, 0);
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
 
@@ -3342,9 +3346,12 @@ struct ecdh_test
     BYTE *ecdh_secret;
     ULONG ecdh_secret_len;
     BYTE *hashed_secret;
+    BYTE *hashed_secret_prepended;
     DWORD public_magic;
     DWORD private_magic;
 };
+
+static const UCHAR hash_prepend[][2] = {{0xca, 0xfe}, {0xf0, 0x0d}};
 
 static void test_ECDH_alg(const struct ecdh_test *t)
 {
@@ -3356,12 +3363,36 @@ static void test_ECDH_alg(const struct ecdh_test *t)
             (void *)BCRYPT_SHA1_ALGORITHM,
         }
     };
+    BCryptBuffer hash_param_buffers_prepended[] =
+    {
+        {
+            sizeof(BCRYPT_SHA1_ALGORITHM),
+            KDF_HASH_ALGORITHM,
+            (void *)BCRYPT_SHA1_ALGORITHM,
+        },
+        {
+            sizeof(hash_prepend[0]),
+            KDF_SECRET_PREPEND,
+            (void *)hash_prepend[0],
+        },
+        {
+            sizeof(hash_prepend[1]),
+            KDF_SECRET_PREPEND,
+            (void *)hash_prepend[1],
+        }
+    };
 
     BCryptBufferDesc hash_params =
     {
         BCRYPTBUFFER_VERSION,
         ARRAY_SIZE(hash_param_buffers),
         hash_param_buffers,
+    };
+    BCryptBufferDesc hash_params_prepended =
+    {
+        BCRYPTBUFFER_VERSION,
+        ARRAY_SIZE(hash_param_buffers_prepended),
+        hash_param_buffers_prepended,
     };
     BYTE *buf;
     BCRYPT_ECCKEY_BLOB *ecckey;
@@ -3461,6 +3492,17 @@ static void test_ECDH_alg(const struct ecdh_test *t)
     ok(!(memcmp(t->ecdh_secret, buf, size)), "wrong data\n");
     free(buf);
 
+    /* Raw secret with a BCryptBufferDesc, which is ignored */
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, &hash_params_prepended, NULL, 0, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+
+    ok(size == (t->bitlen + 7) / 8, "size of secret key incorrect, got %lu, expected 32\n", size);
+    buf = malloc(size);
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, &hash_params_prepended, buf, size, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(!(memcmp(t->ecdh_secret, buf, size)), "wrong data\n");
+    free(buf);
+
 raw_secret_end:
     status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, NULL, 0, &size, 0);
     ok (status == STATUS_SUCCESS, "got %#lx\n", status);
@@ -3471,6 +3513,16 @@ raw_secret_end:
     status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buf, size, &size, 0);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     ok(!(memcmp(t->hashed_secret, buf, size)), "wrong data\n");
+    free(buf);
+
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params_prepended, NULL, 0, &size, 0);
+    ok (status == STATUS_SUCCESS, "got %#lx\n", status);
+
+    ok (size == 20, "got %lu\n", size);
+    buf = malloc(size);
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params_prepended, buf, size, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(!(memcmp(t->hashed_secret_prepended, buf, size)), "wrong data\n");
     free(buf);
 
     /* ulVersion is not verified */
@@ -3527,6 +3579,11 @@ static void test_ECDH(void)
         0x1b, 0xe7, 0xbf, 0x0f, 0x65, 0x1e, 0xd0, 0x07, 0xf9, 0xf4, 0x77, 0x48, 0x48, 0x39, 0xd0, 0xf8,
         0xf3, 0xce, 0xfc, 0x89
     };
+    static BYTE hashed256_secret_prepended[] =
+    {
+        0x10, 0x99, 0x5f, 0x01, 0xef, 0xa8, 0x18, 0x82, 0xd2, 0x62, 0x37, 0xab, 0xe0, 0x7c, 0x62, 0xc7,
+        0x50, 0x7f, 0xa6, 0xa0,
+    };
 
     static BYTE ecc384privkey[] =
     {
@@ -3561,6 +3618,11 @@ static void test_ECDH(void)
     {
         0x78, 0xf8, 0x07, 0xab, 0x00, 0x35, 0xaa, 0x8c, 0x22, 0xd0, 0xe7, 0x06, 0xfc, 0x0b, 0x74, 0x41,
         0xed, 0xdc, 0x16, 0x6c,
+    };
+    static BYTE hashed384_secret_prepended[] =
+    {
+        0x3d, 0xe0, 0x30, 0xd9, 0xe2, 0xdc, 0x61, 0xad, 0x26, 0x21, 0xad, 0xa3, 0x3e, 0xaf, 0xd5, 0x8e,
+        0xb6, 0xbc, 0x5a, 0x51,
     };
 
     static BYTE ecc521privkey[] =
@@ -3606,22 +3668,27 @@ static void test_ECDH(void)
         0x72, 0x39, 0x73, 0x5f, 0xc9, 0x26, 0x1f, 0x8e, 0xe3, 0x30, 0x11, 0xe1, 0x4f, 0xc4, 0x65, 0xc0,
         0xde, 0xf9, 0xe6, 0x6a,
     };
+    static BYTE hashed521_secret_prepended[] =
+    {
+        0x2e, 0x6f, 0x51, 0xc9, 0x15, 0xfb, 0x9f, 0xd0, 0xad, 0x92, 0x43, 0xdb, 0xc8, 0x6b, 0xd9, 0xe6,
+        0x1a, 0x5f, 0x52, 0xa6,
+    };
 
     static const struct ecdh_test tests[] =
     {
         {
             BCRYPT_ECDH_P256_ALGORITHM, 256, ecc256privkey, sizeof(ecc256privkey), ecdh256_pubkey, sizeof(ecdh256_pubkey),
-            ecdh256_secret, sizeof(ecdh256_secret), hashed256_secret,
+            ecdh256_secret, sizeof(ecdh256_secret), hashed256_secret, hashed256_secret_prepended,
             BCRYPT_ECDH_PUBLIC_P256_MAGIC, BCRYPT_ECDH_PRIVATE_P256_MAGIC,
         },
         {
             BCRYPT_ECDH_P384_ALGORITHM, 384, ecc384privkey, sizeof(ecc384privkey), ecdh384_pubkey, sizeof(ecdh384_pubkey),
-            ecdh384_secret, sizeof(ecdh384_secret), hashed384_secret,
+            ecdh384_secret, sizeof(ecdh384_secret), hashed384_secret, hashed384_secret_prepended,
             BCRYPT_ECDH_PUBLIC_P384_MAGIC, BCRYPT_ECDH_PRIVATE_P384_MAGIC,
         },
         {
             BCRYPT_ECDH_P521_ALGORITHM, 521, ecc521privkey, sizeof(ecc521privkey), ecdh521_pubkey, sizeof(ecdh521_pubkey),
-            ecdh521_secret, sizeof(ecdh521_secret), hashed521_secret,
+            ecdh521_secret, sizeof(ecdh521_secret), hashed521_secret, hashed521_secret_prepended,
             BCRYPT_ECDH_PUBLIC_P521_MAGIC, BCRYPT_ECDH_PRIVATE_P521_MAGIC,
         },
     };
@@ -3798,6 +3865,12 @@ static BYTE dh_hashed_secret[] =
     0xb5, 0x0a, 0xfe, 0x8f,
 };
 
+static BYTE dh_hashed_secret_prepended[] =
+{
+    0x03, 0x9d, 0x31, 0x52, 0x32, 0xca, 0xfc, 0x12, 0x23, 0x2e, 0x63, 0x0b, 0x7a, 0x1c, 0xaf, 0xee,
+    0x17, 0xf0, 0x7b, 0xc6,
+};
+
 BCryptBuffer dh_hash_param_buffers[] =
 {
     {
@@ -3806,12 +3879,36 @@ BCryptBuffer dh_hash_param_buffers[] =
         (void *)BCRYPT_SHA1_ALGORITHM,
     }
 };
+BCryptBuffer dh_hash_param_buffers_prepended[] =
+{
+    {
+        sizeof(BCRYPT_SHA1_ALGORITHM),
+        KDF_HASH_ALGORITHM,
+        (void *)BCRYPT_SHA1_ALGORITHM,
+    },
+    {
+        sizeof(hash_prepend[0]),
+        KDF_SECRET_PREPEND,
+        (void *)hash_prepend[0],
+    },
+    {
+        sizeof(hash_prepend[1]),
+        KDF_SECRET_PREPEND,
+        (void *)hash_prepend[1],
+    }
+};
 
 BCryptBufferDesc dh_hash_params =
 {
     BCRYPTBUFFER_VERSION,
     ARRAY_SIZE(dh_hash_param_buffers),
     dh_hash_param_buffers,
+};
+BCryptBufferDesc dh_hash_params_prepended =
+{
+    BCRYPTBUFFER_VERSION,
+    ARRAY_SIZE(dh_hash_param_buffers_prepended),
+    dh_hash_param_buffers_prepended,
 };
 
 static void test_DH(void)
@@ -3940,6 +4037,18 @@ static void test_DH(void)
     ok(!memcmp(dh_secret, buf, size), "wrong data\n");
     free(buf);
 
+    /* Raw secret with a BCryptBufferDesc, which is ignored */
+    size = 0;
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, &dh_hash_params_prepended, NULL, 0, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(size == 64, "got %lu\n", size);
+
+    buf = calloc(1, size);
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, &dh_hash_params_prepended, buf, size, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(!memcmp(dh_secret, buf, size), "wrong data\n");
+    free(buf);
+
     size = 0;
     status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, NULL, NULL, 0, &size, 0);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
@@ -3957,6 +4066,17 @@ static void test_DH(void)
     status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &dh_hash_params, buf, size, &size, 0);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     ok(!memcmp(dh_hashed_secret, buf, size), "wrong data\n");
+    ok(size == 20, "got %lu\n", size);
+
+    size = 0;
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &dh_hash_params_prepended, NULL, 0, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(size == 20, "got %lu\n", size);
+
+    buf = calloc(1, size);
+    status = BCryptDeriveKey(secret, BCRYPT_KDF_HASH, &dh_hash_params_prepended, buf, size, &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(!memcmp(dh_hashed_secret_prepended, buf, size), "wrong data\n");
     ok(size == 20, "got %lu\n", size);
 
     memset(buf, 0, 20);

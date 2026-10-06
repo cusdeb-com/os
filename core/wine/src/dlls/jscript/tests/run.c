@@ -199,29 +199,6 @@ static IActiveScriptError *script_error;
 static IActiveScript *script_engine;
 static const CLSID *engine_clsid = &CLSID_JScript;
 
-/* Returns true if the user interface is in English. Note that this does not
- * presume of the formatting of dates, numbers, etc.
- */
-static BOOL is_lang_english(void)
-{
-    static HMODULE hkernel32 = NULL;
-    static LANGID (WINAPI *pGetThreadUILanguage)(void) = NULL;
-    static LANGID (WINAPI *pGetUserDefaultUILanguage)(void) = NULL;
-
-    if (!hkernel32)
-    {
-        hkernel32 = GetModuleHandleA("kernel32.dll");
-        pGetThreadUILanguage = (void*)GetProcAddress(hkernel32, "GetThreadUILanguage");
-        pGetUserDefaultUILanguage = (void*)GetProcAddress(hkernel32, "GetUserDefaultUILanguage");
-    }
-    if (pGetThreadUILanguage)
-        return PRIMARYLANGID(pGetThreadUILanguage()) == LANG_ENGLISH;
-    if (pGetUserDefaultUILanguage)
-        return PRIMARYLANGID(pGetUserDefaultUILanguage()) == LANG_ENGLISH;
-
-    return PRIMARYLANGID(GetUserDefaultLangID()) == LANG_ENGLISH;
-}
-
 #define test_grfdex(a,b) _test_grfdex(__LINE__,a,b)
 static void _test_grfdex(unsigned line, DWORD grfdex, DWORD expect)
 {
@@ -2553,8 +2530,7 @@ static void test_error_reports(void)
         },
     };
 
-    if (!is_lang_english())
-        skip("Non-english UI (test with hardcoded strings)\n");
+    SetThreadPreferredUILanguages( MUI_LANGUAGE_NAME, L"en-US\0", NULL );
 
     for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
@@ -2656,20 +2632,17 @@ static void test_error_reports(void)
             todo_wine_if(tests[i].reserved_lcid)
             ok(ei.wReserved == (tests[i].reserved_lcid ? GetUserDefaultLCID() : 0), "[%u] wReserved = %x expected %lx\n",
                i, ei.wReserved, (tests[i].reserved_lcid ? GetUserDefaultLCID() : 0));
-            if (is_lang_english())
-            {
-                if(tests[i].error_source)
-                    ok(ei.bstrSource && !lstrcmpW(ei.bstrSource, tests[i].error_source), "[%u] bstrSource = %s expected %s\n",
-                       i, wine_dbgstr_w(ei.bstrSource), wine_dbgstr_w(tests[i].error_source));
-                else
-                    ok(!ei.bstrSource, "[%u] bstrSource = %s expected NULL\n", i, wine_dbgstr_w(ei.bstrSource));
-                if(tests[i].description)
-                    todo_wine_if(tests[i].todo_flags & ERROR_TODO_DESCRIPTION)
-                    ok(ei.bstrDescription && !lstrcmpW(ei.bstrDescription, tests[i].description),
-                       "[%u] bstrDescription = %s expected %s\n", i, wine_dbgstr_w(ei.bstrDescription), wine_dbgstr_w(tests[i].description));
-                else
-                    ok(!ei.bstrDescription, "[%u] bstrDescription = %s expected NULL\n", i, wine_dbgstr_w(ei.bstrDescription));
-            }
+            if(tests[i].error_source)
+                ok(ei.bstrSource && !lstrcmpW(ei.bstrSource, tests[i].error_source), "[%u] bstrSource = %s expected %s\n",
+                   i, wine_dbgstr_w(ei.bstrSource), wine_dbgstr_w(tests[i].error_source));
+            else
+                ok(!ei.bstrSource, "[%u] bstrSource = %s expected NULL\n", i, wine_dbgstr_w(ei.bstrSource));
+            if(tests[i].description)
+                todo_wine_if(tests[i].todo_flags & ERROR_TODO_DESCRIPTION)
+                ok(ei.bstrDescription && !lstrcmpW(ei.bstrDescription, tests[i].description),
+                   "[%u] bstrDescription = %s expected %s\n", i, wine_dbgstr_w(ei.bstrDescription), wine_dbgstr_w(tests[i].description));
+            else
+                ok(!ei.bstrDescription, "[%u] bstrDescription = %s expected NULL\n", i, wine_dbgstr_w(ei.bstrDescription));
             if(tests[i].help_file)
                 todo_wine_if(tests[i].todo_flags & ERROR_TODO_HELPFILE)
                 ok(ei.bstrHelpFile && !lstrcmpW(ei.bstrHelpFile, tests[i].help_file),
@@ -2692,6 +2665,8 @@ static void test_error_reports(void)
         IActiveScript_Release(engine);
         IActiveScriptParse_Release(parser);
     }
+
+    SetThreadPreferredUILanguages( MUI_LANGUAGE_NAME, NULL, NULL );
 }
 
 #define run_script(a) _run_script(__LINE__,a)
@@ -4590,14 +4565,60 @@ static BOOL check_jscript(void)
     return parse_script(0, L"if(!('localeCompare' in String.prototype)) throw 1;") == S_OK;
 }
 
+static BOOL is_jscript9legacy(void)
+{
+    VARIANT output;
+    HRESULT hres = parse_script_expr(L"ScriptEngineMajorVersion()", &output, NULL);
+    return hres == S_OK && V_VT(&output) == VT_I4 && V_I4(&output) >= 11;
+}
+
+static const WCHAR* jscript_replacement_value = L"JScriptReplacement";
+
+static BOOL revert_to_jscript(HKEY* jscript_reg_key)
+{
+    LSTATUS status;
+    DWORD new_value = 0;
+    status = RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Policies\\Microsoft\\Internet Explorer\\Main",
+        0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, jscript_reg_key, NULL);
+
+    if (status != ERROR_SUCCESS) {
+        trace("Failed to create/open registry key: %ld\n", status);
+        return FALSE;
+    }
+
+    status = RegSetValueExW(*jscript_reg_key, jscript_replacement_value, 0, REG_DWORD,
+        (const BYTE*)&new_value, sizeof(new_value));
+
+    if (status != ERROR_SUCCESS) {
+        trace("Failed to set registry value: %ld\n", status);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 START_TEST(run)
 {
     int argc;
     char **argv;
+    BOOL jscript9legacy = FALSE;
+    HKEY jscript_reg_key;
 
     argc = winetest_get_mainargs(&argv);
 
     CoInitialize(NULL);
+
+    if (is_jscript9legacy()) {
+        BOOL success;
+        jscript9legacy = TRUE;
+        trace("JScript9Legacy engine detected, temporarily reverting to JScript engine\n");
+        success = revert_to_jscript(&jscript_reg_key);
+        if (!success)
+        {
+            win_skip("Couldn't revert to JScript engine\n");
+            goto cleanup;
+        }
+    }
 
     if(!check_jscript()) {
         win_skip("Broken engine, probably too old\n");
@@ -4622,5 +4643,11 @@ START_TEST(run)
             run_benchmarks();
     }
 
+    if (jscript9legacy) {
+        trace("Restoring JScript9Legacy engine\n");
+        RegDeleteValueW(jscript_reg_key, jscript_replacement_value);
+    }
+
+cleanup:
     CoUninitialize();
 }

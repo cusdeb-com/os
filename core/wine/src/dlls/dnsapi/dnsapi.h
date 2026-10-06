@@ -97,6 +97,10 @@ static inline char *strdup_ua( const char *src )
     return dst;
 }
 
+void free_host_entries( void );
+void destroy_cache( void );
+BOOL get_cache_data_table( DNS_CACHE_ENTRY ** );
+
 extern const char *debugstr_type( unsigned short );
 
 struct get_searchlist_params

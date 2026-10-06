@@ -111,6 +111,7 @@
 @ cdecl wined3d_device_context_copy_resource(ptr ptr ptr)
 @ cdecl wined3d_device_context_copy_sub_resource_region(ptr ptr long long long long ptr long ptr long)
 @ cdecl wined3d_device_context_copy_uav_counter(ptr ptr long ptr)
+@ cdecl wined3d_device_context_discard_resource(ptr ptr ptr)
 @ cdecl wined3d_device_context_dispatch(ptr long long long)
 @ cdecl wined3d_device_context_dispatch_indirect(ptr ptr long)
 @ cdecl wined3d_device_context_draw(ptr long long long long)
@@ -360,6 +361,7 @@
 
 @ stdcall vkd3d_D3DPreprocess(ptr long ptr ptr ptr ptr ptr) D3DPreprocess
 @ stdcall vkd3d_D3DCompile2VKD3D(ptr long ptr ptr ptr ptr ptr long long long ptr long ptr ptr long) D3DCompile2VKD3D
+@ stdcall vkd3d_D3DReflectVKD3D(ptr long ptr ptr long) D3DReflectVKD3D
 
 @ cdecl vkd3d_acquire_vk_queue(ptr)
 @ cdecl vkd3d_create_device(ptr ptr ptr)

@@ -27,14 +27,7 @@
 #endif
 
 #include "config.h"
-
-#include "ntstatus.h"
 #include "macdrv.h"
-#include "winuser.h"
-#include "shellapi.h"
-#include "shlobj.h"
-#include "wine/list.h"
-#include "wine/server.h"
 
 
 WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
@@ -194,7 +187,7 @@ static const CFStringRef registered_name_type_prefix = CFSTR("org.winehq.registe
 static unsigned int clipboard_thread_id;
 static HWND clipboard_hwnd;
 static BOOL is_clipboard_owner;
-static macdrv_window clipboard_cocoa_window;
+static WineWindow *clipboard_cocoa_window;
 static unsigned int last_clipboard_update;
 static unsigned int last_get_seqno;
 static WINE_CLIPFORMAT **current_mac_formats;
@@ -1067,6 +1060,7 @@ struct format_entry *get_format_entries(CFTypeRef pasteboard, UINT *entries_size
         }
 
         free(import);
+        CFRelease(data);
     }
 
     CFRelease(types);
@@ -1464,21 +1458,21 @@ void macdrv_UpdateClipboard(void)
 /**************************************************************************
  *              query_pasteboard_data
  */
-BOOL query_pasteboard_data(HWND hwnd, CFStringRef type)
+bool query_pasteboard_data(HWND hwnd, CFStringRef type)
 {
     struct get_clipboard_params params = { .data_only = TRUE, .size = 1024 };
     WINE_CLIPFORMAT *format;
-    BOOL ret = FALSE;
+    bool ret = false;
 
     TRACE("win %p/%p type %s\n", hwnd, clipboard_cocoa_window, debugstr_cf(type));
 
     format = format_for_type(type);
-    if (!format) return FALSE;
+    if (!format) return false;
 
     if (!NtUserOpenClipboard(clipboard_hwnd, 0))
     {
         ERR("failed to open clipboard for %s\n", debugstr_cf(type));
-        return FALSE;
+        return false;
     }
 
     for (;;)

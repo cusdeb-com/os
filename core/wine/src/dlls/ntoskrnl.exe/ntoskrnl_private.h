@@ -56,7 +56,10 @@ struct _EPROCESS
 {
     DISPATCHER_HEADER header;
     PROCESS_BASIC_INFORMATION info;
+    KERNEL_USER_TIMES times;
     BOOL wow64;
+    ULONG session_id;
+    char image_name[15];
 };
 
 struct _KTHREAD
@@ -127,5 +130,12 @@ struct wine_device
 
     /* Combination of device_id and instance_id. Only set on PDO devices. */
     WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
+    /*
+     * Position in the device tree, starting at 1 for the root device. This
+     * value is used to construct device instance IDs for children without
+     * unique IDs of their own.
+     * Only set on PDO devices.
+     */
+    unsigned int level;
 };
 #endif

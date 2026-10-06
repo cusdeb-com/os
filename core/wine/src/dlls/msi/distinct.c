@@ -131,6 +131,7 @@ static UINT DISTINCT_execute( struct tagMSIVIEW *view, MSIRECORD *record )
         return ERROR_FUNCTION_FAILED;
 
     /* build it */
+    dv->row_count = 0;
     for( i=0; i<r_count; i++ )
     {
         struct distinct_set **x = &rowset;
@@ -275,7 +276,7 @@ UINT DISTINCT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table )
     struct distinct_view *dv = NULL;
     UINT count = 0, r;
 
-    TRACE("%p\n", dv );
+    TRACE( "%p %p %p\n", db, view, table );
 
     r = table->ops->get_dimensions( table, NULL, &count );
     if( r != ERROR_SUCCESS )

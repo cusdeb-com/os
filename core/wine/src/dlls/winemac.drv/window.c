@@ -26,16 +26,9 @@
 #endif
 
 #include "config.h"
+#include "macdrv.h"
 
 #include <IOKit/pwr_mgt/IOPMLib.h>
-#define GetCurrentThread Mac_GetCurrentThread
-#define LoadResource Mac_LoadResource
-#include <CoreServices/CoreServices.h>
-#undef GetCurrentThread
-#undef LoadResource
-
-#include "macdrv.h"
-#include "wine/server.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
@@ -220,10 +213,10 @@ void release_win_data(struct macdrv_win_data *data)
  *
  * Return the Mac window associated with the full area of a window
  */
-macdrv_window macdrv_get_cocoa_window(HWND hwnd, BOOL require_on_screen)
+WineWindow *macdrv_get_cocoa_window(HWND hwnd, bool require_on_screen)
 {
     struct macdrv_win_data *data = get_win_data(hwnd);
-    macdrv_window ret = NULL;
+    WineWindow *ret = NULL;
     if (data && (data->on_screen || !require_on_screen))
         ret = data->cocoa_window;
     release_win_data(data);
@@ -241,7 +234,7 @@ static void set_cocoa_window_properties(struct macdrv_win_data *data)
 {
     DWORD style, ex_style;
     HWND owner;
-    macdrv_window owner_win;
+    WineWindow *owner_win;
     struct macdrv_window_features wf;
     struct macdrv_window_state state;
 
@@ -629,8 +622,8 @@ static void show_window(struct macdrv_win_data *data)
 {
     HWND prev = NULL;
     HWND next = NULL;
-    macdrv_window prev_window = NULL;
-    macdrv_window next_window = NULL;
+    WineWindow *prev_window = NULL;
+    WineWindow *next_window = NULL;
     BOOL activate = FALSE;
     GUITHREADINFO info;
 
@@ -1103,7 +1096,7 @@ static void macdrv_client_surface_detach(struct client_surface *client)
 static void macdrv_client_surface_update(struct client_surface *client)
 {
     struct macdrv_client_surface *surface = impl_from_client_surface(client);
-    HWND hwnd = client->hwnd, toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+    HWND hwnd = client->hwnd, toplevel = client->toplevel;
     struct macdrv_win_data *data;
 
     TRACE("%s\n", debugstr_client_surface(client));
@@ -1133,6 +1126,7 @@ static void macdrv_client_surface_present(struct client_surface *client, HDC hdc
 
 static const struct client_surface_funcs macdrv_client_surface_funcs =
 {
+    .size = sizeof(struct macdrv_client_surface),
     .destroy = macdrv_client_surface_destroy,
     .detach = macdrv_client_surface_detach,
     .update = macdrv_client_surface_update,
@@ -1145,11 +1139,11 @@ struct macdrv_client_surface *impl_from_client_surface(struct client_surface *cl
     return CONTAINING_RECORD(client, struct macdrv_client_surface, client);
 }
 
-struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format)
+struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format, BOOL raw)
 {
     struct macdrv_client_surface *surface;
 
-    surface = client_surface_create(sizeof(*surface), &macdrv_client_surface_funcs, hwnd);
+    surface = client_surface_create(&macdrv_client_surface_funcs, hwnd, pixel_format, raw);
     surface->cocoa_view = macdrv_create_view(cgrect_from_rect(surface->client.monitor_rect));
     macdrv_set_view_hidden(surface->cocoa_view, TRUE);
 
@@ -1162,12 +1156,12 @@ struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format)
     return &surface->client;
 }
 
-BOOL macdrv_client_surface_acquire_metal_swapchain(struct macdrv_client_surface *surface)
+bool macdrv_client_surface_acquire_metal_swapchain(struct macdrv_client_surface *surface)
 {
     HWND hwnd = surface->client.hwnd;
     struct macdrv_win_data *data;
 
-    if (surface->metal_swapchain) return TRUE;
+    if (surface->metal_swapchain) return true;
 
     if ((data = get_win_data(hwnd)))
     {
@@ -1181,10 +1175,10 @@ BOOL macdrv_client_surface_acquire_metal_swapchain(struct macdrv_client_surface 
         if (NtUserGetAncestor(hwnd, GA_ROOT) != hwnd)
         {
             FIXME("Cross-process child window Metal swapchains are not implemented\n");
-            return FALSE;
+            return false;
         }
 
-        if (!NtUserGetClientRect(hwnd, &rect, NtUserGetWinMonitorDpi(hwnd, MDT_RAW_DPI))) return FALSE;
+        if (!NtUserGetClientRect(hwnd, &rect, NtUserGetWinMonitorDpi(hwnd, MDT_RAW_DPI))) return false;
         surface->metal_swapchain = macdrv_create_offscreen_swapchain(hwnd, cgrect_from_rect(rect));
     }
 
@@ -1420,7 +1414,7 @@ void macdrv_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
  */
 void macdrv_SetWindowText(HWND hwnd, LPCWSTR text)
 {
-    macdrv_window win;
+    WineWindow *win;
 
     TRACE("%p, %s\n", hwnd, debugstr_w(text));
 
@@ -2135,14 +2129,14 @@ void macdrv_app_quit_requested(const macdrv_event *event)
  *
  * Handler for QUERY_RESIZE_SIZE query.
  */
-BOOL query_resize_size(HWND hwnd, macdrv_query *query)
+bool query_resize_size(HWND hwnd, macdrv_query *query)
 {
     struct macdrv_win_data *data = get_win_data(hwnd);
     RECT rect;
     int corner;
-    BOOL ret = FALSE;
+    bool ret = false;
 
-    if (!data) return FALSE;
+    if (!data) return false;
 
     rect = rect_from_cgrect(query->resize_size.rect);
     rect = window_rect_from_visible(&data->rects, rect);
@@ -2163,7 +2157,7 @@ BOOL query_resize_size(HWND hwnd, macdrv_query *query)
     {
         rect = visible_rect_from_window(&data->rects, rect);
         query->resize_size.rect = cgrect_from_rect(rect);
-        ret = TRUE;
+        ret = true;
     }
 
     release_win_data(data);
@@ -2176,7 +2170,7 @@ BOOL query_resize_size(HWND hwnd, macdrv_query *query)
  *
  * Handler for QUERY_RESIZE_START query.
  */
-BOOL query_resize_start(HWND hwnd)
+bool query_resize_start(HWND hwnd)
 {
     TRACE("hwnd %p\n", hwnd);
 
@@ -2185,7 +2179,7 @@ BOOL query_resize_start(HWND hwnd)
     sync_window_min_max_info(hwnd);
     send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
 
-    return TRUE;
+    return true;
 }
 
 
@@ -2194,11 +2188,11 @@ BOOL query_resize_start(HWND hwnd)
  *
  * Handler for QUERY_MIN_MAX_INFO query.
  */
-BOOL query_min_max_info(HWND hwnd)
+bool query_min_max_info(HWND hwnd)
 {
     TRACE("hwnd %p\n", hwnd);
     sync_window_min_max_info(hwnd);
-    return TRUE;
+    return true;
 }
 
 

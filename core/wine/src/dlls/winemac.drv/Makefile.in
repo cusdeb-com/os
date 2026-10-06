@@ -6,7 +6,6 @@ UNIX_LIBS    = \
 	-lwin32u \
 	-framework AppKit \
 	-framework Carbon \
-	-framework CoreVideo \
 	-framework Foundation \
 	-framework IOKit \
 	-framework Metal \
@@ -32,6 +31,7 @@ SOURCES = \
 	event.c \
 	gdi.c \
 	image.c \
+	ime.c \
 	keyboard.c \
 	macdrv_main.c \
 	mouse.c \

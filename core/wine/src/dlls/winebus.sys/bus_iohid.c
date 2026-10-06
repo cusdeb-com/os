@@ -55,6 +55,7 @@
 #define PAGE_SHIFT __carbon_PAGE_SHIFT
 #include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDLib.h>
+#include <IOKit/usb/IOUSBLib.h>
 #undef ULONG
 #undef E_INVALIDARG
 #undef E_OUTOFMEMORY
@@ -98,6 +99,29 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
 #ifdef __APPLE__
+
+const char *debugstr_cf(CFTypeRef t)
+{
+    CFStringRef s;
+    const char* ret;
+
+    if (!t) return "(null)";
+
+    if (CFGetTypeID(t) == CFStringGetTypeID())
+        s = CFStringCreateWithFormat(NULL, NULL, CFSTR("\"%@\""), t);
+    else
+        s = CFCopyDescription(t);
+    ret = CFStringGetCStringPtr(s, kCFStringEncodingUTF8);
+    if (ret) ret = __wine_dbg_strdup(ret);
+    if (!ret)
+    {
+        char buf[300];
+        CFStringGetCString(s, buf, sizeof(buf), kCFStringEncodingUTF8);
+        ret = __wine_dbg_strdup(buf);
+    }
+    CFRelease(s);
+    return ret;
+}
 
 static pthread_mutex_t iohid_cs = PTHREAD_MUTEX_INITIALIZER;
 
@@ -266,12 +290,102 @@ static const struct raw_device_vtbl iohid_device_vtbl =
     iohid_device_set_feature_report,
 };
 
+static io_service_t get_parent_class_object(io_service_t dev, const io_name_t class_name)
+{
+    io_service_t tmp = dev, tmp2 = 0;
+
+    while (!IORegistryEntryGetParentEntry(tmp, kIOServicePlane, &tmp2))
+    {
+        if (tmp != dev) IOObjectRelease(tmp);
+        tmp = tmp2;
+        if (IOObjectConformsTo(tmp, class_name)) return tmp;
+    }
+    if (tmp && tmp != dev) IOObjectRelease(tmp);
+    return 0;
+}
+
+static BOOL get_ioregistry_number_value(io_service_t dev, CFStringRef property, UINT *val)
+{
+    CFDataRef data;
+    BOOL ret;
+
+    *val = 0;
+    if (!(data = IORegistryEntryCreateCFProperty(dev, property, kCFAllocatorDefault, 0)))
+    {
+        WARN("Failed to get property %s.\n", debugstr_cf(property));
+        return FALSE;
+    }
+
+    if ((ret = (CFGetTypeID(data) == CFNumberGetTypeID())))
+        *val = CFNumberToDWORD((CFNumberRef)data);
+    if (!ret) ERR("Got wrong data type %lu for property %s.\n", CFGetTypeID(data), debugstr_cf(property));
+    CFRelease(data);
+    return ret;
+}
+
+static UINT get_usb_device_number_of_interfaces(io_service_t usb_host_iface)
+{
+    io_service_t parent, child = 0;
+    io_iterator_t iterator = 0;
+    UINT iface_count = 0;
+
+    if (IORegistryEntryGetParentEntry(usb_host_iface, kIOServicePlane, &parent))
+    {
+        ERR("Failed to get parent.\n");
+        return -1;
+    }
+
+    if (IORegistryEntryGetChildIterator(parent, kIOServicePlane, &iterator))
+    {
+        ERR("Failed to get child iterator.\n");
+        IOObjectRelease(parent);
+        return -1;
+    }
+
+    while ((child = IOIteratorNext(iterator)))
+    {
+        if (IOObjectConformsTo(child, kIOUSBHostInterfaceClassName)
+                || IOObjectConformsTo(child, kIOUSBInterfaceClassName))
+            iface_count++;
+        IOObjectRelease(child);
+    }
+
+    IOObjectRelease(parent);
+    IOObjectRelease(iterator);
+    return (iface_count != 0) ? iface_count : -1;
+}
+
+static void get_usb_device_info(io_service_t usb_hid_dev, struct device_desc *desc)
+{
+    UINT class = 0, subclass = 0, protocol = 0, num_ifaces = 0, iface_num = -1;
+    io_service_t usb_host_iface = 0;
+    BOOL ret = FALSE;
+
+    if (!(usb_host_iface = get_parent_class_object(usb_hid_dev, kIOUSBHostInterfaceClassName))
+            && !(usb_host_iface = get_parent_class_object(usb_hid_dev, kIOUSBInterfaceClassName)))
+    {
+        ERR("Failed to get IOUSBHostInterface class object.\n");
+        goto exit;
+    }
+
+    if (!(ret = get_ioregistry_number_value(usb_host_iface, CFSTR(kUSBHostMatchingPropertyInterfaceClass), &class))) goto exit;
+    if (!(ret = get_ioregistry_number_value(usb_host_iface, CFSTR(kUSBHostMatchingPropertyInterfaceSubClass), &subclass))) goto exit;
+    if (!(ret = get_ioregistry_number_value(usb_host_iface, CFSTR(kUSBHostMatchingPropertyInterfaceProtocol), &protocol))) goto exit;
+    if ((num_ifaces = get_usb_device_number_of_interfaces(usb_host_iface)) == 1) iface_num = -1;
+    else if (!(ret = get_ioregistry_number_value(usb_host_iface, CFSTR(kUSBHostMatchingPropertyInterfaceNumber), &iface_num))) goto exit;
+
+    desc->bus_id = ((class & 0xff) << 16) | ((subclass & 0xff) << 8) | (protocol & 0xff);
+    desc->interface = iface_num;
+exit:
+    if (usb_host_iface) IOObjectRelease(usb_host_iface);
+    if (!ret) desc->bus_type = BUS_TYPE_UNKNOWN;
+}
+
 static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *sender, IOHIDDeviceRef IOHIDDevice)
 {
     struct device_desc desc =
     {
-        .input = -1, .is_hidraw = TRUE,
-        .serialnumber = {'0','0','0','0',0},
+        .interface = -1, .bus_id = -1, .is_hidraw = TRUE,
     };
     struct iohid_device *impl;
     USAGE_AND_PAGE usages;
@@ -304,6 +418,8 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
         WARN("Ignoring HID device %p (vid %04x, pid %04x): not a joystick or gamepad\n", IOHIDDevice, desc.vid, desc.pid);
         return;
     }
+
+    if (desc.bus_type == BUS_TYPE_USB) get_usb_device_info(IOHIDDeviceGetService(IOHIDDevice), &desc);
 
     if (IOHIDDeviceOpen(IOHIDDevice, 0) != kIOReturnSuccess)
     {

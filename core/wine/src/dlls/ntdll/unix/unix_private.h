@@ -51,6 +51,7 @@ static const WORD current_machine = IMAGE_FILE_MACHINE_ARMNT;
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
 #endif
 extern WORD native_machine;
+extern ULONG cpu_count;
 
 static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
@@ -74,6 +75,7 @@ static inline TEB64 *get_teb64( TEB *teb ) { return teb ? (TEB64 *)(ULONG_PTR)te
 
 extern WOW_PEB *wow_peb;
 extern ULONG_PTR user_space_wow_limit;
+extern void *main_module;
 extern SECTION_IMAGE_INFORMATION main_image_info;
 
 static inline WOW_TEB *get_wow_teb( TEB *teb )
@@ -83,13 +85,14 @@ static inline WOW_TEB *get_wow_teb( TEB *teb )
 
 static inline BOOL is_wow64(void)
 {
-    return !!wow_peb;
+    if (is_win64) return !is_machine_64bit( main_image_info.Machine ); /* 64-bit ntdll, 32-bit image */
+    else return is_machine_64bit( native_machine );  /* 32-bit ntdll, 64-bit wineserver */
 }
 
 /* check for old-style Wow64 (using a 32-bit ntdll.so) */
 static inline BOOL is_old_wow64(void)
 {
-    return !is_win64 && wow_peb;
+    return !is_win64 && is_machine_64bit( native_machine );
 }
 
 static inline BOOL is_arm64ec(void)
@@ -97,6 +100,13 @@ static inline BOOL is_arm64ec(void)
     return (current_machine == IMAGE_FILE_MACHINE_ARM64 &&
             main_image_info.Machine == IMAGE_FILE_MACHINE_AMD64);
 }
+
+static inline ULONG_PTR get_system_affinity_mask(void)
+{
+    if (cpu_count >= sizeof(ULONG_PTR) * 8) return ~(ULONG_PTR)0;
+    return ((ULONG_PTR)1 << cpu_count) - 1;
+}
+
 
 /* per-thread data for the Unix side, stored at the bottom of the signal stack */
 
@@ -110,6 +120,7 @@ struct thread_data
     DWORD        tid;               /* thread id */
     BOOL         allow_writes;      /* ThreadAllowWrites flags */
     BOOL         suspend;           /* suspend on startup */
+    BOOL         filesys_redir;     /* WOW64_TLS_FILESYSREDIR before the TEB is created */
     pthread_t    pthread_id;        /* pthread thread id */
     void        *jmp_buf;           /* setjmp buffer for exception handling */
     void        *start;             /* thread entry point */
@@ -154,7 +165,6 @@ struct async_fileio
 {
     async_callback_t    *callback;
     struct async_fileio *next;
-    HANDLE               handle;
 };
 
 struct pe_mapping_info
@@ -208,6 +218,7 @@ extern USHORT *uctable;
 extern USHORT *lctable;
 extern SIZE_T startup_info_size;
 extern BOOL is_prefix_bootstrap;
+extern ULONG session_id;
 extern int main_argc;
 extern char **main_argv;
 extern WCHAR **main_wargv;
@@ -235,8 +246,8 @@ extern NTSTATUS load_builtin( struct pe_mapping_info *pe_mapping, USHORT machine
                               ULONG_PTR limit_low, ULONG_PTR limit_high, off_t offset );
 extern NTSTATUS load_unixlib_by_name( const UNICODE_STRING *nt_name, void **handle_ret );
 extern BOOL is_system_dir_path( const UNICODE_STRING *path, WORD *machine );
-extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **module );
-extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module );
+extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine );
+extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name );
 extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata );
 extern void start_server( BOOL debug );
 
@@ -254,7 +265,7 @@ extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *u
                                int *needs_close, enum server_fd_type *type, unsigned int *options );
 extern int wine_server_receive_fd( obj_handle_t *handle );
 extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
-extern size_t server_init_process(void);
+extern void server_init_process( struct thread_data *data );
 extern void server_init_process_done(void);
 extern void server_init_thread( struct thread_data *data );
 extern int server_pipe( int fd[2] );
@@ -279,14 +290,13 @@ extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 
 extern void set_process_instrumentation_callback( void *callback );
 
 extern void *get_cpu_area( struct thread_data *data, USHORT machine );
-extern void set_thread_id( struct thread_data *data );
 extern NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE_T commit_size );
 extern void DECLSPEC_NORETURN abort_thread( int status );
 extern void DECLSPEC_NORETURN abort_process( int status );
 extern void DECLSPEC_NORETURN exit_process( int status );
 extern void wait_suspend( CONTEXT *context );
 extern NTSTATUS send_debug_event( struct thread_data *data, EXCEPTION_RECORD *rec,
-                                  CONTEXT *context, BOOL first_chance, BOOL exception );
+                                  CONTEXT *context, BOOL first_chance );
 extern NTSTATUS set_thread_context( HANDLE handle, const void *context, BOOL *self, USHORT machine );
 extern NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT machine );
 extern unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, struct object_attributes **ret,
@@ -302,13 +312,12 @@ extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 
 extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
                                             SECTION_IMAGE_INFORMATION *info, ULONG_PTR limit_low,
                                             ULONG_PTR limit_high, WORD machine, BOOL prefer_native, off_t offset );
-extern NTSTATUS virtual_map_module( HANDLE mapping, void **module, SIZE_T *size,
-                                    SECTION_IMAGE_INFORMATION *info, ULONG_PTR limit_low,
-                                    ULONG_PTR limit_high, USHORT machine );
+extern NTSTATUS virtual_map_main_module( HANDLE mapping, USHORT machine );
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
                                              struct pe_image_info *info, void *so_handle );
 extern NTSTATUS virtual_relocate_module( void *module );
-extern TEB *virtual_alloc_first_teb(void);
+extern struct thread_data *virtual_alloc_first_thread_data(void);
+extern void virtual_alloc_first_teb(void);
 extern NTSTATUS virtual_alloc_teb( struct thread_data *data );
 struct thread_data *virtual_alloc_thread_data(void);
 extern void virtual_free_thread_data( struct thread_data *data );
@@ -330,11 +339,11 @@ extern SIZE_T virtual_uninterrupted_read_memory( const void *addr, void *buffer,
 extern NTSTATUS virtual_uninterrupted_write_memory( void *addr, const void *buffer, SIZE_T size );
 extern void virtual_set_force_exec( BOOL enable );
 extern void virtual_enable_write_exceptions( BOOL enable );
-extern void virtual_set_large_address_space(void);
 extern void virtual_fill_image_information( const struct pe_image_info *pe_info,
                                             SECTION_IMAGE_INFORMATION *info );
 extern void *get_builtin_so_handle( void *module );
 extern NTSTATUS set_builtin_unixlib_name( void *module, const char *name );
+extern BOOL is_emulated_code( ULONG_PTR ptr );
 
 extern NTSTATUS get_thread_ldt_entry( HANDLE handle, THREAD_DESCRIPTOR_INFORMATION *info, ULONG len );
 extern void *get_native_context( CONTEXT *context );
@@ -375,7 +384,7 @@ extern NTSTATUS tape_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTI
                                       IO_STATUS_BLOCK *io, UINT code, void *in_buffer,
                                       UINT in_size, void *out_buffer, UINT out_size );
 
-extern struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE handle );
+extern struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback );
 extern void release_fileio( struct async_fileio *io );
 extern NTSTATUS errno_to_status( int err );
 extern NTSTATUS get_nt_and_unix_names( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name,
@@ -476,13 +485,6 @@ static inline BOOL is_inside_syscall( struct thread_data *data, ULONG_PTR sp )
     if (!data->teb) return TRUE;
     return ((char *)sp >= (char *)get_kernel_stack( data ) &&
             (char *)sp <= (char *)get_syscall_frame( data ));
-}
-
-static inline BOOL is_ec_code( ULONG_PTR ptr )
-{
-    const UINT64 *map = (const UINT64 *)peb->EcCodeBitMap;
-    ULONG_PTR page = ptr / page_size;
-    return (map[page / 64] >> (page & 63)) & 1;
 }
 
 static inline CLIENT_ID make_client_id( ULONG pid, ULONG tid )

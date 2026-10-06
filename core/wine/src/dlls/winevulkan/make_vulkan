@@ -62,7 +62,7 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
-VK_XML_VERSION = "1.4.357"
+VK_XML_VERSION = "1.4.362"
 
 # Filenames to create.
 WINE_VULKAN_H = "../../include/wine/vulkan.h"
@@ -100,10 +100,10 @@ UNSUPPORTED_EXTENSIONS = {
     "VK_KHR_video_maintenance2", # Also affected by StdVideoH265HrdParameters.
     "VK_NV_external_memory_rdma", # Needs shared resources work.
     "VK_NV_external_compute_queue", # Has a new dispatchable handle
+    "VK_NV_private_data_base_handle", # Questionable use case across wine boundary
 
     # Extensions for other platforms
     "VK_EXT_metal_objects",
-    "VK_EXT_physical_device_drm",
     "VK_GOOGLE_surfaceless_query",
     "VK_SEC_amigo_profiling", # Angle specific.
 
@@ -129,6 +129,7 @@ UNEXPOSED_EXTENSIONS = {
     "VK_EXT_external_memory_dma_buf",
     "VK_EXT_image_drm_format_modifier",
     "VK_EXT_metal_surface",
+    "VK_EXT_physical_device_drm",
     "VK_KHR_external_fence_fd",
     "VK_KHR_external_memory_fd",
     "VK_EXT_external_memory_metal",
@@ -498,6 +499,10 @@ class Define(Type):
 
         if "#define VK_USE_64_BIT_PTR_DEFINES" in value:
             value = "#define VK_USE_64_BIT_PTR_DEFINES 0"
+        if "#ifdef __OBJC__" in value:
+            name = define.findtext("name").strip("_id")
+            value = value.replace("typedef void* ", f"typedef struct __{name} *")
+            value = value.replace("typedef void ",  f"typedef struct __{name} ")
 
         name = define.findtext("name") or value.replace("\n", "")
         name = re.sub(r"^.*?#define\s+(\w+).*$", r"\1", name)
@@ -1759,11 +1764,10 @@ class Parameter(VkVariable):
 
 
 class Record(Type):
-    def __init__(self, members, name, returnedonly=False, structextends=None, category="struct", **kwargs):
+    def __init__(self, members, name, structextends=None, category="struct", **kwargs):
         Type.__init__(self, name, requires=[m.type_name for m in members])
         self.union = category == "union"
         self.members = members
-        self.returnedonly = returnedonly
         self.structextends = structextends.split(",") if structextends else []
         self._struct_extensions = None
         self.chain_type = None
@@ -1778,12 +1782,22 @@ class Record(Type):
 
     @staticmethod
     def from_xml(struct):
-        if struct.attrib["name"] == "VkPhysicalDeviceVulkan14Properties":
-            del struct.attrib["returnedonly"]
         returnedonly = "returnedonly" in struct.attrib
         members = filter(is_api_supported, struct.findall("member"))
         members = [VkMember.from_xml(member, returnedonly) for member in members]
+
+        # don't flag dynamic arrays with input/output lengths as returnedonly
+        for member in filter(lambda m: m.returnedonly, members):
+            for len in filter(lambda m: m.name == member.dyn_array_len, members):
+                len.returnedonly = False
+            if member.is_dynamic_array():
+                member.returnedonly = False
+
         return Record(members, **struct.attrib)
+
+    @property
+    def returnedonly(self):
+        return all(m.returnedonly for m in self.members)
 
     @property
     def struct_extensions(self):
@@ -1897,7 +1911,7 @@ class Record(Type):
             # for non-pointer members, check for returnedonly and const attributes
             if not m.is_pointer() or m.type_name == "void":
                 if direction == Direction.INPUT:
-                    if self.returnedonly:
+                    if m.returnedonly:
                         continue
                 else:
                     if is_const or m.is_const():
@@ -1983,7 +1997,7 @@ class StructConversionFunction(object):
         else:
             if m.is_type() or m.is_next():
                 return True
-            if struct.returnedonly and not m.needs_conversion(
+            if m.returnedonly and not m.needs_conversion(
                     self.conv, self.unwrap, Direction.INPUT, self.const):
                 return False
         return True

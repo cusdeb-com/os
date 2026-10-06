@@ -640,13 +640,11 @@ static void SECUR32_freeProviders(void)
 
 /***********************************************************************
  *		FreeContextBuffer (SECUR32.@)
- *
- * Doh--if pv was allocated by a crypto package, this may not be correct.
- * The sample ssp seems to use LocalAlloc/LocalFee, but there doesn't seem to
- * be any guarantee, nor is there an alloc function in secur32.
  */
 SECURITY_STATUS WINAPI FreeContextBuffer( void *pv )
 {
+    if (!RtlValidateHeap( GetProcessHeap(), 0, pv ))
+        return LsaFreeReturnBuffer( pv );
     RtlFreeHeap( GetProcessHeap(), 0, pv );
     return SEC_E_OK;
 }

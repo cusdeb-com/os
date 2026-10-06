@@ -145,6 +145,8 @@
 #ifndef _ACRTIMP
 # ifdef _CRTIMP
 #  define _ACRTIMP _CRTIMP
+# elif defined _CORECRT_BUILD
+#  define _ACRTIMP
 # elif __has_declspec_attribute(dllimport)
 #  define _ACRTIMP __declspec(dllimport)
 # elif defined(__MINGW32__) || defined(__CYGWIN__)
@@ -154,8 +156,13 @@
 # endif
 #endif
 
+#ifndef _HAS_EXCEPTIONS
+#define _HAS_EXCEPTIONS 1
+#endif
+
 #define _ARGMAX 100
 #define _CRT_INT_MAX 0x7fffffff
+#define _TRUNCATE ((size_t)-1)
 
 #ifndef _MSVCRT_LONG_DEFINED
 #define _MSVCRT_LONG_DEFINED
@@ -221,19 +228,25 @@ typedef __int64 _CRT_ALIGN(8) __time64_t;
 #define _TIME64_T_DEFINED
 #endif
 
+#ifdef _CORECRT_BUILD
+#define _CRT_NO_TIME_T
+#endif
+
 #ifdef _USE_32BIT_TIME_T
 # ifdef _WIN64
 #  error You cannot use 32-bit time_t in Win64
 # endif
-#elif !defined(_WIN64)
+#elif !defined(_WIN64) && _MSVCR_VER < 80
 # define _USE_32BIT_TIME_T
 #endif
 
 #ifndef _TIME_T_DEFINED
+#ifndef _CRT_NO_TIME_T
 #ifdef _USE_32BIT_TIME_T
 typedef __time32_t time_t;
 #else
 typedef __time64_t time_t;
+#endif
 #endif
 #define _TIME_T_DEFINED
 #endif
@@ -354,5 +367,7 @@ typedef struct threadlocaleinfostruct {
 #else
 #define __WINE_MALLOC
 #endif
+
+#define _SECURECRT_FILL_BUFFER_PATTERN 0xFE
 
 #endif /* __WINE_CORECRT_H */

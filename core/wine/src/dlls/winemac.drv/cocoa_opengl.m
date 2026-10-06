@@ -18,11 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define GL_SILENCE_DEPRECATION
-#include <OpenGL/gl.h>
+#import "config.h"
+#import "macdrv.h"
+
 #import "cocoa_opengl.h"
 
-#include "macdrv_cocoa.h"
 #include "cocoa_app.h"
 #include "cocoa_event.h"
 
@@ -76,12 +76,12 @@
     - (void) resetSurfaceIfBackingSizeChanged
     {
         int view_backing[2];
-        if (macdrv_get_view_backing_size((macdrv_view)self.view, view_backing) &&
+        if (macdrv_get_view_backing_size((WineContentView *)self.view, view_backing) &&
             (view_backing[0] != backing_size[0] || view_backing[1] != backing_size[1]))
         {
             view_backing[0] = backing_size[0];
             view_backing[1] = backing_size[1];
-            macdrv_set_view_backing_size((macdrv_view)self.view, view_backing);
+            macdrv_set_view_backing_size((WineContentView *)self.view, view_backing);
 
             NSView* save = self.view;
 #pragma clang diagnostic push
@@ -176,13 +176,13 @@
     {
         if ([self view])
         {
-            macdrv_remove_view_opengl_context((macdrv_view)[self view], (macdrv_opengl_context)self);
+            macdrv_remove_view_opengl_context((WineContentView *)[self view], self);
             if (removeViews)
                 [self clearDrawableLeavingSurfaceOnScreen];
         }
         if ([self latentView])
         {
-            macdrv_remove_view_opengl_context((macdrv_view)[self latentView], (macdrv_opengl_context)self);
+            macdrv_remove_view_opengl_context((WineContentView *)[self latentView], self);
             if (removeViews)
                 [self setLatentView:nil];
         }
@@ -200,15 +200,11 @@
  * caller is responsible for calling macdrv_dispose_opengl_context()
  * when done with the context object.
  */
-macdrv_opengl_context macdrv_create_opengl_context(void* cglctx)
+WineOpenGLContext *macdrv_create_opengl_context(void* cglctx)
 {
 @autoreleasepool
 {
-    WineOpenGLContext *context;
-
-    context = [[WineOpenGLContext alloc] initWithCGLContextObj:cglctx];
-
-    return (macdrv_opengl_context)context;
+    return [[WineOpenGLContext alloc] initWithCGLContextObj:cglctx];
 }
 }
 
@@ -218,12 +214,10 @@ macdrv_opengl_context macdrv_create_opengl_context(void* cglctx)
  * Destroys a Cocoa OpenGL context previously created by
  * macdrv_create_opengl_context();
  */
-void macdrv_dispose_opengl_context(macdrv_opengl_context c)
+void macdrv_dispose_opengl_context(WineOpenGLContext *context)
 {
 @autoreleasepool
 {
-    WineOpenGLContext *context = (WineOpenGLContext*)c;
-
     [context removeFromViews:YES];
     [context release];
 }
@@ -232,24 +226,21 @@ void macdrv_dispose_opengl_context(macdrv_opengl_context c)
 /***********************************************************************
  *              macdrv_make_context_current
  */
-void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v, CGRect r)
+void macdrv_make_context_current(WineOpenGLContext *context, WineContentView *view, CGRect r)
 {
 @autoreleasepool
 {
-    WineOpenGLContext *context = (WineOpenGLContext*)c;
-    NSView* view = (NSView*)v;
-
     if (context && view)
     {
-        if (view == [context view] || view == [context latentView])
+        if (view == (WineContentView *)[context view] || view == (WineContentView *)[context latentView])
         {
             [context wine_updateBackingSize:&r.size];
-            macdrv_update_opengl_context(c);
+            macdrv_update_opengl_context(context);
         }
         else
         {
             [context removeFromViews:NO];
-            macdrv_add_view_opengl_context(v, c);
+            macdrv_add_view_opengl_context(view, context);
 
             if (context.needsUpdate)
             {
@@ -258,7 +249,7 @@ void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v, CGRect 
                 if (context.view)
                     [context setView:[[context class] dummyView]];
                 [context wine_updateBackingSize:&r.size];
-                [context setView:view];
+                [context setView:(NSView *)view];
                 [context setLatentView:nil];
                 [context resetSurfaceIfBackingSizeChanged];
             }
@@ -267,7 +258,7 @@ void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v, CGRect 
                 if ([context view])
                     [context clearDrawableLeavingSurfaceOnScreen];
                 [context wine_updateBackingSize:&r.size];
-                [context setLatentView:view];
+                [context setLatentView:(NSView *)view];
             }
         }
 
@@ -293,12 +284,10 @@ void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v, CGRect 
 /***********************************************************************
  *              macdrv_update_opengl_context
  */
-void macdrv_update_opengl_context(macdrv_opengl_context c)
+void macdrv_update_opengl_context(WineOpenGLContext *context)
 {
 @autoreleasepool
 {
-    WineOpenGLContext *context = (WineOpenGLContext*)c;
-
     if (context.needsUpdate)
     {
         BOOL reattach = context.needsReattach;
@@ -334,13 +323,11 @@ void macdrv_update_opengl_context(macdrv_opengl_context c)
  * Performs an implicit glFlush() and then swaps the back buffer to the
  * front (if the context is double-buffered).
  */
-void macdrv_flush_opengl_context(macdrv_opengl_context c)
+void macdrv_flush_opengl_context(WineOpenGLContext *context)
 {
 @autoreleasepool
 {
-    WineOpenGLContext *context = (WineOpenGLContext*)c;
-
-    macdrv_update_opengl_context(c);
+    macdrv_update_opengl_context(context);
     [context flushBuffer];
 }
 }

@@ -35,6 +35,7 @@
 #include "private.h"
 
 #include "wine/glu.h"
+#include "wine/rbtree.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
@@ -57,49 +58,58 @@ static CRITICAL_SECTION_DEBUG wgl_cs_debug = {
 static CRITICAL_SECTION wgl_cs = { &wgl_cs_debug, -1, 0, 0, 0, 0 };
 static char *wgl_extensions;
 
-#define USE_GL_EXT(x) #x,
-static const char *extension_names[] = { ALL_GL_EXTS ALL_WGL_EXTS };
+struct extension_entry
+{
+    const char *name;
+    size_t len;
+};
+
+#define USE_GL_EXT(x) [x] = { .name = #x, .len = sizeof(#x) - 1 },
+static const struct extension_entry all_extensions[] = { ALL_EGL_EXTS ALL_GL_EXTS ALL_WGL_EXTS };
+#undef USE_GL_EXT
+#define USE_GL_EXT(x) + sizeof(#x)
+static const UINT MAX_EXTENSION_STR = 1 ALL_GL_EXTS ALL_WGL_EXTS;
 #undef USE_GL_EXT
 
-#ifndef _WIN64
-
-static char **wow64_strings;
-static SIZE_T wow64_strings_count;
-
-static CRITICAL_SECTION wow64_cs;
-static CRITICAL_SECTION_DEBUG wow64_cs_debug =
+static int extension_entry_cmp( const void *a, const void *b )
 {
-    0, 0, &wow64_cs,
-    { &wow64_cs_debug.ProcessLocksList, &wow64_cs_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": wow64_cs") }
-};
-static CRITICAL_SECTION wow64_cs = { &wow64_cs_debug, -1, 0, 0, 0, 0 };
+    const struct extension_entry *entry_a = a, *entry_b = b;
+    size_t len = max( entry_a->len, entry_b->len );
+    return strncmp( entry_a->name, entry_b->name, len );
+}
 
-static void append_wow64_string( char *str )
+static enum opengl_extension parse_extension( const char *ext, size_t len )
 {
-    char **tmp;
+    const struct extension_entry entry = { .name = ext, .len = len }, *found;
 
-    EnterCriticalSection( &wow64_cs );
-
-    if (!(tmp = realloc( wow64_strings, (wow64_strings_count + 1) * sizeof(*wow64_strings) )))
-        ERR( "Failed to allocate memory for wow64 strings\n" );
-    else
+    if ((found = bsearch( &entry, all_extensions, ARRAY_SIZE(all_extensions), sizeof(entry), extension_entry_cmp )))
     {
-        wow64_strings = tmp;
-        wow64_strings[wow64_strings_count] = str;
-        wow64_strings_count += 1;
+        enum opengl_extension ext = found - all_extensions;
+        if (ext == GL_EXT_memory_object_fd) return GL_EXT_memory_object_win32;
+        if (ext == GL_EXT_semaphore_fd) return GL_EXT_semaphore_win32;
+        return ext;
     }
 
-    LeaveCriticalSection( &wow64_cs );
+    WARN( "Extension %s unknown\n", debugstr_an(ext, len) );
+    return GL_EXTENSION_COUNT;
 }
 
-static void cleanup_wow64_strings(void)
+static size_t parse_extensions( const char *name, enum opengl_extension extensions[GL_EXTENSION_COUNT] )
 {
-    while (wow64_strings_count--) free( wow64_strings[wow64_strings_count] );
-    free( wow64_strings );
-}
+    size_t count = 0;
 
-#endif
+    while (*name)
+    {
+        const char *end = name + 1;
+        while (*end && *end != ' ') end++;
+        extensions[count] = parse_extension( name, end - name );
+        if (extensions[count] != GL_EXTENSION_COUNT) count++;
+        while (*end == ' ') end++;
+        name = end;
+    }
+
+    return count;
+}
 
 static const char *debugstr_object_type( enum object_type type )
 {
@@ -128,13 +138,13 @@ static void init_wgl_extensions( const BOOLEAN extensions[GL_EXTENSION_COUNT] )
     UINT pos = 0, len = 0, ext;
     char *str;
 
-    for (ext = WGL_FIRST_EXTENSION; ext < GL_EXTENSION_COUNT; ext++)
-        if (extensions[ext]) len += strlen( extension_names[ext] ) + 1;
+    for (ext = MIN_WGL_EXTENSION; ext <= MAX_WGL_EXTENSION; ext++)
+        if (extensions[ext]) len += all_extensions[ext].len + 1;
 
     if (!(str = malloc( len + 1 ))) return;
 
-    for (ext = WGL_FIRST_EXTENSION; ext < GL_EXTENSION_COUNT; ext++)
-        if (extensions[ext]) pos += sprintf( str + pos, "%s ", extension_names[ext] );
+    for (ext = MIN_WGL_EXTENSION; ext <= MAX_WGL_EXTENSION; ext++)
+        if (extensions[ext]) pos += sprintf( str + pos, "%s ", all_extensions[ext].name );
     str[pos - 1] = 0;
 
     wgl_extensions = str;
@@ -473,6 +483,9 @@ static void init_object_table( struct object_table *table, enum object_type type
 {
     InitializeSRWLock( &table->lock );
     table->type = type;
+    /* always handle name allocations for objects used on the unix side */
+    table->implicit = type == OBJ_TYPE_FRAMEBUFFER || type == OBJ_TYPE_RENDERBUFFER ||
+                      type == OBJ_TYPE_TEXTURE || type == OBJ_TYPE_BUFFER;
 }
 
 struct display_lists
@@ -503,11 +516,18 @@ static struct display_lists *display_lists_acquire( struct display_lists *lists 
     return lists;
 }
 
-static void display_lists_release( struct display_lists *lists, BOOL destroy )
+static void display_lists_release( struct display_lists *lists, UINT64 root_context )
 {
-    struct glDeleteSync_params delete_sync = { .teb = NtCurrentTeb() };
+    BOOL destroy = !!root_context;
 
     if (InterlockedDecrement( &lists->refcount )) return;
+
+    if (destroy)
+    {
+        /* select the correct root context before destroying display list objects */
+        struct set_root_context_params params = { .teb = NtCurrentTeb(), .root_context = root_context };
+        UNIX_CALL( set_root_context, &params );
+    }
 
     for (UINT i = 0; i < OBJ_TYPE_COUNT; i++)
         free_object_table( lists->tables + i, destroy );
@@ -515,20 +535,109 @@ static void display_lists_release( struct display_lists *lists, BOOL destroy )
     for (int i = 0; i < lists->syncs.count; i++)
     {
         struct handle_entry *entry = lists->syncs.handles + i;
+        struct glDeleteSync_params delete_sync = { .teb = NtCurrentTeb(), .sync = entry->user_data };
         if (LOWORD(entry->handle) == 0xffff) continue;
         WARN( "Leaking sync client %#x, host %p\n", entry->handle, entry->user_data );
-        delete_sync.sync = entry->user_data;
         if (destroy) UNIX_CALL( glDeleteSync, &delete_sync );
         free( entry->user_data );
     }
 
+    if (destroy)
+    {
+        /* restore the client context and drawables, or default root context */
+        struct set_root_context_params params = { .teb = NtCurrentTeb() };
+        UNIX_CALL( set_root_context, &params );
+    }
+
     free( lists );
+}
+
+/* context state management */
+
+struct light_model_state
+{
+    GLfloat ambient[4];
+    GLint two_side;
+};
+
+struct lighting_state
+{
+    struct light_model_state model;
+    GLenum shade_model;
+};
+
+struct depth_buffer_state
+{
+    GLenum depth_func;
+};
+
+struct viewport_state
+{
+    GLint x;
+    GLint y;
+    GLsizei w;
+    GLsizei h;
+};
+
+struct enable_state
+{
+    GLboolean cull_face;
+    GLboolean depth_test;
+    GLboolean dither;
+    GLboolean fog;
+    GLboolean lighting;
+    GLboolean normalize;
+};
+
+struct color_buffer_state
+{
+    GLfloat clear_color[4];
+};
+
+struct hint_state
+{
+    GLenum perspective_correction;
+    GLenum point_smooth;
+    GLenum line_smooth;
+    GLenum polygon_smooth;
+    GLenum fog;
+    GLenum multisample_nv;
+};
+
+struct string_entry
+{
+    struct rb_entry         entry;
+    enum unix_funcs         func;
+    GLenum                  pname;
+    UINT                    index;
+    struct opengl_wow64_str str;
+};
+
+static int string_entry_cmp( const void *key, const struct rb_entry *entry )
+{
+    const struct string_entry *a = key, *b = RB_ENTRY_VALUE( entry, struct string_entry, entry );
+    int ret;
+
+    if ((ret = a->func - b->func)) return ret;
+    if ((ret = a->pname - b->pname)) return ret;
+    return (int)a->index - b->index;
 }
 
 struct context
 {
     struct opengl_client_context base;
     struct display_lists *lists;
+    GLubyte *extensions; /* compat extension string */
+    struct rb_tree wow64_strings;
+
+    /* semi-stub state tracker for wglCopyContext */
+    GLbitfield used;                            /* context state used bits */
+    struct lighting_state lighting;             /* GL_LIGHTING_BIT */
+    struct depth_buffer_state depth_buffer;     /* GL_DEPTH_BUFFER_BIT */
+    struct viewport_state viewport;             /* GL_VIEWPORT_BIT */
+    struct enable_state enable;                 /* GL_ENABLE_BIT */
+    struct color_buffer_state color_buffer;     /* GL_COLOR_BUFFER_BIT */
+    struct hint_state hint;                     /* GL_HINT_BIT */
 };
 
 static struct context *context_from_opengl_client_context( struct opengl_client_context *base )
@@ -561,10 +670,12 @@ static struct handle_entry *alloc_client_context( struct context *share )
     struct handle_entry *ptr;
 
     if (!(context = calloc( 1, sizeof(*context) ))) return NULL;
+    rb_init( &context->wow64_strings, string_entry_cmp );
+
     if (!(context->lists = share ? display_lists_acquire( share->lists ) : display_lists_create())) goto failed;
     if ((ptr = alloc_handle( &contexts, context ))) return ptr;
 
-    display_lists_release( context->lists, share ? !share->base.broken_sharing : TRUE );
+    display_lists_release( context->lists, share ? share->base.root_context : 0 );
 failed:
     free( context );
     return NULL;
@@ -573,8 +684,13 @@ failed:
 static void free_client_context( struct handle_entry *ptr )
 {
     struct context *context = context_from_opengl_client_context( ptr->context );
+    struct string_entry *str, *next;
 
-    display_lists_release( context->lists, !context->base.broken_sharing );
+    RB_FOR_EACH_ENTRY_DESTRUCTOR( str, next, &context->wow64_strings, struct string_entry, entry )
+        free( str );
+
+    display_lists_release( context->lists, context->base.root_context );
+    free( context->extensions );
 
     free_handle( &contexts, ptr );
     free( context );
@@ -584,6 +700,50 @@ static struct context *get_current_context(void)
 {
     HGLRC current = NtCurrentTeb()->glCurrentRC;
     return current ? context_from_handle( current ) : NULL;
+}
+
+static void *grow_string_entry( struct context *ctx, void *ptr, UINT len )
+{
+    struct string_entry *str = CONTAINING_RECORD( ptr, struct string_entry, str.ptr );
+
+    rb_remove( &ctx->wow64_strings, &str->entry );
+    if (!(str = realloc( str, offsetof(struct string_entry, str.ptr[len] )))) return NULL;
+    str->str.len = len;
+
+    rb_put( &ctx->wow64_strings, str, &str->entry );
+    return str->str.ptr;
+}
+
+static void *alloc_string_entry( struct context *ctx, enum unix_funcs func, GLenum pname, UINT index, UINT len )
+{
+#ifdef _WIN64
+    return NULL;
+#else
+    struct string_entry key = { .func = func, .pname = pname, .index = index }, *str;
+    struct rb_entry *entry;
+
+    if ((entry = rb_get( &ctx->wow64_strings, &key )))
+    {
+        struct string_entry *str = CONTAINING_RECORD( entry, struct string_entry, entry );
+        return str->str.len >= len ? str : grow_string_entry( ctx, str->str.ptr, len );
+    }
+
+    if (!(str = malloc( offsetof( struct string_entry, str.ptr[len] ) ))) return NULL;
+    str->func = func;
+    str->pname = pname;
+    str->index = index;
+    str->str.len = len;
+    rb_put( &ctx->wow64_strings, str, &str->entry );
+
+    return str->str.ptr;
+#endif
+}
+
+static void free_string_entry( struct context *ctx, void *ptr )
+{
+    struct string_entry *str = ptr ? CONTAINING_RECORD( ptr, struct string_entry, str.ptr ) : NULL;
+    if (str) rb_remove( &ctx->wow64_strings, &str->entry );
+    free( str );
 }
 
 void set_gl_error( GLenum error )
@@ -648,11 +808,11 @@ static void alloc_client_objects( struct context *ctx, enum object_type type, UI
 
 static BOOL is_core_context( struct opengl_client_context *ctx )
 {
-    if (ctx->major_version < 3) return FALSE;
-    if (ctx->major_version > 3) return !!(ctx->profile_mask & WGL_CONTEXT_CORE_PROFILE_BIT_ARB);
-    if (ctx->minor_version > 1) return !!(ctx->profile_mask & WGL_CONTEXT_CORE_PROFILE_BIT_ARB);
-    if (ctx->minor_version == 1) return !ctx->extensions[GL_ARB_compatibility];
-    return !!(ctx->context_flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT);
+    if (ctx->attrs.major < 3) return FALSE;
+    if (ctx->attrs.major > 3) return !!(ctx->attrs.profile & WGL_CONTEXT_CORE_PROFILE_BIT_ARB);
+    if (ctx->attrs.minor > 1) return !!(ctx->attrs.profile & WGL_CONTEXT_CORE_PROFILE_BIT_ARB);
+    if (ctx->attrs.minor == 1) return !ctx->extensions[GL_ARB_compatibility];
+    return !!(ctx->attrs.flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT);
 }
 
 BOOL alloc_context_objects( enum object_type type, UINT n, const GLuint *handles, BOOL extension )
@@ -927,11 +1087,6 @@ HGLRC WINAPI wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *attrib
         SetLastError( ERROR_INVALID_OPERATION );
         return NULL;
     }
-    if (share_context && share_context->base.broken_sharing)
-    {
-        ERR( "Shared context %p has broken display list sharing\n", share );
-        share = NULL;
-    }
     if (share) args.hShareContext = &share_context->base.obj;
 
     if (!(ptr = alloc_client_context( share ? share_context : NULL ))) return NULL;
@@ -971,8 +1126,6 @@ BOOL WINAPI wglDeleteContext( HGLRC handle )
     if ((status = UNIX_CALL( wglDeleteContext, &args ))) WARN( "wglDeleteContext returned %#lx\n", status );
     if (status || !args.ret) return FALSE;
 
-    /* make sure there's a (dummy) context before releasing and destroying display list objects */
-    if (!teb->glCurrentRC) wglMakeContextCurrentARB( NULL, NULL, NULL );
     free_client_context( ptr );
     return TRUE;
 }
@@ -1030,17 +1183,182 @@ BOOL WINAPI wglShareLists( HGLRC src_handle, HGLRC dst_handle )
     if (!(dst_context = context_from_handle( dst_handle ))) return FALSE;
     if (ReadNoFence( &dst_context->lists->modified )) return FALSE;
 
-    if (src_context->base.broken_sharing || dst_context->base.broken_sharing)
+    if (src_context->base.root_context != dst_context->base.root_context)
     {
-        ERR( "Either source or destination context has broken sharing\n" );
+        ERR( "Cannot share contexts with different roots\n" );
+        RtlSetLastWin32Error( ERROR_INCOMPATIBLE_DEVICE_CONTEXTS_ARB );
         return FALSE;
     }
 
     lists = display_lists_acquire( src_context->lists );
     lists = InterlockedExchangePointer( (void *)&dst_context->lists, lists );
-    display_lists_release( lists, TRUE );
+    display_lists_release( lists, dst_context->base.root_context );
 
     return TRUE;
+}
+
+struct context_attribute_desc
+{
+    GLenum name;
+    GLbitfield bit;
+    unsigned short offset;
+    unsigned short size;
+};
+
+static struct context_attribute_desc context_attributes[] =
+{
+#define CONTEXT_ATTRIBUTE_DESC(bit, name, field) { name, bit, offsetof(struct context, field), sizeof(((struct context *)0)->field) }
+    CONTEXT_ATTRIBUTE_DESC( GL_COLOR_BUFFER_BIT, GL_COLOR_CLEAR_VALUE, color_buffer.clear_color ),
+    CONTEXT_ATTRIBUTE_DESC( GL_DEPTH_BUFFER_BIT, GL_DEPTH_FUNC, depth_buffer.depth_func ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_CULL_FACE, enable.cull_face ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_DEPTH_TEST, enable.depth_test ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_DITHER, enable.dither ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_FOG, enable.fog ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_LIGHTING, enable.lighting ),
+    CONTEXT_ATTRIBUTE_DESC( GL_ENABLE_BIT, GL_NORMALIZE, enable.normalize ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_PERSPECTIVE_CORRECTION_HINT, hint.perspective_correction ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_POINT_SMOOTH_HINT, hint.point_smooth ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_LINE_SMOOTH_HINT, hint.line_smooth ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_POLYGON_SMOOTH_HINT, hint.polygon_smooth ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_FOG_HINT, hint.fog ),
+    CONTEXT_ATTRIBUTE_DESC( GL_HINT_BIT, GL_MULTISAMPLE_FILTER_HINT_NV, hint.multisample_nv ),
+    CONTEXT_ATTRIBUTE_DESC( GL_LIGHTING_BIT, GL_LIGHT_MODEL_AMBIENT, lighting.model.ambient ),
+    CONTEXT_ATTRIBUTE_DESC( GL_LIGHTING_BIT, GL_LIGHT_MODEL_TWO_SIDE, lighting.model.two_side ),
+    CONTEXT_ATTRIBUTE_DESC( GL_LIGHTING_BIT, GL_SHADE_MODEL, lighting.shade_model ),
+    CONTEXT_ATTRIBUTE_DESC( GL_VIEWPORT_BIT, GL_VIEWPORT, viewport ),
+#undef CONTEXT_ATTRIBUTE_DESC
+};
+
+static int compare_context_attributes( const void *v1, const void *v2 )
+{
+    const struct context_attribute_desc *a1 = v1, *a2 = v2;
+
+    return (int)a1->name - (int)a2->name;
+};
+
+void set_context_attribute( GLenum name, const void *value, size_t size )
+{
+    struct context_attribute_desc key = { .name = name };
+    const struct context_attribute_desc *desc;
+    struct context *ctx;
+
+    if (!(ctx = get_current_context())) return;
+
+    if (name == GL_FRAMEBUFFER)
+    {
+        set_context_attribute( GL_READ_FRAMEBUFFER, value, size );
+        name = GL_DRAW_FRAMEBUFFER;
+    }
+
+    if (name != -1 && (desc = bsearch( &key, context_attributes, ARRAY_SIZE(context_attributes),
+                                       sizeof(*context_attributes), compare_context_attributes )))
+    {
+        if (size && size != desc->size) ERR( "Invalid state attrib %#x parameter size %#Ix\n", name, size );
+        else
+        {
+            memcpy( (char *)ctx + desc->offset, value, desc->size );
+            ctx->used |= desc->bit;
+        }
+    }
+    else
+    {
+        if (ctx->used != -1) WARN( "Unsupported attribute on context %p\n", ctx );
+        ctx->used |= -1;
+    }
+}
+
+/***********************************************************************
+ *      wglCopyContext
+ */
+BOOL WINAPI wglCopyContext( HGLRC src_handle, HGLRC dst_handle, UINT mask )
+{
+    HDC draw_hdc = NtCurrentTeb()->glReserved1[0], read_hdc = NtCurrentTeb()->glReserved1[1];
+    HGLRC context = NtCurrentTeb()->glCurrentRC;
+    struct context *src, *dst;
+    HDC hdc = NULL;
+    HWND hwnd;
+
+    if (dst_handle == context)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+    if (!(src = context_from_handle( src_handle ))) return FALSE;
+    if (!(dst = context_from_handle( dst_handle ))) return FALSE;
+
+    if (!mask) return TRUE;
+    if (src->used == -1) FIXME( "Unsupported attributes on context %p\n", src );
+    if (src != dst && dst->used == -1) FIXME( "Unsupported attributes on context %p\n", dst );
+
+    if (!(hwnd = CreateWindowExW( 0, L"static", L"static", WS_POPUP, 0, 0, 0, 0, NULL, NULL, NULL, NULL )) ||
+        !(hdc = GetWindowDC( hwnd )) || !SetPixelFormat( hdc, dst->base.attrs.format, NULL ))
+    {
+        WARN( "Failed to create dummy window to update context attributes\n" );
+        if (hdc) ReleaseDC( hwnd, hdc );
+        if (hwnd) DestroyWindow( hwnd );
+        return FALSE;
+    }
+
+    wglMakeContextCurrentARB( hdc, hdc, dst_handle );
+
+    if (mask & GL_COLOR_BUFFER_BIT)
+    {
+        const GLfloat *floats = src->color_buffer.clear_color;
+        glClearColor( floats[0], floats[1], floats[2], floats[3] );
+        dst->color_buffer = src->color_buffer;
+    }
+    if (mask & GL_DEPTH_BUFFER_BIT)
+    {
+        glDepthFunc( src->depth_buffer.depth_func );
+        dst->depth_buffer = src->depth_buffer;
+    }
+    if (mask & GL_ENABLE_BIT)
+    {
+        if (src->enable.cull_face) glEnable( GL_CULL_FACE );
+        else glDisable( GL_CULL_FACE );
+        if (src->enable.depth_test) glEnable( GL_DEPTH_TEST );
+        else glDisable( GL_DEPTH_TEST );
+        if (src->enable.dither) glEnable( GL_DITHER );
+        else glDisable( GL_DITHER );
+        if (src->enable.fog) glEnable( GL_FOG );
+        else glDisable( GL_FOG );
+        if (src->enable.lighting) glEnable( GL_LIGHTING );
+        else glDisable( GL_LIGHTING );
+        if (src->enable.normalize) glEnable( GL_NORMALIZE );
+        else glDisable( GL_NORMALIZE );
+        dst->enable = src->enable;
+    }
+    if (mask & GL_HINT_BIT)
+    {
+        if (src->hint.perspective_correction) glHint( GL_PERSPECTIVE_CORRECTION_HINT, src->hint.perspective_correction );
+        if (src->hint.point_smooth)           glHint( GL_POINT_SMOOTH_HINT, src->hint.point_smooth );
+        if (src->hint.line_smooth)            glHint( GL_LINE_SMOOTH_HINT, src->hint.line_smooth );
+        if (src->hint.polygon_smooth)         glHint( GL_POLYGON_SMOOTH_HINT, src->hint.polygon_smooth );
+        if (src->hint.fog)                    glHint( GL_FOG_HINT, src->hint.fog );
+        if (src->hint.multisample_nv)         glHint( GL_MULTISAMPLE_FILTER_HINT_NV, src->hint.multisample_nv );
+        dst->hint = src->hint;
+    }
+    if (mask & GL_LIGHTING_BIT)
+    {
+        glLightModelfv( GL_LIGHT_MODEL_AMBIENT, src->lighting.model.ambient );
+        glLightModeli( GL_LIGHT_MODEL_TWO_SIDE, src->lighting.model.two_side );
+        glShadeModel( src->lighting.shade_model );
+        dst->lighting = src->lighting;
+    }
+    if (mask & GL_VIEWPORT_BIT)
+    {
+        glViewport( src->viewport.x, src->viewport.y, src->viewport.w, src->viewport.h );
+        dst->viewport = src->viewport;
+    }
+    dst->used |= (src->used & mask);
+
+    if (!context) wglMakeContextCurrentARB( NULL, NULL, NULL );
+    else wglMakeContextCurrentARB( draw_hdc, read_hdc, context );
+
+    ReleaseDC( hwnd, hdc );
+    DestroyWindow( hwnd );
+
+    return dst->used != -1 && src->used != -1;
 }
 
 /***********************************************************************
@@ -1069,6 +1387,64 @@ HDC WINAPI wglGetCurrentDC(void)
 HGLRC WINAPI wglGetCurrentContext(void)
 {
     return NtCurrentTeb()->glCurrentRC;
+}
+
+static const char *debugstr_pixel_format_attrib( int attrib )
+{
+    switch (attrib)
+    {
+    case WGL_DRAW_TO_WINDOW_ARB: return "WGL_DRAW_TO_WINDOW_ARB";
+    case WGL_DRAW_TO_BITMAP_ARB: return "WGL_DRAW_TO_BITMAP_ARB";
+    case WGL_ACCELERATION_ARB: return "WGL_ACCELERATION_ARB";
+    case WGL_NEED_PALETTE_ARB: return "WGL_NEED_PALETTE_ARB";
+    case WGL_NEED_SYSTEM_PALETTE_ARB: return "WGL_NEED_SYSTEM_PALETTE_ARB";
+    case WGL_SWAP_LAYER_BUFFERS_ARB: return "WGL_SWAP_LAYER_BUFFERS_ARB";
+    case WGL_SHARE_DEPTH_ARB: return "WGL_SHARE_DEPTH_ARB";
+    case WGL_SHARE_STENCIL_ARB: return "WGL_SHARE_STENCIL_ARB";
+    case WGL_SHARE_ACCUM_ARB: return "WGL_SHARE_ACCUM_ARB";
+    case WGL_SUPPORT_GDI_ARB: return "WGL_SUPPORT_GDI_ARB";
+    case WGL_SUPPORT_OPENGL_ARB: return "WGL_SUPPORT_OPENGL_ARB";
+    case WGL_DOUBLE_BUFFER_ARB: return "WGL_DOUBLE_BUFFER_ARB";
+    case WGL_STEREO_ARB: return "WGL_STEREO_ARB";
+    case WGL_PIXEL_TYPE_ARB: return "WGL_PIXEL_TYPE_ARB";
+    case WGL_DRAW_TO_PBUFFER_ARB: return "WGL_DRAW_TO_PBUFFER_ARB";
+    case WGL_BIND_TO_TEXTURE_RGB_ARB: return "WGL_BIND_TO_TEXTURE_RGB_ARB";
+    case WGL_BIND_TO_TEXTURE_RGBA_ARB: return "WGL_BIND_TO_TEXTURE_RGBA_ARB";
+    case WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV: return "WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV";
+    case WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV: return "WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV";
+    case WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB: return "WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB";
+    case WGL_FLOAT_COMPONENTS_NV: return "WGL_FLOAT_COMPONENTS_NV";
+    case WGL_NUMBER_OVERLAYS_ARB: return "WGL_NUMBER_OVERLAYS_ARB";
+    case WGL_NUMBER_UNDERLAYS_ARB: return "WGL_NUMBER_UNDERLAYS_ARB";
+    case WGL_COLOR_BITS_ARB: return "WGL_COLOR_BITS_ARB";
+    case WGL_RED_BITS_ARB: return "WGL_RED_BITS_ARB";
+    case WGL_GREEN_BITS_ARB: return "WGL_GREEN_BITS_ARB";
+    case WGL_BLUE_BITS_ARB: return "WGL_BLUE_BITS_ARB";
+    case WGL_ALPHA_BITS_ARB: return "WGL_ALPHA_BITS_ARB";
+    case WGL_ACCUM_BITS_ARB: return "WGL_ACCUM_BITS_ARB";
+    case WGL_ACCUM_RED_BITS_ARB: return "WGL_ACCUM_RED_BITS_ARB";
+    case WGL_ACCUM_GREEN_BITS_ARB: return "WGL_ACCUM_GREEN_BITS_ARB";
+    case WGL_ACCUM_BLUE_BITS_ARB: return "WGL_ACCUM_BLUE_BITS_ARB";
+    case WGL_ACCUM_ALPHA_BITS_ARB: return "WGL_ACCUM_ALPHA_BITS_ARB";
+    case WGL_DEPTH_BITS_ARB: return "WGL_DEPTH_BITS_ARB";
+    case WGL_STENCIL_BITS_ARB: return "WGL_STENCIL_BITS_ARB";
+    case WGL_AUX_BUFFERS_ARB: return "WGL_AUX_BUFFERS_ARB";
+    case WGL_SAMPLE_BUFFERS_ARB: return "WGL_SAMPLE_BUFFERS_ARB";
+    case WGL_SAMPLES_ARB: return "WGL_SAMPLES_ARB";
+    case WGL_NUMBER_PIXEL_FORMATS_ARB: return "WGL_NUMBER_PIXEL_FORMATS_ARB";
+    case WGL_RED_SHIFT_ARB: return "WGL_RED_SHIFT_ARB";
+    case WGL_GREEN_SHIFT_ARB: return "WGL_GREEN_SHIFT_ARB";
+    case WGL_BLUE_SHIFT_ARB: return "WGL_BLUE_SHIFT_ARB";
+    case WGL_ALPHA_SHIFT_ARB: return "WGL_ALPHA_SHIFT_ARB";
+    case WGL_TRANSPARENT_ARB: return "WGL_TRANSPARENT_ARB";
+    case WGL_TRANSPARENT_RED_VALUE_ARB: return "WGL_TRANSPARENT_RED_VALUE_ARB";
+    case WGL_TRANSPARENT_GREEN_VALUE_ARB: return "WGL_TRANSPARENT_GREEN_VALUE_ARB";
+    case WGL_TRANSPARENT_BLUE_VALUE_ARB: return "WGL_TRANSPARENT_BLUE_VALUE_ARB";
+    case WGL_TRANSPARENT_ALPHA_VALUE_ARB: return "WGL_TRANSPARENT_ALPHA_VALUE_ARB";
+    case WGL_TRANSPARENT_INDEX_VALUE_ARB: return "WGL_TRANSPARENT_INDEX_VALUE_ARB";
+    case WGL_SWAP_METHOD_ARB: return "WGL_SWAP_METHOD_ARB";
+    }
+    return wine_dbg_sprintf( "%#06X\n", attrib );
 }
 
 /***********************************************************************
@@ -1558,16 +1934,31 @@ static void filter_format_array( const struct wgl_pixel_format **array,
 
     assert(match != ATTRIB_MATCH_INVALID);
 
+    TRACE( "num_formats %d attrib %s value %#x match %d\n", num_formats, debugstr_pixel_format_attrib( attrib ), value, match );
+
     if (match == ATTRIB_MATCH_IGNORE && attrib != WGL_SWAP_METHOD_ARB) return;
 
     for (i = 0; i < num_formats; ++i)
     {
         if (!array[i]) continue;
-        if (!wgl_pixel_format_get_attrib( array[i], attrib, &fmt_value ) ||
-            (match == ATTRIB_MATCH_EXACT && fmt_value != value) ||
-            (match == ATTRIB_MATCH_MINIMUM && fmt_value < value) ||
-            (attrib == WGL_SWAP_METHOD_ARB && ((fmt_value == WGL_SWAP_COPY_ARB) ^ (value == WGL_SWAP_COPY_ARB))))
+        if (!wgl_pixel_format_get_attrib( array[i], attrib, &fmt_value ))
         {
+            TRACE( "Discarding format %d, no %s\n", i, debugstr_pixel_format_attrib( attrib ) );
+            array[i] = NULL;
+        }
+        else if (match == ATTRIB_MATCH_EXACT && fmt_value != value)
+        {
+            TRACE( "Discarding format %d, %s %#x != %#x\n", i, debugstr_pixel_format_attrib( attrib ), fmt_value, value );
+            array[i] = NULL;
+        }
+        else if (match == ATTRIB_MATCH_MINIMUM && fmt_value < value)
+        {
+            TRACE( "Discarding format %d, %s %#x < %#x\n", i, debugstr_pixel_format_attrib( attrib ), fmt_value, value );
+            array[i] = NULL;
+        }
+        else if (attrib == WGL_SWAP_METHOD_ARB && ((fmt_value == WGL_SWAP_COPY_ARB) ^ (value == WGL_SWAP_COPY_ARB)))
+        {
+            TRACE( "Discarding format %d, %s %#x != %#x\n", i, debugstr_pixel_format_attrib( attrib ), fmt_value, value );
             array[i] = NULL;
         }
     }
@@ -1680,6 +2071,15 @@ static void compare_formats_ctx_set_attrib( struct compare_formats_ctx *ctx,
     if (i == ctx->num_attribs) ++ctx->num_attribs;
 }
 
+static const char *debugstr_pixel_format( const struct wgl_pixel_format *fmt )
+{
+    if (!fmt) return "(null)";
+    return wine_dbg_sprintf( "%04lx %#x col %u:%u/%u/%u/%u acc %u:%u/%u/%u/%u ds:%u/%u swp:%#x pb:%u smp:%u srgb:%u", fmt->pfd.dwFlags, fmt->pfd.iPixelType, fmt->pfd.cColorBits, fmt->pfd.cRedBits,
+                             fmt->pfd.cGreenBits, fmt->pfd.cBlueBits, fmt->pfd.cAlphaBits, fmt->pfd.cAccumBits, fmt->pfd.cAccumRedBits, fmt->pfd.cAccumGreenBits,
+                             fmt->pfd.cAccumBlueBits, fmt->pfd.cAccumAlphaBits, fmt->pfd.cDepthBits, fmt->pfd.cStencilBits, fmt->swap_method, fmt->draw_to_pbuffer,
+                             fmt->samples, fmt->framebuffer_srgb_capable );
+}
+
 /***********************************************************************
  *		wglChoosePixelFormatARB (OPENGL32.@)
  */
@@ -1702,11 +2102,13 @@ BOOL WINAPI wglChoosePixelFormatARB( HDC hdc, const int *attribs_int, const FLOA
     /* Gather, validate and deduplicate all attributes */
     for (i = 0; attribs_int && attribs_int[i]; i += 2)
     {
+        TRACE( "attribs (int) %#x: %#x\n", attribs_int[i], attribs_int[i + 1] );
         if (wgl_attrib_match_criteria( attribs_int[i] ) == ATTRIB_MATCH_INVALID) return FALSE;
         compare_formats_ctx_set_attrib( &ctx, attribs_int[i], attribs_int[i + 1] );
     }
     for (i = 0; attribs_float && attribs_float[i]; i += 2)
     {
+        TRACE( "attribs (float) %#x: %f\n", (int)attribs_float[i], attribs_float[i + 1] );
         if (wgl_attrib_match_criteria( attribs_float[i] ) == ATTRIB_MATCH_INVALID) return FALSE;
         compare_formats_ctx_set_attrib( &ctx, attribs_float[i], attribs_float[i + 1] );
     }
@@ -1741,6 +2143,8 @@ BOOL WINAPI wglChoosePixelFormatARB( HDC hdc, const int *attribs_int, const FLOA
     *num_formats = 0;
     for (i = 0; i < num_wgl_formats && i < max_formats && format_array[i]; ++i)
     {
+        const struct wgl_pixel_format *pf = format_array[i];
+        TRACE( "returning %Iu: %s\n", pf - wgl_formats + 1, debugstr_pixel_format(pf) );
         ++*num_formats;
         formats[i] = format_array[i] - wgl_formats + 1;
     }
@@ -1949,14 +2353,11 @@ PROC WINAPI wglGetProcAddress( LPCSTR name )
         LeaveCriticalSection( &wgl_cs );
     }
 
-    if (func->major && (ctx->base.major_version > func->major
-                        || (ctx->base.major_version == func->major && ctx->base.minor_version >= func->minor)))
-        return func->func;
+    if (func->major && ctx->base.attrs.major > func->major) return func->func;
+    if (func->major && ctx->base.attrs.major == func->major && ctx->base.attrs.minor >= func->minor) return func->func;
 
     for (ext = func->extensions; *ext != GL_EXTENSION_COUNT; ext++)
-    {
         if (ctx->base.extensions[*ext]) return func->func;
-    }
 
     WARN( "Extensions required for %s not supported\n", name );
     return NULL;
@@ -2685,16 +3086,16 @@ BOOL get_integer( GLenum name, GLuint index, GLint value, GLint *data )
     switch (name)
     {
     case GL_CONTEXT_FLAGS:
-        *data = ctx->base.context_flags;
+        *data = ctx->base.attrs.flags;
         return TRUE;
     case GL_CONTEXT_PROFILE_MASK:
-        *data = ctx->base.profile_mask;
+        *data = ctx->base.attrs.profile;
         return TRUE;
     case GL_MAJOR_VERSION:
-        *data = ctx->base.major_version;
+        *data = ctx->base.attrs.major;
         return TRUE;
     case GL_MINOR_VERSION:
-        *data = ctx->base.minor_version;
+        *data = ctx->base.attrs.minor;
         return TRUE;
     case GL_NUM_EXTENSIONS:
         *data = ctx->base.extension_count;
@@ -2712,11 +3113,9 @@ const GLubyte * WINAPI glGetStringi( GLenum name, GLuint index )
         .name = name,
         .index = index,
     };
-    NTSTATUS status;
     struct context *ctx;
-#ifndef _WIN64
-    GLubyte *wow64_str = NULL;
-#endif
+    GLubyte *wow64_str;
+    NTSTATUS status;
 
     TRACE( "name %d, index %d\n", name, index );
 
@@ -2726,20 +3125,52 @@ const GLubyte * WINAPI glGetStringi( GLenum name, GLuint index )
     {
     case GL_EXTENSIONS:
         if (index < ctx->base.extension_count)
-            return (const GLubyte *)extension_names[ctx->base.extension_array[index]];
+        {
+            const enum opengl_extension ext = ctx->base.extension_array[index];
+            return (const GLubyte *)all_extensions[ext].name;
+        }
         set_gl_error( GL_INVALID_VALUE );
         return NULL;
     }
 
-#ifndef _WIN64
-    if (UNIX_CALL( glGetStringi, &args ) == STATUS_BUFFER_TOO_SMALL) args.ret = wow64_str = malloc( (size_t)args.ret );
-#endif
-    if ((status = UNIX_CALL( glGetStringi, &args ))) WARN( "glGetStringi returned %#lx\n", status );
-#ifndef _WIN64
-    if (args.ret != wow64_str) free( wow64_str );
-    else if (args.ret) append_wow64_string( (char *)args.ret );
-#endif
+    args.ret = wow64_str = alloc_string_entry( ctx, unix_glGetStringi, name, index, 64 );
+    while ((status = UNIX_CALL( glGetStringi, &args )) == STATUS_BUFFER_TOO_SMALL && wow64_str)
+        args.ret = wow64_str = grow_string_entry( ctx, wow64_str, (size_t)args.ret );
+    if (status) WARN( "glGetStringi returned %#lx\n", status );
+
+    if (args.ret != wow64_str) free_string_entry( ctx, wow64_str );
     return args.ret;
+}
+
+/* build the extension string by filtering out the disabled extensions */
+static GLubyte *filter_extensions( struct opengl_client_context *client, const GLubyte *str )
+{
+    enum opengl_extension extensions[GL_EXTENSION_COUNT];
+    size_t count, i, size = 1;
+    char *ret, *ptr;
+
+    if (!(count = parse_extensions( (const char *)str, extensions ))) return NULL;
+    if (client->extensions[WGL_EXT_extensions_string]) extensions[count++] = WGL_EXT_extensions_string;
+    if (client->extensions[WGL_EXT_swap_control]) extensions[count++] = WGL_EXT_swap_control;
+
+    for (i = 0; i < count; i++)
+    {
+        if (!client->extensions[extensions[i]]) continue;
+        size += all_extensions[extensions[i]].len + 1;
+    }
+
+    if (!(ret = malloc( size ))) return NULL;
+
+    for (ptr = ret, i = 0; i < count; i++)
+    {
+        if (!client->extensions[extensions[i]]) continue;
+        memcpy( ptr, all_extensions[extensions[i]].name, all_extensions[extensions[i]].len );
+        ptr += all_extensions[extensions[i]].len;
+        *ptr++ = ' ';
+    }
+    *ptr = 0;
+
+    return (GLubyte *)ret;
 }
 
 /***********************************************************************
@@ -2748,21 +3179,29 @@ const GLubyte * WINAPI glGetStringi( GLenum name, GLuint index )
 const GLubyte * WINAPI glGetString( GLenum name )
 {
     struct glGetString_params args = { .teb = NtCurrentTeb(), .name = name };
+    struct context *ctx;
+    GLubyte *wow64_str;
     NTSTATUS status;
-#ifndef _WIN64
-    GLubyte *wow64_str = NULL;
-#endif
 
     TRACE( "name %d\n", name );
 
-#ifndef _WIN64
-    if (UNIX_CALL( glGetString, &args ) == STATUS_BUFFER_TOO_SMALL) args.ret = wow64_str = malloc( (size_t)args.ret );
-#endif
-    if ((status = UNIX_CALL( glGetString, &args ))) WARN( "glGetString returned %#lx\n", status );
-#ifndef _WIN64
-    if (args.ret != wow64_str) free( wow64_str );
-    else if (args.ret) append_wow64_string( (char *)args.ret );
-#endif
+    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return NULL;
+
+    switch (name)
+    {
+    case GL_VENDOR: return (const GLubyte *)ctx->base.vendor_name;
+    case GL_RENDERER: return (const GLubyte *)ctx->base.device_name;
+    case GL_VERSION: return (const GLubyte *)ctx->base.version_str;
+    case GL_EXTENSIONS: if (ctx->extensions) return ctx->extensions; break;
+    }
+
+    args.ret = wow64_str = alloc_string_entry( ctx, unix_glGetString, name, 0, name == GL_EXTENSIONS ? MAX_EXTENSION_STR : 64 );
+    while ((status = UNIX_CALL( glGetString, &args )) == STATUS_BUFFER_TOO_SMALL && wow64_str)
+        args.ret = wow64_str = grow_string_entry( ctx, wow64_str, (size_t)args.ret );
+    if (status) WARN( "glGetString returned %#lx\n", status );
+
+    if (name == GL_EXTENSIONS && args.ret) args.ret = ctx->extensions = filter_extensions( &ctx->base, args.ret );
+    if (args.ret != wow64_str) free_string_entry( ctx, wow64_str );
     return args.ret;
 }
 
@@ -2781,21 +3220,20 @@ const char * WINAPI wglGetExtensionsStringEXT(void)
 const GLchar * WINAPI wglQueryCurrentRendererStringWINE( GLenum attribute )
 {
     struct wglQueryCurrentRendererStringWINE_params args = { .teb = NtCurrentTeb(), .attribute = attribute };
+    struct context *ctx;
     NTSTATUS status;
-#ifndef _WIN64
-    char *wow64_str = NULL;
-#endif
+    char *wow64_str;
 
     TRACE( "attribute %d\n", attribute );
 
-#ifndef _WIN64
-    if (UNIX_CALL( wglQueryCurrentRendererStringWINE, &args ) == STATUS_BUFFER_TOO_SMALL) args.ret = wow64_str = malloc( (size_t)args.ret );
-#endif
-    if ((status = UNIX_CALL( wglQueryCurrentRendererStringWINE, &args ))) WARN( "wglQueryCurrentRendererStringWINE returned %#lx\n", status );
-#ifndef _WIN64
-    if (args.ret != wow64_str) free( wow64_str );
-    else if (args.ret) append_wow64_string( wow64_str );
-#endif
+    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return NULL;
+
+    args.ret = wow64_str = alloc_string_entry( ctx, unix_wglQueryCurrentRendererStringWINE, attribute, 0, 64 );
+    while ((status = UNIX_CALL( wglQueryCurrentRendererStringWINE, &args )) == STATUS_BUFFER_TOO_SMALL && wow64_str)
+        args.ret = wow64_str = grow_string_entry( ctx, wow64_str, (size_t)args.ret );
+    if (status) WARN( "wglQueryCurrentRendererStringWINE returned %#lx\n", status );
+
+    if (args.ret != wow64_str) free_string_entry( ctx, wow64_str );
     return args.ret;
 }
 
@@ -2808,21 +3246,20 @@ const GLchar * WINAPI wglQueryRendererStringWINE( HDC dc, GLint renderer, GLenum
         .renderer = renderer,
         .attribute = attribute,
     };
+    struct context *ctx;
     NTSTATUS status;
-#ifndef _WIN64
-    char *wow64_str = NULL;
-#endif
+    char *wow64_str;
 
     TRACE( "dc %p, renderer %d, attribute %d\n", dc, renderer, attribute );
 
-#ifndef _WIN64
-    if (UNIX_CALL( wglQueryRendererStringWINE, &args ) == STATUS_BUFFER_TOO_SMALL) args.ret = wow64_str = malloc( (size_t)args.ret );
-#endif
-    if ((status = UNIX_CALL( wglQueryRendererStringWINE, &args ))) WARN( "wglQueryRendererStringWINE returned %#lx\n", status );
-#ifndef _WIN64
-    if (args.ret != wow64_str) free( wow64_str );
-    else if (args.ret) append_wow64_string( wow64_str );
-#endif
+    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return NULL;
+
+    args.ret = wow64_str = alloc_string_entry( ctx, unix_wglQueryRendererStringWINE, attribute, 0, 64 );
+    while ((status = UNIX_CALL( wglQueryRendererStringWINE, &args )) == STATUS_BUFFER_TOO_SMALL && wow64_str)
+        args.ret = wow64_str = grow_string_entry( ctx, wow64_str, (size_t)args.ret );
+    if (status) WARN( "wglQueryRendererStringWINE returned %#lx\n", status );
+
+    if (args.ret != wow64_str) free_string_entry( ctx, wow64_str );
     return args.ret;
 }
 
@@ -2859,6 +3296,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
             ERR( "Failed to load unixlib, status %#lx\n", status );
             return FALSE;
         }
+        qsort( context_attributes, ARRAY_SIZE(context_attributes), sizeof(*context_attributes), compare_context_attributes );
 
         /* fallthrough */
     case DLL_THREAD_ATTACH:
@@ -2872,9 +3310,6 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
     case DLL_PROCESS_DETACH:
         if (reserved) break;
         UNIX_CALL( process_detach, NULL );
-#ifndef _WIN64
-        cleanup_wow64_strings();
-#endif
         /* fallthrough */
     case DLL_THREAD_DETACH:
         if ((context = get_current_context())) context->base.current_tid = 0;

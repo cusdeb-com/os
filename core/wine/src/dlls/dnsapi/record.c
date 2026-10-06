@@ -108,7 +108,7 @@ static const char *debugstr_section( DNS_SECTION section )
     }
 }
 
-static int strcmpX( LPCVOID str1, LPCVOID str2, BOOL wide )
+static int strcmpX( const void *str1, const void *str2, BOOL wide )
 {
     if (wide)
         return lstrcmpiW( str1, str2 );
@@ -209,7 +209,7 @@ static const BYTE *get_name( const BYTE *base, const BYTE *end, const BYTE *ptr,
  * DnsRecordCompare                        [DNSAPI.@]
  *
  */
-BOOL WINAPI DnsRecordCompare( PDNS_RECORD r1, PDNS_RECORD r2 )
+BOOL WINAPI DnsRecordCompare( DNS_RECORD *r1, DNS_RECORD *r2 )
 {
     BOOL wide;
     unsigned int i;
@@ -447,7 +447,7 @@ BOOL WINAPI DnsRecordCompare( PDNS_RECORD r1, PDNS_RECORD r2 )
     return TRUE;
 }
 
-static LPVOID strdupX( LPCVOID src, DNS_CHARSET in, DNS_CHARSET out )
+static void *strdupX( const void *src, DNS_CHARSET in, DNS_CHARSET out )
 {
     switch (in)
     {
@@ -497,7 +497,7 @@ static LPVOID strdupX( LPCVOID src, DNS_CHARSET in, DNS_CHARSET out )
  * DnsRecordCopyEx                         [DNSAPI.@]
  *
  */
-PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET out )
+DNS_RECORD * WINAPI DnsRecordCopyEx( DNS_RECORD *src, DNS_CHARSET in, DNS_CHARSET out )
 {
     DNS_RECORD *dst;
     unsigned int i, size;
@@ -534,6 +534,7 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
                 goto error;
             }
         }
+        dst->wDataLength = sizeof(dst->Data.TXT);
         break;
     }
     case DNS_TYPE_MINFO:
@@ -550,9 +551,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         }
 
         dst->wDataLength = sizeof(dst->Data.MINFO);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.MINFO.pNameMailbox ) + 1) * sizeof(WCHAR) +
-            (wcslen( dst->Data.MINFO.pNameErrorsMailbox ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_AFSDB:
@@ -563,8 +561,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         if (!dst->Data.MX.pNameExchange) goto error;
 
         dst->wDataLength = sizeof(dst->Data.MX);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.MX.pNameExchange ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_NXT:
@@ -573,8 +569,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         if (!dst->Data.NXT.pNameNext) goto error;
 
         dst->wDataLength = sizeof(dst->Data.NXT);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.NXT.pNameNext ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_CNAME:
@@ -590,8 +584,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         if (!dst->Data.PTR.pNameHost) goto error;
 
         dst->wDataLength = sizeof(dst->Data.PTR);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.PTR.pNameHost ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_SIG:
@@ -600,8 +592,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         if (!dst->Data.SIG.pNameSigner) goto error;
 
         dst->wDataLength = sizeof(dst->Data.SIG);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.SIG.pNameSigner ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_SOA:
@@ -617,9 +607,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         }
 
         dst->wDataLength = sizeof(dst->Data.SOA);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.SOA.pNamePrimaryServer ) + 1) * sizeof(WCHAR) +
-            (wcslen( dst->Data.SOA.pNameAdministrator ) + 1) * sizeof(WCHAR);
         break;
     }
     case DNS_TYPE_SRV:
@@ -628,8 +615,6 @@ PDNS_RECORD WINAPI DnsRecordCopyEx( PDNS_RECORD src, DNS_CHARSET in, DNS_CHARSET
         if (!dst->Data.SRV.pNameTarget) goto error;
 
         dst->wDataLength = sizeof(dst->Data.SRV);
-        if (out == DnsCharSetUnicode) dst->wDataLength +=
-            (wcslen( dst->Data.SRV.pNameTarget ) + 1) * sizeof(WCHAR);
         break;
     }
     default:
@@ -647,7 +632,7 @@ error:
  * DnsRecordListFree                       [DNSAPI.@]
  *
  */
-VOID WINAPI DnsRecordListFree( PDNS_RECORD list, DNS_FREE_TYPE type )
+void WINAPI DnsRecordListFree( DNS_RECORD *list, DNS_FREE_TYPE type )
 {
     DNS_RECORD *r, *next;
     unsigned int i;
@@ -659,7 +644,6 @@ VOID WINAPI DnsRecordListFree( PDNS_RECORD list, DNS_FREE_TYPE type )
     switch (type)
     {
     case DnsFreeRecordList:
-    {
         for (r = list; (list = r); r = next)
         {
             free( r->pName );
@@ -672,7 +656,6 @@ VOID WINAPI DnsRecordListFree( PDNS_RECORD list, DNS_FREE_TYPE type )
             case DNS_TYPE_X25:
                 for (i = 0; i < r->Data.TXT.dwStringCount; i++)
                     free( r->Data.TXT.pStringArray[i] );
-
                 break;
 
             case DNS_TYPE_MINFO:
@@ -715,18 +698,19 @@ VOID WINAPI DnsRecordListFree( PDNS_RECORD list, DNS_FREE_TYPE type )
                 free( r->Data.SRV.pNameTarget );
                 break;
             }
-
             next = r->pNext;
             free( r );
         }
         break;
-    }
+
     case DnsFreeFlat:
+        free( list );
+        break;
+
     case DnsFreeParsedMessageFields:
-    {
         FIXME( "unhandled free type: %d\n", type );
         break;
-    }
+
     default:
         WARN( "unknown free type: %d\n", type );
         break;
@@ -737,8 +721,9 @@ VOID WINAPI DnsRecordListFree( PDNS_RECORD list, DNS_FREE_TYPE type )
  * DnsFree                     [DNSAPI.@]
  *
  */
-void WINAPI DnsFree( PVOID data, DNS_FREE_TYPE type )
+void WINAPI DnsFree( void *data, DNS_FREE_TYPE type )
 {
+    TRACE( "(%p,%d)\n", data, type );
     DnsRecordListFree( data, type );
 }
 
@@ -746,8 +731,7 @@ void WINAPI DnsFree( PVOID data, DNS_FREE_TYPE type )
  * DnsRecordSetCompare                     [DNSAPI.@]
  *
  */
-BOOL WINAPI DnsRecordSetCompare( PDNS_RECORD set1, PDNS_RECORD set2,
-                                 PDNS_RECORD *diff1, PDNS_RECORD *diff2 )
+BOOL WINAPI DnsRecordSetCompare( DNS_RECORD *set1, DNS_RECORD *set2, DNS_RECORD **diff1, DNS_RECORD **diff2 )
 {
     BOOL ret = TRUE;
     DNS_RECORD *r, *t, *u;
@@ -831,7 +815,7 @@ error:
  * DnsRecordSetCopyEx                      [DNSAPI.@]
  *
  */
-PDNS_RECORD WINAPI DnsRecordSetCopyEx( PDNS_RECORD src_set, DNS_CHARSET in, DNS_CHARSET out )
+DNS_RECORD * WINAPI DnsRecordSetCopyEx( DNS_RECORD *src_set, DNS_CHARSET in, DNS_CHARSET out )
 {
     DNS_RRSET dst_set;
     DNS_RECORD *src, *dst;
@@ -860,7 +844,7 @@ PDNS_RECORD WINAPI DnsRecordSetCopyEx( PDNS_RECORD src_set, DNS_CHARSET in, DNS_
  * DnsRecordSetDetach                      [DNSAPI.@]
  *
  */
-PDNS_RECORD WINAPI DnsRecordSetDetach( PDNS_RECORD set )
+DNS_RECORD * WINAPI DnsRecordSetDetach( DNS_RECORD *set )
 {
     DNS_RECORD *r, *s;
 
