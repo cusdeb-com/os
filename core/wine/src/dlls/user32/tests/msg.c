@@ -11432,14 +11432,96 @@ static LRESULT WINAPI WmPrintProcA(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
     {
     case WM_PRINT:
     {
-        static RECT rect = {0, 0, 1, 1};
+        RECT rect, expected_rect;
+        int has_clip_rgn, ret;
+        HDC hdc = (HDC)wp;
+        HRGN clip_rgn;
         HBRUSH brush;
 
+        clip_rgn = CreateRectRgn(0, 0, 1, 1);
+        has_clip_rgn = GetClipRgn(hdc, clip_rgn);
+        ok(has_clip_rgn == 1, "Expected a clip region.\n");
+        ret = GetRgnBox(clip_rgn, &rect);
+        ok(ret == SIMPLEREGION, "Got unexpected ret %d.\n", ret);
+        SetRect(&expected_rect, 50, 50, 100, 100);
+        ok(EqualRect(&rect, &expected_rect), "Got unexpected rect %s.\n", wine_dbgstr_rect(&rect));
+        DeleteObject(clip_rgn);
+
         brush = CreateSolidBrush(RGB(0xff, 0, 0));
-        FillRect((HDC)wp, &rect, brush);
+        SetRect(&rect, 0, 0, 1, 1);
+        FillRect(hdc, &rect, brush);
         DeleteObject(brush);
         return 0;
     }
+    }
+
+    defwndproc_counter++;
+    lr = DefWindowProcA(hwnd, message, wp, lp);
+    defwndproc_counter--;
+    return lr;
+}
+
+static LRESULT WINAPI PrintWindowSubProcA(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
+{
+    switch (message)
+    {
+    case WM_CLOSE:
+        PostQuitMessage(0);
+        return 0;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HBRUSH brush;
+        RECT rect;
+        HDC hdc;
+
+        hdc = wp ? (HDC)wp : BeginPaint(hwnd, &ps);
+        GetClientRect(hwnd, &rect);
+        brush = CreateSolidBrush(RGB(255, 0, 0));
+        FillRect(hdc, &rect, brush);
+        DeleteObject(brush);
+        if (!wp) EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        ok(0, "Got unexpected message %#x.\n", message);
+        break;
+    }
+
+    return DefWindowProcA(hwnd, message, wp, lp);
+}
+
+static LRESULT WINAPI PrintWindowProcA(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
+{
+    static LONG defwndproc_counter = 0, beginpaint_counter = 0;
+    struct recvd_message msg;
+    LRESULT lr;
+
+    msg.hwnd = hwnd;
+    msg.message = message;
+    msg.flags = sent | wparam | lparam;
+    if (defwndproc_counter)
+        msg.flags |= defwinproc;
+    if (beginpaint_counter)
+        msg.flags |= beginpaint;
+    msg.wParam = wp;
+    msg.lParam = lp;
+    msg.descr = "PrintWindowProcA";
+    add_message(&msg);
+
+    switch (message)
+    {
+    case WM_PAINT:
+        if (!wp)
+            beginpaint_counter++;
+        lr = PrintWindowSubProcA(hwnd, message, wp, lp);
+        if (!wp)
+            beginpaint_counter--;
+        return lr;
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+        return PrintWindowSubProcA(hwnd, message, wp, lp);
     }
 
     defwndproc_counter++;
@@ -11499,6 +11581,14 @@ static void register_classes(void)
 
     cls.lpfnWndProc = WmPrintProcA;
     cls.lpszClassName = "WmPrintClass";
+    register_class(&cls);
+
+    cls.lpfnWndProc = PrintWindowSubProcA;
+    cls.lpszClassName = "PrintWindowChildClass";
+    register_class(&cls);
+
+    cls.lpfnWndProc = PrintWindowProcA;
+    cls.lpszClassName = "PrintWindowClass";
     register_class(&cls);
 
     cls.style = CS_NOCLOSE;
@@ -21416,10 +21506,337 @@ static void test_defwinproc_wm_print(void)
     ok_sequence(WmEmptySeq, "DefWindowProc WM_PRINT with PRF_CHILDREN | PRF_CLIENT with an invisible child", FALSE);
     flush_sequence();
 
+    DestroyWindow(child);
+
+    /* PRF_CHILDREN | PRF_CLIENT with a visible child window that has a non-client area */
+    child = CreateWindowA("WmPrintClass", "test_defwinproc_wm_print_child",
+                          WS_VISIBLE | WS_CHILD | WS_CAPTION, 50, 50, 50, 50, hwnd, 0, 0, NULL);
+    ok(!!child, "CreateWindowA failed, error %lu.\n", GetLastError());
+    flush_events();
+    flush_sequence();
+
+    PatBlt(hdc, 0, 0, 100, 100, BLACKNESS);
+    lr = DefWindowProcA(hwnd, WM_PRINT, (WPARAM)hdc, PRF_CHILDREN | PRF_CLIENT);
+    ok(lr == 1, "Got unexpected lr %Id.\n", lr);
+    color = GetPixel(hdc, 50, 50);
+    ok(color == RGB(255, 0, 0), "Got unexpected color %#lx.\n", color);
+    ok_sequence(wm_print_prf_children, "DefWindowProc WM_PRINT with PRF_CHILDREN | PRF_CLIENT for a WS_CAPTION child window", FALSE);
+    flush_sequence();
+
     DeleteObject(bitmap);
     DeleteDC(hdc);
     ReleaseDC(hwnd, hwnd_hdc);
     DestroyWindow(hwnd);
+}
+
+static const struct message print_window_invisible[] =
+{
+    { WM_PAINT, sent|wparam|lparam, 0, 0 },
+    { WM_NCPAINT, sent|beginpaint|wparam|lparam, 1, 0 },
+    { 0 }
+};
+
+static const struct message print_window_visible[] =
+{
+    { WM_PAINT, sent|wparam|lparam, 0, 0 },
+    { WM_NCPAINT, sent|beginpaint|wparam|lparam, 1, 0 },
+    { WM_ERASEBKGND, sent|beginpaint},
+    { 0 }
+};
+
+/* For PW_RENDERFULLCONTENT, some versions of Windows send these messages and some don't. There is
+ * no clear correlation of this behavior to Windows versions. So make these messages optional. */
+static const struct message print_window_invisible_optional[] =
+{
+    { WM_PAINT, sent|wparam|lparam|optional, 0, 0 },
+    { WM_NCPAINT, sent|beginpaint|wparam|lparam|optional, 1, 0 },
+    { 0 }
+};
+
+static const struct message print_window_visible_optional[] =
+{
+    { WM_PAINT, sent|wparam|lparam|optional, 0, 0 },
+    { WM_NCPAINT, sent|beginpaint|wparam|lparam|optional, 1, 0 },
+    { WM_ERASEBKGND, sent|beginpaint|optional},
+    { 0 }
+};
+
+static void test_PrintWindow_child(void)
+{
+    HWND hwnd;
+    MSG msg;
+
+    hwnd = CreateWindowExA(0, "PrintWindowChildClass", "test_PrintWindow_child",
+                           WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 100, 100, 0, 0, 0, NULL);
+    ok(!!hwnd, "CreateWindowExA failed, error %lu\n", GetLastError());
+
+    while (GetMessageA(&msg, NULL, 0, 0) > 0)
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+}
+
+static void test_PrintWindow(char **argv)
+{
+    static const UINT flags[] = {0, PW_CLIENTONLY, PW_RENDERFULLCONTENT, PW_CLIENTONLY | PW_RENDERFULLCONTENT };
+    static const int width = 100, height = 100;
+    RECT rect = {0, 0, width, height};
+    HDC hdc, mem_dc, metafile_dc;
+    HBITMAP old_bitmap, bitmap;
+    unsigned int timeout = 0;
+    PROCESS_INFORMATION pi;
+    char cmdline[MAX_PATH];
+    STARTUPINFOA si = {0};
+    HBRUSH green_brush;
+    HMETAFILE metafile;
+    HWND hwnd, parent;
+    COLORREF color;
+    BOOL ret;
+    int i;
+
+    green_brush = CreateSolidBrush(RGB(0, 255, 0));
+
+    /* Notice that the test window never receives any WM_PRINT or WM_PRINTCLIENT messages */
+    hwnd = CreateWindowExA(0, "PrintWindowClass", "test", WS_OVERLAPPEDWINDOW, 100, 100, width,
+                           height, 0, 0, 0, NULL);
+    ok(!!hwnd, "CreateWindowExA failed, error %lu.\n", GetLastError());
+    flush_events();
+
+    hdc = GetDC(hwnd);
+    ok(!!hdc, "GetDC failed.\n");
+    mem_dc = CreateCompatibleDC(hdc);
+    ok(!!mem_dc, "CreateCompatibleDC failed.\n");
+    bitmap = CreateCompatibleBitmap(hdc, width, height);
+    ok(!!bitmap, "CreateCompatibleBitmap failed.\n");
+    old_bitmap = SelectObject(mem_dc, bitmap);
+    metafile_dc = CreateMetaFileA(NULL);
+
+    /* Parameter checks */
+    ret = PrintWindow(0, mem_dc, 0);
+    ok(!ret, "PrintWindow succeeded.\n");
+
+    ret = PrintWindow(hwnd, 0, 0);
+    ok(ret, "PrintWindow failed.\n");
+
+    ret = PrintWindow(hwnd, 0, 0x4);
+    ok(!ret, "PrintWindow succeeded.\n");
+
+    /* PrintWindow() for an invisible window */
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        flush_sequence();
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        ok(ret, "PrintWindow failed.\n");
+        ok_sequence(print_window_invisible, "PrintWindow for an invisible window", TRUE);
+        color = GetPixel(mem_dc, 0, 0);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+
+        winetest_pop_context();
+    }
+
+    /* PrintWindow() for a visible window */
+    ShowWindow(hwnd, SW_SHOW);
+    flush_events();
+
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        flush_sequence();
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        ok(ret, "PrintWindow failed.\n");
+        if (flags[i] & PW_RENDERFULLCONTENT)
+            ok_sequence(print_window_visible_optional, "PrintWindow for a visible window", FALSE);
+        else
+            ok_sequence(print_window_visible, "PrintWindow for a visible window", FALSE);
+        color = GetPixel(mem_dc, 0, 0);
+        if (flags[i] & PW_CLIENTONLY)
+            ok(color == RGB(255, 0, 0), "Got unexpected color %#lx.\n", color);
+        else
+            todo_wine /* Wine decorated mode. Non-client area is painted by the WM. */
+            ok(color != RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(255, 0, 0), "Got unexpected color %#lx.\n", color);
+
+        /* Test another DC type */
+        flush_sequence();
+        ret = PrintWindow(hwnd, metafile_dc, flags[i]);
+        if (flags[i] & PW_RENDERFULLCONTENT)
+        {
+            todo_wine
+            ok(!ret, "PrintWindow succeeded.\n");
+            ok_sequence(print_window_visible_optional, "PrintWindow for a visible window and metafile DC", FALSE);
+        }
+        else
+        {
+            ok(ret, "PrintWindow failed.\n");
+            ok_sequence(print_window_visible, "PrintWindow for a visible window and metafile DC", FALSE);
+        }
+
+        winetest_pop_context();
+    }
+
+    /* PrintWindow() for a minimized window */
+    ShowWindow(hwnd, SW_MINIMIZE);
+    flush_events();
+
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        flush_sequence();
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        if (flags[i] == (PW_CLIENTONLY | PW_RENDERFULLCONTENT))
+            todo_wine
+            ok(!ret, "PrintWindow succeeded.\n");
+        else
+            ok(ret, "PrintWindow failed.\n");
+        if (flags[i] & PW_RENDERFULLCONTENT)
+            ok_sequence(print_window_invisible_optional, "PrintWindow for a minimized window", FALSE);
+        else
+            ok_sequence(print_window_invisible, "PrintWindow for a minimized window", FALSE);
+        color = GetPixel(mem_dc, 0, 0);
+        if (flags[i] & PW_CLIENTONLY)
+            ok(color == RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
+        else
+            todo_wine /* Wine decorated mode. Non-client area is painted by the WM. */
+            ok(color != RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
+
+        winetest_pop_context();
+    }
+
+    /* PrintWindow() for an invisible window that was visible before */
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    ShowWindow(hwnd, SW_HIDE);
+    flush_events();
+
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        flush_sequence();
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        ok(ret, "PrintWindow failed.\n");
+        ok_sequence(print_window_invisible, "PrintWindow for an invisible window", TRUE);
+        color = GetPixel(mem_dc, 0, 0);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+
+        winetest_pop_context();
+    }
+
+    metafile = CloseMetaFile(metafile_dc);
+    DeleteMetaFile(metafile);
+    SelectObject(mem_dc, old_bitmap);
+    DeleteObject(bitmap);
+    DeleteDC(mem_dc);
+    ReleaseDC(hwnd, hdc);
+    DestroyWindow(hwnd);
+
+    /* Test PrintWindow() for a child window that has an invisible parent */
+    parent = CreateWindowExA(0, "static", "parent", WS_POPUP, 100, 100, width * 2, height * 2, 0, 0,
+                             0, NULL);
+    ok(!!parent, "CreateWindowExA failed, error %lu.\n", GetLastError());
+    hwnd = CreateWindowExA(0, "PrintWindowClass", "test", WS_OVERLAPPEDWINDOW | WS_CHILD, 100, 100,
+                           width, height, parent, 0, 0, NULL);
+    ok(!!hwnd, "CreateWindowExA failed, error %lu.\n", GetLastError());
+    flush_events();
+
+    hdc = GetDC(hwnd);
+    ok(!!hdc, "GetDC failed.\n");
+    mem_dc = CreateCompatibleDC(hdc);
+    ok(!!mem_dc, "CreateCompatibleDC failed.\n");
+    bitmap = CreateCompatibleBitmap(hdc, width, height);
+    ok(!!bitmap, "CreateCompatibleBitmap failed.\n");
+    old_bitmap = SelectObject(mem_dc, bitmap);
+
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        flush_sequence();
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        ok(ret, "PrintWindow failed.\n");
+        ok_sequence(print_window_invisible, "PrintWindow for a child window with invisible parent", TRUE);
+        color = GetPixel(mem_dc, 0, 0);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(0, 0, 0), "Got unexpected color %#lx.\n", color);
+
+        winetest_pop_context();
+    }
+
+    SelectObject(mem_dc, old_bitmap);
+    DeleteObject(bitmap);
+    DeleteDC(mem_dc);
+    ReleaseDC(hwnd, hdc);
+    DestroyWindow(parent);
+
+    /* Test PrintWindow() for a window in another process */
+    sprintf(cmdline, "%s %s test_PrintWindow_child", argv[0], argv[1]);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcessA failed, error %lu\n", GetLastError());
+
+    hwnd = NULL;
+    do
+    {
+        hwnd = FindWindowA("PrintWindowChildClass", "test_PrintWindow_child");
+        Sleep(100);
+        timeout += 100;
+    } while (!hwnd && timeout < 1000);
+    ok(!!hwnd, "Failed to find the test window.\n");
+
+    hdc = GetDC(hwnd);
+    ok(!!hdc, "GetDC failed.\n");
+    mem_dc = CreateCompatibleDC(hdc);
+    ok(!!mem_dc, "CreateCompatibleDC failed.\n");
+    bitmap = CreateCompatibleBitmap(hdc, width, height);
+    ok(!!bitmap, "CreateCompatibleBitmap failed.\n");
+    old_bitmap = SelectObject(mem_dc, bitmap);
+
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
+    {
+        winetest_push_context("flag %#x", flags[i]);
+
+        FillRect(mem_dc, &rect, green_brush);
+        ret = PrintWindow(hwnd, mem_dc, flags[i]);
+        ok(ret, "PrintWindow failed.\n");
+        color = GetPixel(mem_dc, 0, 0);
+        if (flags[i] & PW_CLIENTONLY)
+            ok(color == RGB(255, 0, 0), "Got unexpected color %#lx.\n", color);
+        else
+            ok(color != RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
+        color = GetPixel(mem_dc, width / 2, height / 2);
+        ok(color == RGB(255, 0, 0), "Got unexpected color %#lx.\n", color);
+
+        winetest_pop_context();
+    }
+
+    SelectObject(mem_dc, old_bitmap);
+    DeleteObject(bitmap);
+    DeleteDC(mem_dc);
+    ReleaseDC(hwnd, hdc);
+
+    PostMessageA(hwnd, WM_CLOSE, 0, 0);
+    ret = WaitForSingleObject(pi.hProcess, 1000);
+    ok(!ret, "WaitForSingleObject failed, error %ld.\n", GetLastError());
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    DeleteObject(green_brush);
 }
 
 START_TEST(msg)
@@ -21435,6 +21852,11 @@ START_TEST(msg)
     if (argc == 3 && !strcmp(test_argv[2], "test_WM_COPYDATA_child"))
     {
         test_WM_COPYDATA_child();
+        return;
+    }
+    else if (argc == 3 && !strcmp(test_argv[2], "test_PrintWindow_child"))
+    {
+        test_PrintWindow_child();
         return;
     }
     else if (argc >= 4 && !strcmp(test_argv[2], "do_wait_idle_child"))
@@ -21554,6 +21976,7 @@ START_TEST(msg)
     test_create_name();
     test_hook_changing_window_proc();
     test_hook_cleanup();
+    test_PrintWindow(test_argv);
     /* keep it the last test, under Windows it tends to break the tests
      * which rely on active/foreground windows being correct.
      */

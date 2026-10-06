@@ -25,18 +25,11 @@
 #endif
 
 #include "config.h"
+#include "macdrv.h"
 
 #include <poll.h>
 
-#include "ntstatus.h"
-#include "macdrv.h"
-#include "oleidl.h"
-
 WINE_DEFAULT_DEBUG_CHANNEL(event);
-WINE_DECLARE_DEBUG_CHANNEL(imm);
-
-pthread_mutex_t ime_composition_rect_mutex = PTHREAD_MUTEX_INITIALIZER;
-CGRect ime_composition_rect;
 
 /* return the name of an Mac event */
 static const char *dbgstr_event(int type)
@@ -47,7 +40,6 @@ static const char *dbgstr_event(int type)
         "APP_QUIT_REQUESTED",
         "DISPLAYS_CHANGED",
         "HOTKEY_PRESS",
-        "IM_SET_TEXT",
         "KEY_PRESS",
         "KEY_RELEASE",
         "KEYBOARD_CHANGED",
@@ -120,7 +112,6 @@ static macdrv_event_mask get_event_mask(DWORD mask)
         event_mask |= event_mask_for_type(APP_DEACTIVATED);
         event_mask |= event_mask_for_type(APP_QUIT_REQUESTED);
         event_mask |= event_mask_for_type(DISPLAYS_CHANGED);
-        event_mask |= event_mask_for_type(IM_SET_TEXT);
         event_mask |= event_mask_for_type(LOST_PASTEBOARD_OWNERSHIP);
         event_mask |= event_mask_for_type(STATUS_ITEM_MOUSE_BUTTON);
         event_mask |= event_mask_for_type(STATUS_ITEM_MOUSE_MOVE);
@@ -147,39 +138,6 @@ static macdrv_event_mask get_event_mask(DWORD mask)
     }
 
     return event_mask;
-}
-
-static void post_ime_update( HWND hwnd, UINT cursor_pos, WCHAR *comp_str, WCHAR *result_str )
-{
-    NtUserMessageCall( hwnd, WINE_IME_POST_UPDATE, cursor_pos, (LPARAM)comp_str,
-                       result_str, NtUserImeDriverCall, FALSE );
-}
-
-/***********************************************************************
- *              macdrv_im_set_text
- */
-static void macdrv_im_set_text(const macdrv_event *event)
-{
-    HWND hwnd = macdrv_get_window_hwnd(event->window);
-    WCHAR *text = NULL;
-
-    TRACE_(imm)("win %p/%p himc %p text %s complete %u\n", hwnd, event->window, event->im_set_text.himc,
-                debugstr_cf(event->im_set_text.text), event->im_set_text.complete);
-
-    if (event->im_set_text.text)
-    {
-        CFIndex length = CFStringGetLength(event->im_set_text.text);
-        if (!(text = malloc((length + 1) * sizeof(WCHAR)))) return;
-        if (length) CFStringGetCharacters(event->im_set_text.text, CFRangeMake(0, length), text);
-        text[length] = 0;
-    }
-
-    if (event->im_set_text.complete) post_ime_update(hwnd, -1, NULL, text);
-    else post_ime_update(hwnd,
-                         MAKELONG(event->im_set_text.cursor_begin, event->im_set_text.cursor_end),
-                         text, NULL);
-
-    free(text);
 }
 
 
@@ -290,29 +248,6 @@ static BOOL query_drag_drop_drag(macdrv_query *query)
 
 
 /***********************************************************************
- *      SetIMECompositionRect (MACDRV.@)
- */
-BOOL macdrv_SetIMECompositionRect(HWND hwnd, RECT rect)
-{
-    TRACE("hwnd %p, rect %s\n", hwnd, wine_dbgstr_rect(&rect));
-    pthread_mutex_lock(&ime_composition_rect_mutex);
-    ime_composition_rect = cgrect_from_rect(rect);
-    pthread_mutex_unlock(&ime_composition_rect_mutex);
-    return TRUE;
-}
-
-
-/***********************************************************************
- *      NotifyIMEStatus (MACDRV.@)
- */
-void macdrv_NotifyIMEStatus( HWND hwnd, UINT status )
-{
-    TRACE_(imm)( "hwnd %p, status %#x\n", hwnd, status );
-    if (!status) macdrv_clear_ime_text();
-}
-
-
-/***********************************************************************
  *              macdrv_query_event
  *
  * Handler for QUERY_EVENT and QUERY_EVENT_NO_PREEMPT_WAIT queries.
@@ -398,9 +333,6 @@ void macdrv_handle_event(const macdrv_event *event)
         break;
     case HOTKEY_PRESS:
         macdrv_hotkey_press(event);
-        break;
-    case IM_SET_TEXT:
-        macdrv_im_set_text(event);
         break;
     case KEY_PRESS:
     case KEY_RELEASE:

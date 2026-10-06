@@ -551,7 +551,10 @@ static void free_parameter_object_data(struct d3dx_parameter *param, const void 
     if (param->class != D3DXPC_OBJECT)
         return;
 
-    count = min(param->element_count ? param->element_count : 1, bytes / sizeof(void *));
+    if (is_param_type_sampler(param->type))
+        count = 1;
+    else
+        count = min(param->element_count ? param->element_count : 1, bytes / sizeof(void *));
 
     for (i = 0; i < count; ++i)
     {
@@ -568,7 +571,7 @@ static void free_parameter_object_data(struct d3dx_parameter *param, const void 
             case D3DXPT_TEXTURECUBE:
             case D3DXPT_PIXELSHADER:
             case D3DXPT_VERTEXSHADER:
-                if (*(IUnknown **)data)
+                if (((IUnknown **)data)[i])
                     IUnknown_Release(((IUnknown **)data)[i]);
                 break;
 
@@ -4237,7 +4240,8 @@ static HRESULT WINAPI d3dx_effect_BeginParameterBlock(ID3DXEffect *iface)
         return D3DERR_INVALIDCALL;
     }
 
-    effect->current_parameter_block = calloc(1, sizeof(*effect->current_parameter_block));
+    if (!(effect->current_parameter_block = calloc(1, sizeof(*effect->current_parameter_block))))
+        return E_OUTOFMEMORY;
     memcpy(effect->current_parameter_block->magic_string, parameter_block_magic_string,
             sizeof(parameter_block_magic_string));
     effect->current_parameter_block->effect = effect;
@@ -5282,6 +5286,12 @@ static HRESULT d3dx_parse_value(struct d3dx_effect *effect, struct d3dx_paramete
                 case D3DXPT_VERTEXSHADER:
                     param->object_id = read_u32(ptr);
                     TRACE("Id: %u\n", param->object_id);
+                    if (param->object_id >= effect->object_count)
+                    {
+                        WARN("Object index out of bounds: index %u >= object count %u.\n",
+                                param->object_id, effect->object_count);
+                        return D3DXERR_INVALIDDATA;
+                    }
                     effect->objects[param->object_id].param = param;
                     param->data = value;
                     break;
@@ -6194,7 +6204,7 @@ static HRESULT d3dx_parse_resource(struct d3dx_effect *effect, const char *data,
 
         if (index >= effect->params.count)
         {
-            FIXME("Index out of bounds: index %u >= parameter count %u.\n", index, effect->params.count);
+            WARN("Index out of bounds: index %u >= parameter count %u.\n", index, effect->params.count);
             return E_FAIL;
         }
 
@@ -6203,7 +6213,7 @@ static HRESULT d3dx_parse_resource(struct d3dx_effect *effect, const char *data,
         {
             if (element_index >= parameter->element_count && parameter->element_count != 0)
             {
-                FIXME("Index out of bounds: element_index %u >= element_count %u.\n", element_index, parameter->element_count);
+                WARN("Index out of bounds: element_index %u >= element_count %u.\n", element_index, parameter->element_count);
                 return E_FAIL;
             }
 
@@ -6214,7 +6224,7 @@ static HRESULT d3dx_parse_resource(struct d3dx_effect *effect, const char *data,
         sampler = parameter->data;
         if (state_index >= sampler->state_count)
         {
-            FIXME("Index out of bounds: state_index %u >= state_count %u.\n", state_index, sampler->state_count);
+            WARN("Index out of bounds: state_index %u >= state_count %u.\n", state_index, sampler->state_count);
             return E_FAIL;
         }
 
@@ -6227,7 +6237,7 @@ static HRESULT d3dx_parse_resource(struct d3dx_effect *effect, const char *data,
 
         if (technique_index >= effect->technique_count)
         {
-            FIXME("Index out of bounds: technique_index %u >= technique_count %u.\n", technique_index,
+            WARN("Index out of bounds: technique_index %u >= technique_count %u.\n", technique_index,
                   effect->technique_count);
             return E_FAIL;
         }
@@ -6235,14 +6245,14 @@ static HRESULT d3dx_parse_resource(struct d3dx_effect *effect, const char *data,
         technique = &effect->techniques[technique_index];
         if (index >= technique->pass_count)
         {
-            FIXME("Index out of bounds: index %u >= pass_count %u.\n", index, technique->pass_count);
+            WARN("Index out of bounds: index %u >= pass_count %u.\n", index, technique->pass_count);
             return E_FAIL;
         }
 
         pass = &technique->passes[index];
         if (state_index >= pass->state_count)
         {
-            FIXME("Index out of bounds: state_index %u >= state_count %u.\n", state_index, pass->state_count);
+            WARN("Index out of bounds: state_index %u >= state_count %u.\n", state_index, pass->state_count);
             return E_FAIL;
         }
 
@@ -6768,6 +6778,8 @@ HRESULT WINAPI D3DXCreateEffectEx(struct IDirect3DDevice9 *device, const void *s
             device, srcdata, srcdatalen, defines, include,
             skip_constants, flags, pool, effect, compilation_errors);
 
+    if (effect)
+        *effect = NULL;
     if (compilation_errors)
         *compilation_errors = NULL;
 
@@ -6790,6 +6802,7 @@ HRESULT WINAPI D3DXCreateEffectEx(struct IDirect3DDevice9 *device, const void *s
     if (FAILED(hr))
     {
         WARN("Failed to create effect object, hr %#lx.\n", hr);
+        free(object);
         return hr;
     }
 
@@ -7032,7 +7045,8 @@ HRESULT WINAPI D3DXCreateEffectFromFileExA(struct IDirect3DDevice9 *device, cons
         return D3DERR_INVALIDCALL;
 
     len = MultiByteToWideChar(CP_ACP, 0, srcfile, -1, NULL, 0);
-    srcfileW = malloc(len * sizeof(*srcfileW));
+    if (!(srcfileW = malloc(len * sizeof(*srcfileW))))
+        return E_OUTOFMEMORY;
     MultiByteToWideChar(CP_ACP, 0, srcfile, -1, srcfileW, len);
 
     ret = D3DXCreateEffectFromFileExW(device, srcfileW, defines, include, skipconstants, flags, pool, effect, messages);
@@ -7168,7 +7182,8 @@ HRESULT WINAPI D3DXCreateEffectCompilerFromFileA(const char *srcfile, const D3DX
         return D3DERR_INVALIDCALL;
 
     len = MultiByteToWideChar(CP_ACP, 0, srcfile, -1, NULL, 0);
-    srcfileW = malloc(len * sizeof(*srcfileW));
+    if (!(srcfileW = malloc(len * sizeof(*srcfileW))))
+        return E_OUTOFMEMORY;
     MultiByteToWideChar(CP_ACP, 0, srcfile, -1, srcfileW, len);
 
     ret = D3DXCreateEffectCompilerFromFileW(srcfileW, defines, include, flags, compiler, messages);

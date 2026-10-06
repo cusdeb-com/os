@@ -1859,7 +1859,15 @@ static void test_GetTempFileNameA(void)
     expected[0] = '\0';
     strcat(expected, windowsdir);
     strcat(expected, "abc2.tmp");
-    ok(lstrcmpiA(out, expected) == 0, "GetTempFileNameA: Unexpected output \"%s\" vs \"%s\"\n",
+    ok(lstrcmpA(out, expected) == 0, "GetTempFileNameA: Unexpected output \"%s\" vs \"%s\"\n",
+       out, expected);
+
+    result = GetTempFileNameA(windowsdir, "abc", 0xA, out);
+    ok(result != 0, "GetTempFileNameA: error %ld\n", GetLastError());
+    expected[0] = '\0';
+    strcat(expected, windowsdir);
+    strcat(expected, "abcA.tmp");
+    ok(lstrcmpA(out, expected) == 0, "GetTempFileNameA: Unexpected output \"%s\" vs \"%s\"\n",
        out, expected);
 }
 

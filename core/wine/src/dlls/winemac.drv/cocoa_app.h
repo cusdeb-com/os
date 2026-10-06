@@ -22,8 +22,6 @@
 
 #include "macdrv_cocoa.h"
 
-#define ERR(...) do { if (macdrv_err_on) LogError(__func__, __VA_ARGS__); } while (false)
-
 /* Internal notification sent on NSApp for display configuration changes. The
    userInfo contains the two keys, NSNumbers for the effected CGDirectDisplayID
    and the CGDisplayChangeSummaryFlags from the underlying CG callback. */
@@ -150,6 +148,3 @@ enum {
 
 
 void OnMainThreadAsync(dispatch_block_t block);
-
-void LogError(const char* func, NSString* format, ...);
-void LogErrorv(const char* func, NSString* format, va_list args);

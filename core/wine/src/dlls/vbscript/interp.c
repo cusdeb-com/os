@@ -1748,69 +1748,6 @@ static HRESULT interp_redim_preserve(exec_ctx_t *ctx)
     return hres;
 }
 
-static HRESULT interp_erase(exec_ctx_t *ctx)
-{
-    const BSTR identifier = ctx->instr->arg1.bstr;
-    VARIANT *v;
-    SAFEARRAY *array;
-    ref_t ref;
-    HRESULT hres;
-
-    TRACE("%s\n", debugstr_w(identifier));
-
-    hres = lookup_identifier(ctx, identifier, VBDISP_LET, &ref);
-    if(FAILED(hres))
-        return hres;
-
-    if(ref.type == REF_NONE) {
-        if(ctx->func->code_ctx->option_explicit)
-            return MAKE_VBSERROR(VBSE_VARIABLE_UNDEFINED);
-        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
-    }
-
-    if(ref.type != REF_VAR)
-        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
-
-
-    v = ref.u.v;
-    if(V_VT(v) == (VT_VARIANT|VT_BYREF))
-        v = V_VARIANTREF(v);
-
-    if(!(V_VT(v) & VT_ARRAY)) {
-        WARN("Erase on non-array type %d\n", V_VT(v));
-        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
-    }
-
-    array = V_ISBYREF(v) ? *V_ARRAYREF(v) : V_ARRAY(v);
-    if(!array)
-        return S_OK;
-
-    if(array->fFeatures & FADF_FIXEDSIZE) {
-        /* Fixed-size array: reinitialize all elements to default values. */
-        unsigned i, element_cnt = 1;
-        VARIANT *data;
-
-        for(i = 0; i < array->cDims; i++)
-            element_cnt *= array->rgsabound[i].cElements;
-
-        hres = SafeArrayAccessData(array, (void**)&data);
-        if(SUCCEEDED(hres)) {
-            for(i = 0; i < element_cnt; i++)
-                VariantClear(&data[i]);
-            SafeArrayUnaccessData(array);
-        }
-    }else {
-        /* Dynamic array: deallocate it. */
-        SafeArrayDestroy(array);
-        if(V_ISBYREF(v))
-            *V_ARRAYREF(v) = NULL;
-        else
-            V_ARRAY(v) = NULL;
-    }
-
-    return hres;
-}
-
 static HRESULT do_for_step(exec_ctx_t *ctx, VARIANT *loop_var)
 {
     BOOL gteq_zero;
@@ -1914,11 +1851,17 @@ static HRESULT interp_newenum(exec_ctx_t *ctx)
     switch(V_VT(v.v)) {
     case VT_DISPATCH|VT_BYREF:
     case VT_DISPATCH: {
+        IDispatch *disp = V_ISBYREF(v.v) ? *V_DISPATCHREF(v.v) : V_DISPATCH(v.v);
         IEnumVARIANT *iter;
         DISPPARAMS dp = {0};
         VARIANT iterv;
 
-        hres = disp_call(ctx->script, V_ISBYREF(v.v) ? *V_DISPATCHREF(v.v) : V_DISPATCH(v.v), DISPID_NEWENUM, TRUE, &dp, &iterv);
+        if(!disp) {
+            release_val(&v);
+            return MAKE_VBSERROR(VBSE_NOT_ENUM);
+        }
+
+        hres = disp_call(ctx->script, disp, DISPID_NEWENUM, TRUE, &dp, &iterv);
         release_val(&v);
         if(FAILED(hres))
             return hres;
@@ -2075,6 +2018,15 @@ static HRESULT interp_retval(exec_ctx_t *ctx)
     }
 
     return S_OK;
+}
+
+static HRESULT interp_throw(exec_ctx_t *ctx)
+{
+    const HRESULT hres = ctx->instr->arg1.uint;
+
+    TRACE("%08lx\n", hres);
+
+    return hres;
 }
 
 static HRESULT interp_stop(exec_ctx_t *ctx)
@@ -3067,11 +3019,19 @@ OP_LIST
 #undef X
 };
 
+/* Fixed-size script arrays are marked FADF_STATIC to match native, which makes
+ * SafeArrayDestroy leave the data block alone; clear it so the data gets freed. */
+void release_safearray(SAFEARRAY *sa)
+{
+    sa->fFeatures &= ~FADF_STATIC;
+    SafeArrayDestroy(sa);
+}
+
 void release_dynamic_var(dynamic_var_t *var)
 {
     VariantClear(&var->v);
     if(var->array)
-        SafeArrayDestroy(var->array);
+        release_safearray(var->array);
 }
 
 static void release_exec(exec_ctx_t *ctx)
@@ -3100,7 +3060,7 @@ static void release_exec(exec_ctx_t *ctx)
     if(ctx->arrays) {
         for(i=0; i < ctx->func->array_cnt; i++) {
             if(ctx->arrays[i])
-                SafeArrayDestroy(ctx->arrays[i]);
+                release_safearray(ctx->arrays[i]);
         }
         free(ctx->arrays);
     }
@@ -3170,6 +3130,8 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     HRESULT hres = S_OK;
 
     exec.code = func->code_ctx;
+    exec.script = ctx;
+    exec.func = func;
     exec.caller = ctx->caller_exec;
     ctx->caller_exec = NULL;
 
@@ -3247,8 +3209,6 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     }
 
     exec.instr = exec.code->instrs + func->code_off;
-    exec.script = ctx;
-    exec.func = func;
 
     prev_named_item = ctx->current_named_item;
     ctx->current_named_item = exec.code->named_item;

@@ -1495,7 +1495,7 @@ static void setup_raise_exception( struct thread_data *data, ucontext_t *sigcont
     size_t stack_size;
     NTSTATUS status;
 
-    status = send_debug_event( data, rec, context, TRUE, TRUE );
+    status = send_debug_event( data, rec, context, TRUE );
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
         restore_context( data, context, sigcontext );
@@ -2110,16 +2110,24 @@ static void fpe_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
         rec.ExceptionAddress = (void *)xcontext.c.FloatSave.ErrorOffset;
         break;
     case TRAP_x86_CACHEFLT:  /* SIMD exception */
-        /* TODO:
-         * Behaviour only tested for divide-by-zero exceptions
-         * Check for other SIMD exceptions as well */
-        if(siginfo->si_code != FPE_FLTDIV && siginfo->si_code != FPE_FLTINV)
-            FIXME("untested SIMD exception: %#x. Might not work correctly\n",
-                  siginfo->si_code);
-
-        rec.ExceptionCode = STATUS_FLOAT_MULTIPLE_TRAPS;
         rec.ExceptionInformation[rec.NumberParameters++] = 0;
         if (is_old_wow64()) rec.ExceptionInformation[rec.NumberParameters++] = ((XSAVE_FORMAT *)xcontext.c.ExtendedRegisters)->MxCsr;
+        switch (siginfo->si_code)
+        {
+        case FPE_FLTDIV:
+        case FPE_FLTINV:
+            rec.ExceptionCode = STATUS_FLOAT_MULTIPLE_TRAPS;
+            break;
+        case FPE_FLTOVF:
+        case FPE_FLTUND:
+        case FPE_FLTRES:
+            rec.ExceptionCode = STATUS_FLOAT_MULTIPLE_FAULTS;
+            break;
+        default:
+            FIXME("unknown SIMD exception: %#x\n", siginfo->si_code);
+            rec.ExceptionCode = STATUS_FLOAT_MULTIPLE_TRAPS;
+            break;
+        }
         break;
     default:
         WINE_ERR( "Got unexpected trap %d\n", TRAP_sig(sigcontext) );

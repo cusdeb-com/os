@@ -2564,13 +2564,18 @@ static HRESULT WINAPI presentation_descriptor_Clone(IMFPresentationDescriptor *i
     struct presentation_desc *presentation_desc = impl_from_IMFPresentationDescriptor(iface);
     struct presentation_desc *object;
     unsigned int i;
+    HRESULT hr;
 
     TRACE("%p, %p.\n", iface, descriptor);
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    presentation_descriptor_init(object, presentation_desc->count);
+    if (FAILED(hr = presentation_descriptor_init(object, presentation_desc->count)))
+    {
+        free(object);
+        return hr;
+    }
 
     EnterCriticalSection(&presentation_desc->attributes.cs);
 
@@ -2815,6 +2820,9 @@ HRESULT WINAPI MFCalculateImageSize(REFGUID subtype, UINT32 width, UINT32 height
     unsigned int stride;
 
     TRACE("%s, %u, %u, %p.\n", debugstr_mf_guid(subtype), width, height, size);
+
+    if (!height)
+        return E_INVALIDARG;
 
     if (!(format = mf_get_video_format(subtype)))
     {
@@ -3119,6 +3127,9 @@ HRESULT WINAPI MFInitMediaTypeFromWaveFormatEx(IMFMediaType *mediatype, const WA
 
     if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
     {
+        if (format->cbSize < sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX))
+            return E_INVALIDARG;
+
         memcpy(&subtype, &wfex->SubFormat, sizeof(subtype));
 
         if (wfex->dwChannelMask)

@@ -171,7 +171,7 @@ static DWORD get_device_index(struct device_desc *desc, struct list **before)
     /* The device list is sorted, so just increment the index until it doesn't match an index already in the list */
     LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
     {
-        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.input == desc->input)
+        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.interface == desc->interface)
         {
             if (ext->index != index)
             {
@@ -188,12 +188,13 @@ static DWORD get_device_index(struct device_desc *desc, struct list **before)
 static WCHAR *get_instance_id(DEVICE_OBJECT *device)
 {
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD len = wcslen(ext->desc.serialnumber) + 33;
+    const WCHAR *serial_str = !*ext->desc.serialnumber ? L"0000" : ext->desc.serialnumber;
+    DWORD len = wcslen(serial_str) + 33;
     WCHAR *dst;
 
     if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
     {
-        swprintf(dst, len, L"%u&%s&%x&%u&%u", ext->desc.version, ext->desc.serialnumber,
+        swprintf(dst, len, L"%u&%s&%x&%u&%u", ext->desc.version, serial_str,
                  ext->desc.uid, ext->index, ext->desc.is_gamepad);
     }
 
@@ -209,23 +210,23 @@ static const WCHAR *bus_type_str[] =
 
 static WCHAR *get_device_id(DEVICE_OBJECT *device)
 {
-    static const WCHAR input_format[] = L"&MI_%02u";
+    static const WCHAR interface_format[] = L"&MI_%02u";
     static const WCHAR winebus_format[] = L"%s\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 18;
+    DWORD pos = 0, len = 0, interface_len = 0, winebus_len = 18;
     const WCHAR *bus_str;
     WCHAR *dst;
 
     assert(ext->desc.bus_type < BUS_TYPE_COUNT);
     bus_str = bus_type_str[ext->desc.bus_type];
-    if (ext->desc.input != -1) input_len = 14;
+    if (ext->desc.interface != -1) interface_len = 14;
 
-    len += winebus_len + input_len + wcslen(bus_str) + 1;
+    len += winebus_len + interface_len + wcslen(bus_str) + 1;
 
     if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
     {
         pos += swprintf(dst + pos, len - pos, winebus_format, bus_str, ext->desc.vid, ext->desc.pid);
-        if (input_len) pos += swprintf(dst + pos, len - pos, input_format, ext->desc.input);
+        if (interface_len) pos += swprintf(dst + pos, len - pos, interface_format, ext->desc.interface);
     }
 
     return dst;
@@ -233,20 +234,20 @@ static WCHAR *get_device_id(DEVICE_OBJECT *device)
 
 static WCHAR *get_hardware_ids(DEVICE_OBJECT *device)
 {
-    static const WCHAR input_format[] = L"&MI_%02u";
+    static const WCHAR interface_format[] = L"&MI_%02u";
     static const WCHAR winebus_format[] = L"WINEBUS\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 25;
+    DWORD pos = 0, len = 0, interface_len = 0, winebus_len = 25;
     WCHAR *dst;
 
-    if (ext->desc.input != -1) input_len = 14;
+    if (ext->desc.interface != -1) interface_len = 14;
 
-    len += winebus_len + input_len + 1;
+    len += winebus_len + interface_len + 1;
 
     if ((dst = ExAllocatePool(PagedPool, (len + 1) * sizeof(WCHAR))))
     {
         pos += swprintf(dst + pos, len - pos, winebus_format, ext->desc.vid, ext->desc.pid);
-        if (input_len) pos += swprintf(dst + pos, len - pos, input_format, ext->desc.input);
+        if (interface_len) pos += swprintf(dst + pos, len - pos, interface_format, ext->desc.interface);
         pos += 1;
         dst[pos] = 0;
     }
@@ -259,16 +260,44 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
     static const WCHAR xinput_compat[] = L"WINEBUS\\WINE_COMP_XINPUT";
     static const WCHAR hid_compat[] = L"WINEBUS\\WINE_COMP_HID";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD size = sizeof(hid_compat);
-    WCHAR *dst;
+    WCHAR usb_compat[71];
+    DWORD usb_len = 0, size;
+    WCHAR *dst, *pos;
 
+    /* A real Windows USB-HID device exposes the USB class compatible IDs on its USB
+       interface parent. winebus has no separate interface device, so report them on
+       the HID device, where an application reaches them from the HID node through
+       CM_Get_Parent. desc.bus_id stays -1 for backends that read no USB interface,
+       which leaves them unchanged. */
+    if (ext->desc.bus_type == BUS_TYPE_USB && ext->desc.bus_id != -1)
+    {
+        UINT class = (ext->desc.bus_id >> 16) & 0xff, subclass = (ext->desc.bus_id >> 8) & 0xff,
+             protocol = ext->desc.bus_id & 0xff;
+
+        usb_len += swprintf(usb_compat + usb_len, ARRAY_SIZE(usb_compat) - usb_len,
+                            L"USB\\Class_%02x&SubClass_%02x&Prot_%02x", class, subclass, protocol) + 1;
+        usb_len += swprintf(usb_compat + usb_len, ARRAY_SIZE(usb_compat) - usb_len,
+                            L"USB\\Class_%02x&SubClass_%02x", class, subclass) + 1;
+        usb_len += swprintf(usb_compat + usb_len, ARRAY_SIZE(usb_compat) - usb_len,
+                            L"USB\\Class_%02x", class) + 1;
+    }
+
+    size = sizeof(hid_compat) + usb_len * sizeof(WCHAR);
     if (ext->desc.is_gamepad) size += sizeof(xinput_compat);
 
     if ((dst = ExAllocatePool(PagedPool, size + sizeof(WCHAR))))
     {
-        if (ext->desc.is_gamepad) memcpy(dst, xinput_compat, sizeof(xinput_compat));
-        memcpy((char *)dst + size - sizeof(hid_compat), hid_compat, sizeof(hid_compat));
-        dst[size / sizeof(WCHAR)] = 0;
+        pos = dst;
+        if (ext->desc.is_gamepad)
+        {
+            memcpy(pos, xinput_compat, sizeof(xinput_compat));
+            pos += sizeof(xinput_compat) / sizeof(WCHAR);
+        }
+        memcpy(pos, hid_compat, sizeof(hid_compat));
+        pos += sizeof(hid_compat) / sizeof(WCHAR);
+        memcpy(pos, usb_compat, usb_len * sizeof(WCHAR));
+        pos += usb_len;
+        *pos = 0;
     }
 
     return dst;
@@ -286,24 +315,6 @@ static WCHAR *get_device_text(DEVICE_OBJECT *device)
         memcpy( dst, src, size );
 
     TRACE("Returning %s.\n", debugstr_w(dst));
-    return dst;
-}
-
-#define GUID_STRING_LENGTH 39
-static WCHAR *get_container_id(DEVICE_OBJECT *device)
-{
-    struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    GUID *guid = &ext->container_id;
-    WCHAR *dst;
-
-    if ((dst = ExAllocatePool(PagedPool, GUID_STRING_LENGTH * sizeof(WCHAR))))
-    {
-        swprintf(dst, GUID_STRING_LENGTH, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-                guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-                guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
-    }
-
-    TRACE("Returning container ID %s.\n", debugstr_w(dst));
     return dst;
 }
 
@@ -330,34 +341,6 @@ static void remove_pending_irps(DEVICE_OBJECT *device)
         pending->IoStatus.Information = 0;
         IoCompleteRequest(pending, IO_NO_INCREMENT);
     }
-}
-
-static void make_unique_serial(struct device_extension *device)
-{
-    struct device_extension *ext;
-
-    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
-        if (!wcscmp(device->desc.serialnumber, ext->desc.serialnumber)) break;
-    if (&ext->entry == &device_list && *device->desc.serialnumber) return;
-
-    swprintf(device->desc.serialnumber, ARRAY_SIZE(device->desc.serialnumber), L"%04x%08x%04x%04x",
-             device->index, device->desc.input, device->desc.pid, device->desc.vid);
-}
-
-static void make_unique_container_id(struct device_extension *device)
-{
-    struct device_extension *ext;
-    LARGE_INTEGER ticks;
-
-    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
-        if (IsEqualGUID(&device->container_id, &ext->container_id)) break;
-    if (&ext->entry == &device_list && !IsEqualGUID(&device->container_id, &GUID_NULL)) return;
-
-    device->container_id.Data1 = MAKELONG(device->desc.vid, device->desc.pid);
-    device->container_id.Data2 = device->index;
-    device->container_id.Data3 = device->desc.input;
-    QueryPerformanceCounter(&ticks);
-    memcpy(device->container_id.Data4, &ticks.QuadPart, sizeof(device->container_id.Data4));
 }
 
 static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 unix_device)
@@ -403,17 +386,6 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
 
     InitializeCriticalSectionEx(&ext->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     ext->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
-
-    /* Overcooked! All You Can Eat only adds controllers with unique serial numbers
-     * Prefer keeping serial numbers unique over keeping them consistent across runs */
-    make_unique_serial(ext);
-
-    /*
-     * Some games use container ID to match the bus device to the HID
-     * device in order to get things like DEVPKEY_Device_BusReportedDeviceDesc.
-     * Create a unique container ID to facilitate this.
-     */
-    make_unique_container_id(ext);
 
     /* add to list of pnp devices */
     if (before)
@@ -635,13 +607,43 @@ static BOOL deliver_next_report(struct device_extension *ext, IRP *irp)
 static void process_hid_report(DEVICE_OBJECT *device, BYTE *report_buf, DWORD report_len)
 {
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    ULONG size = offsetof(struct hid_report, buffer[report_len]);
     struct hid_report *report, *last_report;
+    ULONG size;
     IRP *irp;
 
     TRACE("device %p report_buf %p (%#x), report_len %#lx\n", device, report_buf, *report_buf, report_len);
 
-    if (!(report = RtlAllocateHeap(GetProcessHeap(), 0, size))) return;
+    RtlEnterCriticalSection(&ext->cs);
+
+    if (ext->state != DEVICE_STATE_STARTED)
+    {
+        RtlLeaveCriticalSection(&ext->cs);
+        return;
+    }
+
+    if (!ext->collection_desc.ReportIDs[0].ReportID) last_report = ext->last_reports[0];
+    else last_report = ext->last_reports[report_buf[0]];
+    if (!last_report)
+    {
+        WARN("Ignoring report with unexpected id %#x\n", *report_buf);
+        RtlLeaveCriticalSection(&ext->cs);
+        return;
+    }
+
+    /* Devices may send more data than their report declares, but the cached report
+     * and hidclass.sys buffers are only sized to hold the declared size. */
+    if (report_len > last_report->length)
+    {
+        WARN("overlong report %#x length %lu truncated to declared length %lu\n", *report_buf, report_len, last_report->length);
+        report_len = last_report->length;
+    }
+
+    size = offsetof(struct hid_report, buffer[report_len]);
+    if (!(report = RtlAllocateHeap(GetProcessHeap(), 0, size)))
+    {
+        RtlLeaveCriticalSection(&ext->cs);
+        return;
+    }
     memcpy(report->buffer, report_buf, report_len);
     report->length = report_len;
 
@@ -696,23 +698,6 @@ static void process_hid_report(DEVICE_OBJECT *device, BYTE *report_buf, DWORD re
             report->buffer[8] = trigger[0]; /* TriggerLeft */
             report->buffer[9] = trigger[1]; /* TirggerRight */
         }
-    }
-
-    RtlEnterCriticalSection(&ext->cs);
-
-    if (ext->state != DEVICE_STATE_STARTED)
-    {
-        RtlLeaveCriticalSection(&ext->cs);
-        return;
-    }
-
-    if (!ext->collection_desc.ReportIDs[0].ReportID) last_report = ext->last_reports[0];
-    else last_report = ext->last_reports[report_buf[0]];
-    if (!last_report)
-    {
-        WARN("Ignoring report with unexpected id %#x\n", *report_buf);
-        RtlLeaveCriticalSection(&ext->cs);
-        return;
     }
 
     list_add_tail(&ext->reports, &report->entry);
@@ -780,8 +765,8 @@ static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
             break;
         case BusQueryContainerID:
             TRACE("BusQueryContainerID\n");
-            irp->IoStatus.Information = (ULONG_PTR)get_container_id(device);
-            break;
+            irp->IoStatus.Information = 0;
+            return STATUS_NOT_SUPPORTED;
         default:
             WARN("Unhandled type %08x\n", type);
             return status;
@@ -1201,7 +1186,7 @@ static void bus_options_init(void)
     options.disable_sdl = !check_bus_option(L"Enable SDL", 1);
     if (options.disable_sdl) TRACE("SDL devices disabled in registry\n");
     options.disable_hidraw = check_bus_option(L"DisableHidraw", 0);
-    if (options.disable_hidraw) TRACE("UDEV hidraw devices disabled in registry\n");
+    if (options.disable_hidraw) TRACE("IOHID and UDEV hidraw devices disabled in registry\n");
     options.disable_input = check_bus_option(L"DisableInput", 0);
     if (options.disable_input) TRACE("UDEV input devices disabled in registry\n");
     options.disable_udevd = check_bus_option(L"DisableUdevd", 0);
@@ -1346,8 +1331,14 @@ static NTSTATUS pdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
             break;
 
         case IRP_MN_QUERY_CAPABILITIES:
+        {
+            DEVICE_CAPABILITIES *caps = irpsp->Parameters.DeviceCapabilities.Capabilities;
+
+            caps->UniqueID = 1;
+            caps->Removable = 1;
             status = STATUS_SUCCESS;
             break;
+        }
 
         case IRP_MN_START_DEVICE:
             RtlEnterCriticalSection(&ext->cs);
@@ -1450,6 +1441,7 @@ static NTSTATUS hid_get_device_string(DEVICE_OBJECT *device, DWORD index, WCHAR 
         else memcpy(buffer, ext->desc.product, len);
         return STATUS_SUCCESS;
     case HID_STRING_ID_ISERIALNUMBER:
+        if (!*ext->desc.serialnumber) return STATUS_INVALID_PARAMETER;
         len = (wcslen(ext->desc.serialnumber) + 1) * sizeof(WCHAR);
         if (len > buffer_len) return STATUS_BUFFER_TOO_SMALL;
         else memcpy(buffer, ext->desc.serialnumber, len);

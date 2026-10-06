@@ -689,6 +689,12 @@ static VkResult convert_device_create_info( struct vulkan_physical_device *physi
     device->extensions.has_VK_KHR_external_fence_win32 = 0;
     device->extensions.has_VK_KHR_external_semaphore_win32 = 0;
 
+    /* For Direct3D VA support. */
+    device->extensions.has_VK_EXT_external_memory_dma_buf = physical_device->extensions.has_VK_EXT_external_memory_dma_buf;
+    device->extensions.has_VK_EXT_image_drm_format_modifier = physical_device->extensions.has_VK_EXT_image_drm_format_modifier;
+    device->extensions.has_VK_KHR_image_format_list = physical_device->extensions.has_VK_KHR_image_format_list;
+    device->extensions.has_VK_EXT_physical_device_drm = physical_device->extensions.has_VK_EXT_physical_device_drm;
+
     if (physical_device->map_placed_align)
     {
         VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *map_placed_features;
@@ -1528,8 +1534,12 @@ static VkResult win32u_vkCreateWin32SurfaceKHR( VkInstance client_instance, cons
         surface->hwnd = dummy;
     }
 
-    if (!(surface->client = user_driver->pCreateClientSurface( surface->hwnd, 0 ))) res = VK_ERROR_OUT_OF_HOST_MEMORY;
-    else res = driver_funcs->p_vulkan_surface_create( surface->client, instance, &host_surface );
+    if (!(surface->client = get_unused_client_surface( surface->hwnd, 0, FALSE ))) res = VK_ERROR_OUT_OF_HOST_MEMORY;
+    else
+    {
+        res = driver_funcs->p_vulkan_surface_create( surface->client, instance, &host_surface );
+        use_window_client_surface( surface->client, !res );
+    }
     if (res)
     {
         if (surface->client) client_surface_release( surface->client );
@@ -1537,7 +1547,6 @@ static VkResult win32u_vkCreateWin32SurfaceKHR( VkInstance client_instance, cons
         free( surface );
         return res;
     }
-    add_window_client_surface( surface->hwnd, surface->client );
     set_window_pixel_format( surface->hwnd, -1, TRUE );
 
     vulkan_object_init( &surface->obj.obj, host_surface );
@@ -1562,6 +1571,7 @@ static void win32u_vkDestroySurfaceKHR( VkInstance client_instance, VkSurfaceKHR
     if (allocator) FIXME( "Support for allocation callbacks not implemented yet\n" );
 
     instance->p_vkDestroySurfaceKHR( instance->host.instance, surface->obj.host.surface, NULL /* allocator */ );
+    use_window_client_surface( surface->client, FALSE );
     client_surface_release( surface->client );
 
     instance->p_remove_object( instance, &surface->obj.obj );
@@ -1808,6 +1818,36 @@ static BOOL extents_equals( const VkExtent2D *extents, const RECT *rect )
     return extents->width == rect->right - rect->left && extents->height == rect->bottom - rect->top;
 }
 
+static VkSurfaceFormatKHR *get_physical_device_surface_formats( struct vulkan_physical_device *physical_device,
+                                                                struct surface *surface, uint32_t *format_count )
+{
+    VkPhysicalDevice host_physical_device = physical_device->host.physical_device;
+    struct vulkan_instance *instance = physical_device->instance;
+    VkSurfaceKHR host_surface = surface->obj.host.surface;
+    VkSurfaceFormatKHR *formats;
+
+    for (;;)
+    {
+        if (instance->p_vkGetPhysicalDeviceSurfaceFormatsKHR( host_physical_device, host_surface, format_count, NULL )) return NULL;
+        if (!(formats = calloc( *format_count, sizeof(*formats) ))) return NULL;
+        if (!instance->p_vkGetPhysicalDeviceSurfaceFormatsKHR( host_physical_device, host_surface, format_count, formats )) return formats;
+        free( formats );
+    }
+}
+
+static BOOL is_color_space_supported( struct vulkan_physical_device *physical_device, struct surface *surface,
+                                      VkFormat format, VkColorSpaceKHR color_space )
+{
+    VkSurfaceFormatKHR *formats;
+    uint32_t i, format_count;
+
+    if (!(formats = get_physical_device_surface_formats( physical_device, surface, &format_count ))) return FALSE;
+    for (i = 0; i < format_count; i++) if (formats[i].format == format && formats[i].colorSpace == color_space) break;
+    free( formats );
+
+    return i < format_count;
+}
+
 static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwapchainCreateInfoKHR *create_info,
                                              const VkAllocationCallbacks *allocator, VkSwapchainKHR *ret )
 {
@@ -1839,6 +1879,11 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
 
     create_info_host.imageExtent.width = max( create_info_host.imageExtent.width, capabilities.minImageExtent.width );
     create_info_host.imageExtent.height = max( create_info_host.imageExtent.height, capabilities.minImageExtent.height );
+
+    if (!is_color_space_supported( physical_device, surface, create_info->imageFormat, VK_COLOR_SPACE_PASS_THROUGH_EXT ))
+        client_surface_set_color_space( surface->client, -1 );
+    else if (client_surface_set_color_space( surface->client, create_info->imageColorSpace ))
+        create_info_host.imageColorSpace = VK_COLOR_SPACE_PASS_THROUGH_EXT;
 
     /* If the swapchain image size is not equal to the presentation size (e.g. because of DPI virtualization or
      * display mode change emulation), MoltenVK's vkQueuePresentKHR returns VK_SUBOPTIMAL_KHR.

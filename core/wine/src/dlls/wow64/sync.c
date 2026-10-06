@@ -689,6 +689,26 @@ NTSTATUS WINAPI wow64_NtOpenMutant( UINT *args )
 
 
 /**********************************************************************
+ *           wow64_NtOpenPrivateNamespace
+ */
+NTSTATUS WINAPI wow64_NtOpenPrivateNamespace( UINT *args )
+{
+    ULONG *handle_ptr = get_ptr( &args );
+    ACCESS_MASK access = get_ulong( &args );
+    OBJECT_ATTRIBUTES32 *attr32 = get_ptr( &args );
+    OBJECT_BOUNDARY_DESCRIPTOR *descriptor = get_ptr( &args );
+
+    struct object_attr64 attr;
+    HANDLE handle = 0;
+    NTSTATUS status;
+
+    *handle_ptr = 0;
+    status = NtOpenPrivateNamespace( &handle, access, objattr_32to64( &attr, attr32 ), descriptor );
+    put_handle( handle_ptr, handle );
+    return status;
+}
+
+/**********************************************************************
  *           wow64_NtOpenSection
  */
 NTSTATUS WINAPI wow64_NtOpenSection( UINT *args )
@@ -1264,7 +1284,7 @@ NTSTATUS WINAPI wow64_NtReleaseMutant( UINT *args )
 NTSTATUS WINAPI wow64_NtReleaseSemaphore( UINT *args )
 {
     HANDLE handle = get_handle( &args );
-    ULONG count = get_ulong( &args );
+    LONG count = get_ulong( &args );
     ULONG *previous = get_ptr( &args );
 
     return NtReleaseSemaphore( handle, count, previous );

@@ -29,10 +29,7 @@
 #endif
 
 #include "config.h"
-
 #include "macdrv.h"
-#include "winuser.h"
-#include "wine/server.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(keyboard);
 WINE_DECLARE_DEBUG_CHANNEL(key);
@@ -62,7 +59,7 @@ static BOOL is_ime_hkl( HKL hkl )
     case MAKELANGID(LANG_TIGRINYA, SUBLANG_TIGRINYA_ETHIOPIA): return TRUE;
     case MAKELANGID(LANG_VIETNAMESE, SUBLANG_VIETNAMESE_VIETNAM): return TRUE;
     case MAKELANGID(LANG_YI, SUBLANG_YI_PRC): return TRUE;
-    default: return (HIWORD(hkl) & 0xe000) == 0xe000;
+    default: return (HIWORD(hkl) & 0xf000) == 0xe000;
     }
 }
 
@@ -1102,69 +1099,6 @@ void macdrv_hotkey_press(const macdrv_event *event)
                                   0x15B, 0x15C, event->hotkey_press.time_ms, TRUE);
         }
     }
-}
-
-
-/***********************************************************************
- *              ImeToAsciiEx (MACDRV.@)
- */
-UINT macdrv_ImeToAsciiEx(UINT vkey, UINT vsc, const BYTE *state, HIMC himc)
-{
-    struct macdrv_thread_data *thread_data = macdrv_thread_data();
-    unsigned int flags;
-    int keyc;
-    bool ret;
-    BOOL repeat = !!(vsc & KF_REPEAT);
-
-    TRACE("himc %p, vkey %#x state %p repeat %u\n",
-          himc, vkey, state, repeat);
-
-    if (!state) return STATUS_SUCCESS;
-
-    if (vsc & KF_UP)
-    {
-        /* Only key down events should be sent to the Cocoa input context. We do
-           not handle key ups, and instead let those go through as a normal
-           WM_KEYUP. */
-        return STATUS_NOT_IMPLEMENTED;
-    }
-
-    switch (vkey)
-    {
-        case VK_KANA:
-        case VK_KANJI:
-            TRACE("Skipping metakey\n");
-            return STATUS_NOT_IMPLEMENTED;
-    }
-
-    flags = thread_data->last_modifiers;
-    if (state[VK_SHIFT] & 0x80)
-        flags |= NX_SHIFTMASK;
-    else
-        flags &= ~(NX_SHIFTMASK | NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK);
-    if (state[VK_CAPITAL] & 0x01)
-        flags |= NX_ALPHASHIFTMASK;
-    else
-        flags &= ~NX_ALPHASHIFTMASK;
-    if (state[VK_CONTROL] & 0x80)
-        flags |= NX_CONTROLMASK;
-    else
-        flags &= ~(NX_CONTROLMASK | NX_DEVICELCTLKEYMASK | NX_DEVICERCTLKEYMASK);
-    if (state[VK_MENU] & 0x80)
-        flags |= NX_COMMANDMASK;
-    else
-        flags &= ~(NX_COMMANDMASK | NX_DEVICELCMDKEYMASK | NX_DEVICERCMDKEYMASK);
-
-    /* Find the Mac keycode corresponding to the scan code */
-    for (keyc = 0; keyc < ARRAY_SIZE(thread_data->keyc2vkey); keyc++)
-        if (thread_data->keyc2vkey[keyc] == vkey) break;
-
-    if (keyc >= ARRAY_SIZE(thread_data->keyc2vkey)) return 0;
-
-    TRACE("flags 0x%08x keyc 0x%04x\n", flags, keyc);
-    ret = macdrv_send_keydown_to_input_source(keyc, flags, repeat, himc);
-    NtUserMsgWaitForMultipleObjectsEx(0, NULL, 0, QS_POSTMESSAGE | QS_SENDMESSAGE, 0);
-    return ret ? STATUS_SUCCESS : STATUS_NOT_IMPLEMENTED;
 }
 
 

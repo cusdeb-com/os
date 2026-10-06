@@ -44,6 +44,7 @@
 #include "mtdll.h"
 #include "wine/asm.h"
 #include "wine/debug.h"
+#include "wine/asm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
@@ -284,6 +285,8 @@ static int MSVCRT_umask = 0;
 /* INTERNAL: static data for tmpnam and _wtmpname functions */
 static LONG tmpnam_unique;
 static LONG tmpnam_s_unique;
+static LONG wtmpnam_unique;
+static LONG wtmpnam_s_unique;
 
 #define TOUL(x) (ULONGLONG)(x)
 static const ULONGLONG WCEXE = TOUL('e') << 32 | TOUL('x') << 16 | TOUL('e');
@@ -305,36 +308,6 @@ static CRITICAL_SECTION_DEBUG MSVCRT_file_cs_debug =
 static CRITICAL_SECTION MSVCRT_file_cs = { &MSVCRT_file_cs_debug, -1, 0, 0, 0, 0 };
 #define LOCK_FILES()    do { EnterCriticalSection(&MSVCRT_file_cs); } while (0)
 #define UNLOCK_FILES()  do { LeaveCriticalSection(&MSVCRT_file_cs); } while (0)
-
-static void msvcrt_stat64_to_stat(const struct _stat64 *buf64, struct _stat *buf)
-{
-    buf->st_dev   = buf64->st_dev;
-    buf->st_ino   = buf64->st_ino;
-    buf->st_mode  = buf64->st_mode;
-    buf->st_nlink = buf64->st_nlink;
-    buf->st_uid   = buf64->st_uid;
-    buf->st_gid   = buf64->st_gid;
-    buf->st_rdev  = buf64->st_rdev;
-    buf->st_size  = buf64->st_size;
-    buf->st_atime = buf64->st_atime;
-    buf->st_mtime = buf64->st_mtime;
-    buf->st_ctime = buf64->st_ctime;
-}
-
-static void msvcrt_stat64_to_stati64(const struct _stat64 *buf64, struct _stati64 *buf)
-{
-    buf->st_dev   = buf64->st_dev;
-    buf->st_ino   = buf64->st_ino;
-    buf->st_mode  = buf64->st_mode;
-    buf->st_nlink = buf64->st_nlink;
-    buf->st_uid   = buf64->st_uid;
-    buf->st_gid   = buf64->st_gid;
-    buf->st_rdev  = buf64->st_rdev;
-    buf->st_size  = buf64->st_size;
-    buf->st_atime = buf64->st_atime;
-    buf->st_mtime = buf64->st_mtime;
-    buf->st_ctime = buf64->st_ctime;
-}
 
 static void msvcrt_stat64_to_stat32(const struct _stat64 *buf64, struct _stat32 *buf)
 {
@@ -573,16 +546,21 @@ static void msvcrt_free_fd(int fd)
   release_ioinfo(fdinfo);
 }
 
-static void msvcrt_set_fd(ioinfo *fdinfo, HANDLE hand, int flag)
+static void msvcrt_set_fdinfo(ioinfo *fdinfo, HANDLE hand, int flag)
 {
   fdinfo->handle = hand;
-  fdinfo->wxflag = WX_OPEN | (flag & (WX_DONTINHERIT | WX_APPEND | WX_TEXT | WX_PIPE | WX_TTY));
+  fdinfo->wxflag = WX_OPEN | flag;
   fdinfo->lookahead[0] = '\n';
   fdinfo->lookahead[1] = '\n';
   fdinfo->lookahead[2] = '\n';
   ioinfo_set_unicode(fdinfo, FALSE);
   ioinfo_set_textmode(fdinfo, TEXTMODE_ANSI);
+}
 
+static void msvcrt_set_fd(ioinfo *fdinfo, HANDLE hand, int flag)
+{
+  flag &= ~(WX_ATEOF | WX_READNL);
+  msvcrt_set_fdinfo(fdinfo, hand, flag);
   if (hand != MSVCRT_NO_CONSOLE)
   {
     switch (fdinfo-MSVCRT___pioinfo[0])
@@ -742,7 +720,7 @@ void msvcrt_init_io(void)
       {
         fdinfo = get_ioinfo_alloc_fd(i);
         if(fdinfo != &MSVCRT___badioinfo)
-            msvcrt_set_fd(fdinfo, *handle_ptr, *wxflag_ptr);
+            msvcrt_set_fdinfo(fdinfo, *handle_ptr, *wxflag_ptr | (i < 3 ? WX_TEXT : 0));
         release_ioinfo(fdinfo);
       }
 
@@ -750,62 +728,34 @@ void msvcrt_init_io(void)
     }
   }
 
-  fdinfo = get_ioinfo_alloc_fd(STDIN_FILENO);
-  if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
-    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-    DWORD flags = WX_OPEN | WX_TEXT;
-    DWORD type = GetFileType(h);
+  for (i = 0; i < 3; ++i)
+  {
+    static const DWORD std_handle[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+    DWORD flags = WX_OPEN | WX_TEXT, type;
+    HANDLE h;
 
-    if (type == FILE_TYPE_UNKNOWN) {
-        h = MSVCRT_NO_CONSOLE;
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
-        flags |= WX_PIPE;
+    fdinfo = get_ioinfo_alloc_fd(i);
+    if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE)
+    {
+        h = GetStdHandle(std_handle[i]);
+        type = GetFileType(h);
+        if (type == FILE_TYPE_UNKNOWN)
+        {
+            h = MSVCRT_NO_CONSOLE;
+            flags |= WX_TTY;
+        }
+        else if ((type & 0xf) == FILE_TYPE_CHAR)
+        {
+            flags |= WX_TTY;
+        }
+        else if ((type & 0xf) == FILE_TYPE_PIPE)
+        {
+            flags |= WX_PIPE;
+        }
+        msvcrt_set_fdinfo(fdinfo, h, flags);
     }
-
-    msvcrt_set_fd(fdinfo, h, flags);
+    release_ioinfo(fdinfo);
   }
-  release_ioinfo(fdinfo);
-
-  fdinfo = get_ioinfo_alloc_fd(STDOUT_FILENO);
-  if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
-    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD flags = WX_OPEN | WX_TEXT;
-    DWORD type = GetFileType(h);
-
-    if (type == FILE_TYPE_UNKNOWN) {
-        h = MSVCRT_NO_CONSOLE;
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
-        flags |= WX_PIPE;
-    }
-
-    msvcrt_set_fd(fdinfo, h, flags);
-  }
-  release_ioinfo(fdinfo);
-
-  fdinfo = get_ioinfo_alloc_fd(STDERR_FILENO);
-  if (!(fdinfo->wxflag & WX_OPEN) || fdinfo->handle == INVALID_HANDLE_VALUE) {
-    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
-    DWORD flags = WX_OPEN | WX_TEXT;
-    DWORD type = GetFileType(h);
-
-    if (type == FILE_TYPE_UNKNOWN) {
-        h = MSVCRT_NO_CONSOLE;
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_CHAR) {
-        flags |= WX_TTY;
-    } else if ((type & 0xf) == FILE_TYPE_PIPE) {
-        flags |= WX_PIPE;
-    }
-
-    msvcrt_set_fd(fdinfo, h, flags);
-  }
-  release_ioinfo(fdinfo);
 
   TRACE(":handles (%p)(%p)(%p)\n", get_ioinfo_nolock(STDIN_FILENO)->handle,
         get_ioinfo_nolock(STDOUT_FILENO)->handle,
@@ -855,12 +805,25 @@ static int msvcrt_flush_buffer(FILE* file)
 /*********************************************************************
  *		_isatty (MSVCRT.@)
  */
-int CDECL _isatty(int fd)
+int CDECL MSVCRT__isatty(int fd)
 {
     TRACE(":fd (%d)\n",fd);
 
     return get_ioinfo_nolock(fd)->wxflag & WX_TTY;
 }
+#if defined(__x86_64__) && !defined(__arm64ec__)
+__ASM_GLOBAL_FUNC( _isatty,
+        "jmp " __ASM_NAME("MSVCRT__isatty") "\n\t"
+        /* These instructions are needed for Ruby runtime to find internal pioinfo address. */
+        "lea MSVCRT___pioinfo(%rip),%rdx\n\t"
+        "addq $0,%rsp\n\t"
+        "ret" )
+#else
+int CDECL _isatty(int fd)
+{
+    return MSVCRT__isatty(fd);
+}
+#endif
 
 /* INTERNAL: Allocate stdio file buffer */
 static BOOL msvcrt_alloc_buffer(FILE* file)
@@ -915,51 +878,51 @@ static void remove_std_buffer(FILE *file)
     file->_flag &= ~MSVCRT__USERBUF;
 }
 
-/* INTERNAL: Convert integer to base32 string (0-9a-v), 0 becomes "" */
-static int msvcrt_int_to_base32(int num, char *str)
+/* INTERNAL: Convert integer to a string in the given base (0-9a-z), 0 becomes "" */
+static int msvcrt_int_to_base(unsigned int num, unsigned int base, char *str)
 {
   char *p;
-  int n = num;
+  unsigned int n = num;
   int digits = 0;
 
   while (n != 0)
   {
-    n >>= 5;
+    n /= base;
     digits++;
   }
   p = str + digits;
   *p = 0;
   while (--p >= str)
   {
-    *p = (num & 31) + '0';
+    *p = (num % base) + '0';
     if (*p > '9')
       *p += ('a' - '0' - 10);
-    num >>= 5;
+    num /= base;
   }
 
   return digits;
 }
 
-/* INTERNAL: wide character version of msvcrt_int_to_base32 */
-static int msvcrt_int_to_base32_w(int num, wchar_t *str)
+/* INTERNAL: wide character version of msvcrt_int_to_base */
+static int msvcrt_int_to_base_w(unsigned int num, unsigned int base, wchar_t *str)
 {
     wchar_t *p;
-    int n = num;
+    unsigned int n = num;
     int digits = 0;
 
     while (n != 0)
     {
-        n >>= 5;
+        n /= base;
         digits++;
     }
     p = str + digits;
     *p = 0;
     while (--p >= str)
     {
-        *p = (num & 31) + '0';
+        *p = (num % base) + '0';
         if (*p > '9')
             *p += ('a' - '0' - 10);
-        num >>= 5;
+        num /= base;
     }
 
     return digits;
@@ -1997,33 +1960,6 @@ int CDECL _fstat64(int fd, struct _stat64* buf)
   }
   release_ioinfo(info);
   return 0;
-}
-
-/*********************************************************************
- *		_fstati64 (MSVCRT.@)
- */
-int CDECL _fstati64(int fd, struct _stati64* buf)
-{
-  int ret;
-  struct _stat64 buf64;
-
-  ret = _fstat64(fd, &buf64);
-  if (!ret)
-    msvcrt_stat64_to_stati64(&buf64, buf);
-  return ret;
-}
-
-/*********************************************************************
- *             _fstat (MSVCRT.@)
- */
-int CDECL _fstat(int fd, struct _stat* buf)
-{ int ret;
-  struct _stat64 buf64;
-
-  ret = _fstat64(fd, &buf64);
-  if (!ret)
-      msvcrt_stat64_to_stat(&buf64, buf);
-  return ret;
 }
 
 /*********************************************************************
@@ -3205,36 +3141,6 @@ int CDECL _stat64(const char* path, struct _stat64 * buf)
 }
 
 /*********************************************************************
- *		_stati64 (MSVCRT.@)
- */
-int CDECL _stati64(const char* path, struct _stati64 * buf)
-{
-  int ret;
-  struct _stat64 buf64;
-
-  ret = _stat64(path, &buf64);
-  if (!ret)
-    msvcrt_stat64_to_stati64(&buf64, buf);
-  return ret;
-}
-
-/*********************************************************************
- *             _stat (MSVCRT.@)
- */
-int CDECL _stat(const char* path, struct _stat * buf)
-{
-  int ret;
-  struct _stat64 buf64;
-
-  ret = _stat64( path, &buf64);
-  if (!ret)
-      msvcrt_stat64_to_stat(&buf64, buf);
-  return ret;
-}
-
-#if _MSVCR_VER >= 80
-
-/*********************************************************************
  *  _stat32 (MSVCR80.@)
  */
 int CDECL _stat32(const char *path, struct _stat32 *buf)
@@ -3275,8 +3181,6 @@ int CDECL _stat64i32(const char* path, struct _stat64i32 *buf)
         msvcrt_stat64_to_stat64i32(&buf64, buf);
     return ret;
 }
-
-#endif /* _MSVCR_VER >= 80 */
 
 /*********************************************************************
  *		_wstat64 (MSVCRT.@)
@@ -3355,35 +3259,6 @@ int CDECL _wstat64(const wchar_t* path, struct _stat64 * buf)
 }
 
 /*********************************************************************
- *		_wstati64 (MSVCRT.@)
- */
-int CDECL _wstati64(const wchar_t* path, struct _stati64 * buf)
-{
-  int ret;
-  struct _stat64 buf64;
-
-  ret = _wstat64(path, &buf64);
-  if (!ret)
-    msvcrt_stat64_to_stati64(&buf64, buf);
-  return ret;
-}
-
-/*********************************************************************
- *             _wstat (MSVCRT.@)
- */
-int CDECL _wstat(const wchar_t* path, struct _stat * buf)
-{
-  int ret;
-  struct _stat64 buf64;
-
-  ret = _wstat64( path, &buf64 );
-  if (!ret) msvcrt_stat64_to_stat(&buf64, buf);
-  return ret;
-}
-
-#if _MSVCR_VER >= 80
-
-/*********************************************************************
  *  _wstat32 (MSVCR80.@)
  */
 int CDECL _wstat32(const wchar_t *path, struct _stat32 *buf)
@@ -3424,8 +3299,6 @@ int CDECL _wstat64i32(const wchar_t *path, struct _stat64i32 *buf)
         msvcrt_stat64_to_stat64i32(&buf64, buf);
     return ret;
 }
-
-#endif /* _MSVCR_VER >= 80 */
 
 /*********************************************************************
  *		_tell (MSVCRT.@)
@@ -5050,14 +4923,59 @@ void CDECL setbuf(FILE* file, char *buf)
   setvbuf(file, buf, buf ? _IOFBF : _IONBF, BUFSIZ);
 }
 
-static int tmpnam_helper(char *s, size_t size, LONG *tmpnam_unique, int tmp_max)
+#if _MSVCR_VER >= 140
+static wchar_t tmpnam_dir[MAX_PATH];
+
+static BOOL WINAPI init_tmpnam_dir(INIT_ONCE *once, void *param, void **context)
+{
+    DWORD len = GetTempPathW(ARRAY_SIZE(tmpnam_dir), tmpnam_dir);
+
+    if (!len || len >= ARRAY_SIZE(tmpnam_dir))
+    {
+        tmpnam_dir[0] = '\\';
+        tmpnam_dir[1] = 0;
+    }
+    return TRUE;
+}
+
+/* INTERNAL: directory the tmpnam() family places its names in: the temporary
+ * directory as found on first use, kept for the lifetime of the process even
+ * if the environment changes or the directory does not exist */
+static const wchar_t *get_tmpnam_dir(void)
+{
+    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+
+    InitOnceExecuteOnce(&init_once, init_tmpnam_dir, NULL, NULL);
+    return tmpnam_dir;
+}
+#endif
+
+static int tmpnam_helper(char *s, size_t size, LONG *tmpnam_unique, int tmp_max, char prefix)
 {
     char tmpstr[8];
     char *p = s;
     int digits;
+#if _MSVCR_VER >= 140
+    const wchar_t *dir;
+    size_t dir_len;
+#endif
 
     if (!MSVCRT_CHECK_PMT(s != NULL)) return EINVAL;
 
+#if _MSVCR_VER >= 140
+    dir = get_tmpnam_dir();
+    dir_len = convert_wcs_to_acp_utf8(dir, NULL, 0) - 1;
+    if (size < dir_len + 2) {
+        if (size) *s = 0;
+        *_errno() = ERANGE;
+        return ERANGE;
+    }
+    convert_wcs_to_acp_utf8(dir, p, dir_len + 1);
+    p += dir_len;
+    *p++ = prefix;
+    size -= dir_len + 1;
+    digits = msvcrt_int_to_base(GetCurrentProcessId(), 36, tmpstr);
+#else
     if (size < 3) {
         if (size) *s = 0;
         *_errno() = ERANGE;
@@ -5066,7 +4984,8 @@ static int tmpnam_helper(char *s, size_t size, LONG *tmpnam_unique, int tmp_max)
     *p++ = '\\';
     *p++ = 's';
     size -= 2;
-    digits = msvcrt_int_to_base32(GetCurrentProcessId(), tmpstr);
+    digits = msvcrt_int_to_base(GetCurrentProcessId(), 32, tmpstr);
+#endif
     if (digits+1 > size) {
         *s = 0;
         *_errno() = ERANGE;
@@ -5083,7 +5002,16 @@ static int tmpnam_helper(char *s, size_t size, LONG *tmpnam_unique, int tmp_max)
                 break;
         }
 
-        digits = msvcrt_int_to_base32(digits, tmpstr);
+#if _MSVCR_VER >= 140
+        digits = msvcrt_int_to_base(digits, 36, tmpstr);
+        if (!digits) {
+            tmpstr[0] = '0';
+            tmpstr[1] = 0;
+            digits = 1;
+        }
+#else
+        digits = msvcrt_int_to_base(digits, 32, tmpstr);
+#endif
         if (digits+1 > size) {
             *s = 0;
             *_errno() = ERANGE;
@@ -5101,7 +5029,7 @@ static int tmpnam_helper(char *s, size_t size, LONG *tmpnam_unique, int tmp_max)
 
 int CDECL tmpnam_s(char *s, size_t size)
 {
-    return tmpnam_helper(s, size, &tmpnam_s_unique, TMP_MAX_S);
+    return tmpnam_helper(s, size, &tmpnam_s_unique, TMP_MAX_S, 'u');
 }
 
 /*********************************************************************
@@ -5116,19 +5044,38 @@ char * CDECL tmpnam(char *s)
       data->tmpnam_buffer = malloc(MAX_PATH);
 
     s = data->tmpnam_buffer;
+    return tmpnam_helper(s, MAX_PATH, &tmpnam_unique, TMP_MAX, 's') ? NULL : s;
   }
 
-  return tmpnam_helper(s, -1, &tmpnam_unique, TMP_MAX) ? NULL : s;
+  return tmpnam_helper(s, -1, &tmpnam_unique, TMP_MAX, 's') ? NULL : s;
 }
 
-static int wtmpnam_helper(wchar_t *s, size_t size, LONG *tmpnam_unique, int tmp_max)
+static int wtmpnam_helper(wchar_t *s, size_t size, LONG *tmpnam_unique, int tmp_max, wchar_t prefix)
 {
     wchar_t tmpstr[8];
     wchar_t *p = s;
     int digits;
+#if _MSVCR_VER >= 140
+    const wchar_t *dir;
+    size_t dir_len;
+#endif
 
     if (!MSVCRT_CHECK_PMT(s != NULL)) return EINVAL;
 
+#if _MSVCR_VER >= 140
+    dir = get_tmpnam_dir();
+    dir_len = wcslen(dir);
+    if (size < dir_len + 2) {
+        if (size) *s = 0;
+        *_errno() = ERANGE;
+        return ERANGE;
+    }
+    memcpy(p, dir, dir_len * sizeof(*dir));
+    p += dir_len;
+    *p++ = prefix;
+    size -= dir_len + 1;
+    digits = msvcrt_int_to_base_w(GetCurrentProcessId(), 36, tmpstr);
+#else
     if (size < 3) {
         if (size) *s = 0;
         *_errno() = ERANGE;
@@ -5137,7 +5084,8 @@ static int wtmpnam_helper(wchar_t *s, size_t size, LONG *tmpnam_unique, int tmp_
     *p++ = '\\';
     *p++ = 's';
     size -= 2;
-    digits = msvcrt_int_to_base32_w(GetCurrentProcessId(), tmpstr);
+    digits = msvcrt_int_to_base_w(GetCurrentProcessId(), 32, tmpstr);
+#endif
     if (digits+1 > size) {
         *s = 0;
         *_errno() = ERANGE;
@@ -5154,7 +5102,16 @@ static int wtmpnam_helper(wchar_t *s, size_t size, LONG *tmpnam_unique, int tmp_
                 break;
         }
 
-        digits = msvcrt_int_to_base32_w(digits, tmpstr);
+#if _MSVCR_VER >= 140
+        digits = msvcrt_int_to_base_w(digits, 36, tmpstr);
+        if (!digits) {
+            tmpstr[0] = '0';
+            tmpstr[1] = 0;
+            digits = 1;
+        }
+#else
+        digits = msvcrt_int_to_base_w(digits, 32, tmpstr);
+#endif
         if (digits+1 > size) {
             *s = 0;
             *_errno() = ERANGE;
@@ -5175,7 +5132,7 @@ static int wtmpnam_helper(wchar_t *s, size_t size, LONG *tmpnam_unique, int tmp_
  */
 int CDECL _wtmpnam_s(wchar_t *s, size_t size)
 {
-    return wtmpnam_helper(s, size, &tmpnam_s_unique, TMP_MAX_S);
+    return wtmpnam_helper(s, size, &wtmpnam_s_unique, TMP_MAX_S, 'x');
 }
 
 /*********************************************************************
@@ -5190,9 +5147,10 @@ wchar_t * CDECL _wtmpnam(wchar_t *s)
             data->wtmpnam_buffer = malloc(sizeof(wchar_t[MAX_PATH]));
 
         s = data->wtmpnam_buffer;
+        return wtmpnam_helper(s, MAX_PATH, &wtmpnam_unique, TMP_MAX, 'v') ? NULL : s;
     }
 
-    return wtmpnam_helper(s, -1, &tmpnam_unique, TMP_MAX) ? NULL : s;
+    return wtmpnam_helper(s, -1, &wtmpnam_unique, TMP_MAX, 'v') ? NULL : s;
 }
 
 /*********************************************************************

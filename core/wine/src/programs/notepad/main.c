@@ -389,7 +389,7 @@ void NOTEPAD_DoFind(FINDREPLACEW *fr)
     DWORD pos;
 
     fileLen = GetWindowTextLengthW(Globals.hEdit) + 1;
-    content = HeapAlloc(GetProcessHeap(), 0, fileLen * sizeof(WCHAR));
+    content = malloc(fileLen * sizeof(WCHAR));
     if (!content) return;
     GetWindowTextW(Globals.hEdit, content, fileLen);
 
@@ -412,7 +412,7 @@ void NOTEPAD_DoFind(FINDREPLACEW *fr)
             return;
     }
     pos = found - content;
-    HeapFree(GetProcessHeap(), 0, content);
+    free(content);
 
     if (!found)
     {
@@ -433,7 +433,7 @@ static void NOTEPAD_DoReplace(FINDREPLACEW *fr)
     DWORD pos_start;
 
     fileLen = GetWindowTextLengthW(Globals.hEdit) + 1;
-    content = HeapAlloc(GetProcessHeap(), 0, fileLen * sizeof(WCHAR));
+    content = malloc(fileLen * sizeof(WCHAR));
     if (!content) return;
     GetWindowTextW(Globals.hEdit, content, fileLen);
 
@@ -451,42 +451,34 @@ static void NOTEPAD_DoReplace(FINDREPLACEW *fr)
         default:    /* shouldn't happen */
             return;
     }
-    HeapFree(GetProcessHeap(), 0, content);
+    free(content);
 
     NOTEPAD_DoFind(fr);
 }
 
 static void NOTEPAD_DoReplaceAll(FINDREPLACEW *fr)
 {
-    LPWSTR content;
+    WCHAR *content, *found;
     int len = lstrlenW(fr->lpstrFindWhat);
     int fileLen;
-    SIZE_T pos;
+    DWORD pos;
 
     SendMessageW(Globals.hEdit, EM_SETSEL, 0, 0);
     while(TRUE){
         fileLen = GetWindowTextLengthW(Globals.hEdit) + 1;
-        content = HeapAlloc(GetProcessHeap(), 0, fileLen * sizeof(WCHAR));
+        content = malloc(fileLen * sizeof(WCHAR));
         if (!content) return;
         GetWindowTextW(Globals.hEdit, content, fileLen);
 
         SendMessageW(Globals.hEdit, EM_GETSEL, 0, (LPARAM)&pos);
-        switch (fr->Flags & (FR_DOWN|FR_MATCHCASE))
-        {
-            case FR_DOWN:
-                pos = StrStrIW(content+pos, fr->lpstrFindWhat) - content;
-                if (pos == -(SIZE_T)content) pos = ~(SIZE_T)0;
-                break;
-            case FR_DOWN|FR_MATCHCASE:
-                pos = StrStrW(content+pos, fr->lpstrFindWhat) - content;
-                if (pos == -(SIZE_T)content) pos = ~(SIZE_T)0;
-                break;
-            default:    /* shouldn't happen */
-                return;
-        }
-        HeapFree(GetProcessHeap(), 0, content);
+        if (fr->Flags & FR_MATCHCASE)
+            found = StrStrW(content + pos, fr->lpstrFindWhat);
+        else
+            found = StrStrIW(content + pos, fr->lpstrFindWhat);
+        pos = found - content;
+        free(content);
 
-        if(pos == ~(SIZE_T)0)
+        if (!found)
         {
             SendMessageW(Globals.hEdit, EM_SETSEL, 0, 0);
             return;

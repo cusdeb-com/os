@@ -2294,6 +2294,7 @@ static int is_dir_empty( int fd )
         return -1;
     }
 
+    rewinddir( dir );
     empty = 1;
     while (empty && (de = readdir( dir )))
     {
@@ -2942,7 +2943,7 @@ DECL_HANDLER(flush)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
+    if ((async = create_request_async( fd, &req->async, 0 )))
     {
         if (fd->fd_ops->flush) fd->fd_ops->flush( fd, async );
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );
@@ -2973,7 +2974,7 @@ DECL_HANDLER(get_volume_info)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
+    if ((async = create_request_async( fd, &req->async, 0 )))
     {
         if (fd->fd_ops->get_volume_info) fd->fd_ops->get_volume_info( fd, async, req->info_class );
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );
@@ -2988,6 +2989,8 @@ DECL_HANDLER(open_file_object)
 {
     struct object *obj, *result;
     struct object_params params = { .name = get_req_unicode_str(), .attr = req->attributes };
+    struct fd *fd;
+    struct async *async;
 
     if (req->rootdir && !(params.root = get_handle_obj( current->process, req->rootdir, 0, NULL ))) return;
 
@@ -2998,7 +3001,22 @@ DECL_HANDLER(open_file_object)
     if (!obj->ops->open_file) set_error( STATUS_OBJECT_TYPE_MISMATCH );
     else if ((result = obj->ops->open_file( obj, req->access, req->sharing, req->options )))
     {
+        struct async_data async_data = {.user = req->async_user};
+
         reply->handle = alloc_handle( current->process, result, req->access, req->attributes );
+        async_data.handle = reply->handle;
+
+        if (reply->handle && (fd = get_obj_fd( result )))
+        {
+            if (fd->fd_ops->create && (async = create_request_async( fd, &async_data, 1 )))
+            {
+                fd->fd_ops->create( fd, async, req->access, req->sharing, req->options );
+                reply->wait = async_handoff( async, NULL, 1 );
+                release_object( async );
+            }
+            release_object( fd );
+        }
+
         release_object( result );
     }
     release_object( obj );
@@ -3051,7 +3069,7 @@ DECL_HANDLER(read)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
+    if ((async = create_request_async( fd, &req->async, 0 )))
     {
         if (fd->fd_ops->read) fd->fd_ops->read( fd, async, req->pos );
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );
@@ -3070,7 +3088,7 @@ DECL_HANDLER(write)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
+    if ((async = create_request_async( fd, &req->async, 0 )))
     {
         if (fd->fd_ops->write) fd->fd_ops->write( fd, async, req->pos );
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );
@@ -3090,7 +3108,7 @@ DECL_HANDLER(ioctl)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
+    if ((async = create_request_async( fd, &req->async, 0 )))
     {
         if (fd->fd_ops->ioctl) fd->fd_ops->ioctl( fd, req->code, async );
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );

@@ -1,4 +1,4 @@
-EXTRADEFS = -D_CRTIMP=
+EXTRADEFS = -D_CORECRT_BUILD
 MODULE    = ucrtbase.dll
 IMPORTLIB = ucrtbase
 IMPORTS   = $(MUSL_PE_LIBS) ntdll

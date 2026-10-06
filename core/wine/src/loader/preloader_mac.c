@@ -48,24 +48,11 @@
 #include "wine/asm.h"
 #include "main.h"
 
-#if defined(__x86_64__)
 /* Reserve the low 8GB using a zero-fill section, this is the only way to
  * prevent system frameworks from using any of it (including allocations
  * before any preloader code runs)
  */
 __asm__(".zerofill WINE_RESERVE,WINE_RESERVE,___wine_reserve,0x1fffff000");
-
-static const struct wine_preload_info zerofill_sections[] =
-{
-    { (void *)0x000000001000, 0x1fffff000 }, /* WINE_RESERVE section */
-    { 0, 0 }                                 /* end of list */
-};
-#else
-static const struct wine_preload_info zerofill_sections[] =
-{
-    { 0, 0 }                                 /* end of list */
-};
-#endif
 
 #ifndef LC_MAIN
 #define LC_MAIN 0x80000028
@@ -80,19 +67,7 @@ struct entry_point_command
 
 static struct wine_preload_info preload_info[] =
 {
-    /* On macOS, we allocate the low 64k area in two steps because PAGEZERO
-     * might not always be available. */
-#ifdef __i386__
-    { (void *)0x00000000, 0x00001000 },  /* first page */
-    { (void *)0x00001000, 0x0000f000 },  /* low 64k */
-    { (void *)0x00010000, 0x00100000 },  /* DOS area */
-    { (void *)0x00110000, 0x67ef0000 },  /* low memory area */
-    { (void *)0x7f000000, 0x03000000 },  /* top-down allocations + shared user data + virtual heap */
-#else  /* __i386__ */
-    { (void *)0x000000001000, 0x1fffff000 }, /* WINE_RESERVE section */
-    { (void *)0x7ff000000000, 0x01ff0000 },  /* top-down allocations + virtual heap */
-#endif /* __i386__ */
-    { 0, 0 },                            /* PE exe range set with WINEPRELOADRESERVE */
+    { (void *)0x00001000, 0x1fffff000 }, /* WINE_RESERVE section */
     { 0, 0 }                             /* end of list */
 };
 
@@ -180,83 +155,6 @@ __attribute__ ((section ("__DATA,__program_vars")))  = { &__dso_handle, &NXArgc,
  *  <https://github.com/apple-oss-distributions/dyld/blob/dyld-852.2/src/dyldStartup.s>
  */
 
-#ifdef __i386__
-
-static const size_t page_mask = 0xfff;
-#define target_mach_header      mach_header
-#define target_segment_command  segment_command
-#define TARGET_LC_SEGMENT       LC_SEGMENT
-#define target_thread_state_t   i386_thread_state_t
-#ifdef __DARWIN_UNIX03
-#define target_thread_ip(x)     (x)->__eip
-#else
-#define target_thread_ip(x)     (x)->eip
-#endif
-
-#define SYSCALL_FUNC( name, nr ) \
-    __ASM_GLOBAL_FUNC( name, \
-                       "\tmovl $" #nr ",%eax\n" \
-                       "\tint $0x80\n" \
-                       "\tjnb 1f\n" \
-                       "\tmovl $-1,%eax\n" \
-                       "1:\tret\n" )
-
-#define SYSCALL_NOERR( name, nr ) \
-    __ASM_GLOBAL_FUNC( name, \
-                       "\tmovl $" #nr ",%eax\n" \
-                       "\tint $0x80\n" \
-                       "\tret\n" )
-
-__ASM_GLOBAL_FUNC( start,
-                   __ASM_CFI("\t.cfi_undefined %eip\n")
-                   /* The first 16 bytes are used as a function signature on i386 */
-                   "\t.byte 0x6a,0x00\n"            /* pushl $0: push a zero for debugger end of frames marker */
-                   "\t.byte 0x89,0xe5\n"            /* movl %esp,%ebp: pointer to base of kernel frame */
-                   "\t.byte 0x83,0xe4,0xf0\n"       /* andl $-16,%esp: force SSE alignment */
-                   "\t.byte 0x83,0xec,0x10\n"       /* subl $16,%esp: room for new argc, argv, & envp, SSE aligned */
-                   "\t.byte 0x8b,0x5d,0x04\n"       /* movl 4(%ebp),%ebx: pickup argc in %ebx */
-                   "\t.byte 0x89,0x5c,0x24,0x00\n"  /* movl %ebx,0(%esp): argc to reserved stack word */
-
-                   /* call wld_start(stack, &is_unix_thread) */
-                   "\tleal 4(%ebp),%eax\n"
-                   "\tmovl %eax,0(%esp)\n"          /* stack */
-                   "\tleal 8(%esp),%eax\n"
-                   "\tmovl %eax,4(%esp)\n"          /* &is_unix_thread */
-                   "\tmovl $0,(%eax)\n"
-                   "\tcall _wld_start\n"
-
-                   /* jmp based on is_unix_thread */
-                   "\tcmpl $0,8(%esp)\n"
-                   "\tjne 2f\n"
-
-                   "\tmovl 4(%ebp),%edi\n"          /* %edi = argc */
-                   "\tleal 8(%ebp),%esi\n"          /* %esi = argv */
-                   "\tleal 4(%esi,%edi,4),%edx\n"   /* %edx = env */
-                   "\tmovl %edx,%ecx\n"
-                   "1:\tmovl (%ecx),%ebx\n"
-                   "\tadd $4,%ecx\n"
-                   "\torl %ebx,%ebx\n"              /* look for the NULL ending the env[] array */
-                   "\tjnz 1b\n"                     /* %ecx = apple data */
-
-                   /* LC_MAIN */
-                   "\tmovl %edi,0(%esp)\n"          /* argc */
-                   "\tmovl %esi,4(%esp)\n"          /* argv */
-                   "\tmovl %edx,8(%esp)\n"          /* env */
-                   "\tmovl %ecx,12(%esp)\n"         /* apple data */
-                   "\tcall *%eax\n"                 /* call main(argc,argv,env,apple) */
-                   "\tmovl %eax,(%esp)\n"           /* pass result from main() to exit() */
-                   "\tcall _wld_exit\n"             /* need to use call to keep stack aligned */
-                   "\thlt\n"
-
-                   /* LC_UNIXTHREAD */
-                   "\t2:movl %ebp,%esp\n"           /* restore the unaligned stack pointer */
-                   "\taddl $4,%esp\n"               /* remove the debugger end frame marker */
-                   "\tmovl $0,%ebp\n"               /* restore ebp back to zero */
-                   "\tjmpl *%eax\n" )               /* jump to the entry point */
-
-#elif defined(__x86_64__)
-
-static const size_t page_mask = 0xfff;
 #define target_mach_header      mach_header_64
 #define target_segment_command  segment_command_64
 #define TARGET_LC_SEGMENT       LC_SEGMENT_64
@@ -322,10 +220,6 @@ __ASM_GLOBAL_FUNC( start,
                    "\tmovq $0,%rbp\n"               /* restore ebp back to zero */
                    "\tjmpq *%rax\n" )               /* jump to the entry point */
 
-#else
-#error preloader not implemented for this CPU
-#endif
-
 void wld_exit( int code ) __attribute__((noreturn));
 SYSCALL_NOERR( wld_exit, 1 /* SYS_exit */ );
 
@@ -334,9 +228,6 @@ SYSCALL_FUNC( wld_write, 4 /* SYS_write */ );
 
 void *wld_mmap( void *start, size_t len, int prot, int flags, int fd, off_t offset );
 SYSCALL_FUNC( wld_mmap, 197 /* SYS_mmap */ );
-
-void *wld_munmap( void *start, size_t len );
-SYSCALL_FUNC( wld_munmap, 73 /* SYS_munmap */ );
 
 static intptr_t (*p_dyld_get_image_slide)( const struct target_mach_header* mh );
 
@@ -365,13 +256,6 @@ void * memmove( void *dst, const void *src, size_t len )
             *lastd-- = *lasts--;
     }
     return dst;
-}
-
-static int wld_strncmp( const char *str1, const char *str2, size_t len )
-{
-    if (len <= 0) return 0;
-    while ((--len > 0) && *str1 && (*str1 == *str2)) { str1++; str2++; }
-    return *str1 - *str2;
 }
 
 /*
@@ -453,106 +337,6 @@ static __attribute__((noreturn,format(printf,1,2))) void fatal_error(const char 
     wld_exit(1);
 }
 
-static int preloader_overlaps_range( const void *start, const void *end )
-{
-    intptr_t slide = p_dyld_get_image_slide(&_mh_execute_header);
-    struct load_command *cmd = (struct load_command*)(&_mh_execute_header + 1);
-    int i;
-
-    for (i = 0; i < _mh_execute_header.ncmds; ++i)
-    {
-        if (cmd->cmd == TARGET_LC_SEGMENT)
-        {
-            struct target_segment_command *seg = (struct target_segment_command*)cmd;
-            const void *seg_start = (const void*)(seg->vmaddr + slide);
-            const void *seg_end = (const char*)seg_start + seg->vmsize;
-            static const char reserved_segname[] = "WINE_RESERVE";
-
-            if (!wld_strncmp( seg->segname, reserved_segname, sizeof(reserved_segname)-1 ))
-                continue;
-
-            if (end > seg_start && start <= seg_end)
-            {
-                char segname[sizeof(seg->segname) + 1];
-                memcpy(segname, seg->segname, sizeof(seg->segname));
-                segname[sizeof(segname) - 1] = 0;
-                wld_printf( "WINEPRELOADRESERVE range %p-%p overlaps preloader %s segment %p-%p\n",
-                             start, end, segname, seg_start, seg_end );
-                return 1;
-            }
-        }
-        cmd = (struct load_command*)((char*)cmd + cmd->cmdsize);
-    }
-
-    return 0;
-}
-
-/*
- *  preload_reserve
- *
- * Reserve a range specified in string format
- */
-static void preload_reserve( const char *str )
-{
-    const char *p;
-    unsigned long result = 0;
-    void *start = NULL, *end = NULL;
-    int i, first = 1;
-
-    for (p = str; *p; p++)
-    {
-        if (*p >= '0' && *p <= '9') result = result * 16 + *p - '0';
-        else if (*p >= 'a' && *p <= 'f') result = result * 16 + *p - 'a' + 10;
-        else if (*p >= 'A' && *p <= 'F') result = result * 16 + *p - 'A' + 10;
-        else if (*p == '-')
-        {
-            if (!first) goto error;
-            start = (void *)(result & ~page_mask);
-            result = 0;
-            first = 0;
-        }
-        else goto error;
-    }
-    if (!first) end = (void *)((result + page_mask) & ~page_mask);
-    else if (result) goto error;  /* single value '0' is allowed */
-
-    /* sanity checks */
-    if (end <= start || preloader_overlaps_range(start, end))
-        start = end = NULL;
-
-    /* check for overlap with low memory areas */
-    for (i = 0; preload_info[i].size; i++)
-    {
-        if ((char *)preload_info[i].addr > (char *)0x00110000) break;
-        if ((char *)end <= (char *)preload_info[i].addr + preload_info[i].size)
-        {
-            start = end = NULL;
-            break;
-        }
-        if ((char *)start < (char *)preload_info[i].addr + preload_info[i].size)
-            start = (char *)preload_info[i].addr + preload_info[i].size;
-    }
-
-    while (preload_info[i].size) i++;
-    preload_info[i].addr = start;
-    preload_info[i].size = (char *)end - (char *)start;
-    return;
-
-error:
-    fatal_error( "invalid WINEPRELOADRESERVE value '%s'\n", str );
-}
-
-/* remove a range from the preload list */
-static void remove_preload_range( int i )
-{
-    while (preload_info[i].size)
-    {
-        preload_info[i].addr = preload_info[i+1].addr;
-        preload_info[i].size = preload_info[i+1].size;
-        i++;
-    }
-}
-
 static void *get_entry_point( struct target_mach_header *mh, intptr_t slide, int *unix_thread )
 {
     struct entry_point_command *entry;
@@ -588,37 +372,6 @@ static void *get_entry_point( struct target_mach_header *mh, intptr_t slide, int
 
     return NULL;
 };
-
-static int is_zerofill( struct wine_preload_info *info )
-{
-    int i;
-
-    for (i = 0; zerofill_sections[i].size; i++)
-    {
-        if ((zerofill_sections[i].addr == info->addr) &&
-            (zerofill_sections[i].size == info->size))
-            return 1;
-    }
-    return 0;
-}
-
-static int map_region( struct wine_preload_info *info )
-{
-    int flags = MAP_PRIVATE | MAP_ANON;
-    void *ret;
-
-    if (!info->addr || is_zerofill( info )) flags |= MAP_FIXED;
-
-    ret = wld_mmap( info->addr, info->size, PROT_NONE, flags, -1, 0 );
-    if (ret == info->addr) return 1;
-    if (ret != (void *)-1) wld_munmap( ret, info->size );
-
-    /* don't warn for zero page */
-    if (info->addr >= (void *)0x1000)
-        wld_printf( "preloader: Warning: failed to reserve range %p-%p\n",
-                    info->addr, (char *)info->addr + info->size );
-    return 0;
-}
 
 static inline void get_dyld_func( const char *name, void **func )
 {
@@ -686,11 +439,8 @@ static void set_program_vars( void *stack, void *mod )
 
 void *wld_start( void *stack, int *is_unix_thread )
 {
-#ifdef __i386__
-    struct wine_preload_info builtin_dlls = { (void *)0x7a000000, 0x02000000 };
-#endif
     struct wine_preload_info **wine_main_preload_info;
-    char **argv, **p, *reserve = NULL;
+    char **argv, **p;
     struct target_mach_header *mh;
     void *mod, *entry;
     int *pargc, i;
@@ -704,12 +454,7 @@ void *wld_start( void *stack, int *is_unix_thread )
     p = argv + *pargc + 1;
 
     /* skip over the environment */
-    while (*p)
-    {
-        static const char res[] = "WINEPRELOADRESERVE=";
-        if (!wld_strncmp( *p, res, sizeof(res)-1 )) reserve = *p + sizeof(res) - 1;
-        p++;
-    }
+    while (*p) p++;
 
     LOAD_POSIX_DYLD_FUNC( dlopen );
     LOAD_POSIX_DYLD_FUNC( dlsym );
@@ -717,29 +462,15 @@ void *wld_start( void *stack, int *is_unix_thread )
     LOAD_MACHO_DYLD_FUNC( _dyld_get_image_slide );
 
     /* reserve memory that Wine needs */
-    if (reserve) preload_reserve( reserve );
     for (i = 0; preload_info[i].size; i++)
     {
-        if (!map_region( &preload_info[i] ))
-        {
-            remove_preload_range( i );
-            i--;
-        }
+        wld_mmap( preload_info[i].addr, preload_info[i].size, PROT_NONE,
+                  MAP_PRIVATE | MAP_ANON | MAP_NORESERVE | MAP_FIXED, -1, 0 );
     }
-
-#ifdef __i386__
-    if (!map_region( &builtin_dlls ))
-        builtin_dlls.size = 0;
-#endif
 
     /* load the main binary */
     if (!(mod = pdlopen( argv[1], RTLD_NOW )))
         fatal_error( "%s: could not load binary\n", argv[1] );
-
-#ifdef __i386__
-    if (builtin_dlls.size)
-        wld_munmap( builtin_dlls.addr, builtin_dlls.size );
-#endif
 
     /* store pointer to the preload info into the appropriate main binary variable */
     wine_main_preload_info = pdlsym( mod, "wine_main_preload_info" );

@@ -287,10 +287,9 @@ static INT nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
     }
 }
 
-static BOOL nulldrv_GetDeviceGammaRamp( PHYSDEV dev, void *ramp )
+static UINT nulldrv_GetDeviceGammaRamp( PHYSDEV dev, void *ramp )
 {
-    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-    return FALSE;
+    return -1; /* use default implementation */
 }
 
 static DWORD nulldrv_GetFontData( PHYSDEV dev, DWORD table, DWORD offset, LPVOID buffer, DWORD length )
@@ -486,10 +485,9 @@ static void nulldrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 {
 }
 
-static BOOL nulldrv_SetDeviceGammaRamp( PHYSDEV dev, void *ramp )
+static UINT nulldrv_SetDeviceGammaRamp( PHYSDEV dev, void *ramp )
 {
-    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-    return FALSE;
+    return -1; /* use default implementation */
 }
 
 static COLORREF nulldrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
@@ -671,7 +669,7 @@ static void nulldrv_ReleaseKbdTables( const KBDTABLES *tables )
 {
 }
 
-static UINT nulldrv_ImeToAsciiEx( UINT vkey, UINT vsc, const BYTE *state, HIMC himc )
+static UINT nulldrv_ImeToAsciiEx( UINT vkey, UINT vsc, const BYTE *state, void *update )
 {
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -898,15 +896,16 @@ static void nulldrv_surface_present( struct client_surface *client, HDC hdc )
 
 static const struct client_surface_funcs nulldrv_surface_funcs =
 {
+    .size = sizeof(struct client_surface),
     .destroy = nulldrv_surface_destroy,
     .detach = nulldrv_surface_detach,
     .update = nulldrv_surface_update,
     .present = nulldrv_surface_present,
 };
 
-static struct client_surface *nulldrv_CreateClientSurface( HWND hwnd, int pixel_format )
+static struct client_surface *nulldrv_CreateClientSurface( HWND hwnd, int pixel_format, BOOL raw )
 {
-    return client_surface_create( sizeof(struct client_surface), &nulldrv_surface_funcs, hwnd );
+    return client_surface_create( &nulldrv_surface_funcs, hwnd, pixel_format, raw );
 }
 
 static BOOL nulldrv_CreateWindowSurface( HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface )
@@ -1127,9 +1126,9 @@ static void loaderdrv_ReleaseKbdTables( const KBDTABLES *tables )
     return load_driver()->pReleaseKbdTables( tables );
 }
 
-static UINT loaderdrv_ImeToAsciiEx( UINT vkey, UINT vsc,const BYTE *state, HIMC himc )
+static UINT loaderdrv_ImeToAsciiEx( UINT vkey, UINT vsc,const BYTE *state, void *update )
 {
-    return load_driver()->pImeToAsciiEx( vkey, vsc, state, himc );
+    return load_driver()->pImeToAsciiEx( vkey, vsc, state, update );
 }
 
 static void loaderdrv_NotifyIMEStatus( HWND hwnd, UINT status )

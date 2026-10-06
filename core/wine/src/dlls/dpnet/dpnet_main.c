@@ -83,8 +83,27 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpvReserved)
  */
 HRESULT WINAPI DirectPlay8Create(REFGUID lpGUID, LPVOID *ppvInt, LPUNKNOWN punkOuter)
 {
+    HRESULT hr = E_INVALIDARG;
     TRACE("(%s, %p, %p): stub\n", debugstr_guid(lpGUID), ppvInt, punkOuter);
-    return S_OK;
+
+    if (!ppvInt)
+        return E_POINTER;
+
+    if (IsEqualGUID(lpGUID, &IID_IDirectPlay8Client))
+        hr = DPNET_CreateDirectPlay8Client(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8Server))
+        hr = DPNET_CreateDirectPlay8Server(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8Peer))
+        hr = DPNET_CreateDirectPlay8Peer(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8Address))
+        hr = DPNET_CreateDirectPlay8Address(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8LobbiedApplication))
+        hr = DPNET_CreateDirectPlay8LobbiedApp(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8LobbyClient))
+        hr = DPNET_CreateDirectPlay8LobbyClient(lpGUID, ppvInt);
+    else if (IsEqualGUID(lpGUID, &IID_IDirectPlay8ThreadPool))
+        hr = DPNET_CreateDirectPlay8ThreadPool(lpGUID, ppvInt);
+    return hr;
 }
 
 /*******************************************************************************
@@ -96,7 +115,7 @@ typedef struct
   IClassFactory IClassFactory_iface;
   LONG          ref;
   REFCLSID      rclsid;
-  HRESULT       (*pfnCreateInstanceFactory)(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj);
+  HRESULT       (*pfnCreateInstanceFactory)(REFIID riid, LPVOID *ppobj);
 } IClassFactoryImpl;
 
 static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
@@ -126,7 +145,10 @@ static HRESULT WINAPI DICF_CreateInstance(LPCLASSFACTORY iface,LPUNKNOWN pOuter,
   IClassFactoryImpl *This = impl_from_IClassFactory(iface);
 
   TRACE("(%p)->(%p,%s,%p)\n",This,pOuter,debugstr_guid(riid),ppobj);
-  return This->pfnCreateInstanceFactory(iface, pOuter, riid, ppobj);
+  if(pOuter)
+      return CLASS_E_NOAGGREGATION;
+
+  return This->pfnCreateInstanceFactory(riid, ppobj);
 }
 
 static HRESULT WINAPI DICF_LockServer(LPCLASSFACTORY iface,BOOL dolock) {

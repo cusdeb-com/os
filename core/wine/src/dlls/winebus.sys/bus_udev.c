@@ -1107,14 +1107,13 @@ static const struct hid_device_vtbl lnxev_device_vtbl =
 };
 #endif /* HAS_PROPER_INPUT_HEADER */
 
-static void get_device_subsystem_info(struct udev_device *dev, const char *subsystem, const char *devtype,
-                                      struct device_desc *desc, int *bus)
+static void get_device_subsystem_info(struct udev_device *dev, const char *subsystem, struct device_desc *desc, int *bus)
 {
     struct udev_device *parent = NULL;
     const char *ptr, *next, *tmp;
     char buffer[MAX_PATH];
 
-    if (!(parent = udev_device_get_parent_with_subsystem_devtype(dev, subsystem, devtype))) return;
+    if (!(parent = udev_device_get_parent_with_subsystem_devtype(dev, subsystem, NULL))) return;
 
     if ((next = udev_device_get_sysattr_value(parent, "uevent")))
     {
@@ -1139,7 +1138,7 @@ static void get_device_subsystem_info(struct udev_device *dev, const char *subsy
             if (!strncmp(ptr, "HID_PHYS=", 9) || !strncmp(ptr, "PHYS=\"", 6))
             {
                 if (!(tmp = strstr(ptr, "/input")) || tmp >= next) continue;
-                if (desc->input == -1) sscanf(tmp, "/input%d\n", &desc->input);
+                if (desc->interface == -1) sscanf(tmp, "/input%d\n", &desc->interface);
             }
             if (!strncmp(ptr, "HID_ID=", 7))
             {
@@ -1152,33 +1151,49 @@ static void get_device_subsystem_info(struct udev_device *dev, const char *subsy
                 if (!strncmp(ptr, "PRODUCT=", 8))
                     sscanf(ptr, "PRODUCT=%x/%x/%x/%x\n", bus, &desc->vid, &desc->pid, &desc->version);
             }
-
-            if (!strcmp(subsystem, "usb") && *bus != BUS_BLUETOOTH)
-            {
-                if (!strncmp(ptr, "PRODUCT=", 8))
-                    sscanf(ptr, "PRODUCT=%x/%x/%x\n", &desc->vid, &desc->pid, &desc->version);
-            }
         }
     }
+}
 
-    if (!strcmp(subsystem, "usb") && *bus != BUS_BLUETOOTH)
+static void get_device_usb_info(struct udev_device *dev, struct device_desc *desc)
+{
+    UINT class = 0, subclass = 0, protocol = 0, num_ifaces = 0, iface_num = -1;
+    struct udev_device *usb_dev, *iface;
+    const char *tmp;
+
+    if (!(usb_dev = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_device"))
+            || !(iface = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_interface")))
     {
-        if ((tmp = udev_device_get_sysattr_value(parent, "manufacturer")))
-            ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->manufacturer, ARRAY_SIZE(desc->manufacturer));
-
-        if ((tmp = udev_device_get_sysattr_value(parent, "product")))
-            ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->product, ARRAY_SIZE(desc->product));
-
-        if ((tmp = udev_device_get_sysattr_value(parent, "serial")))
-            ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->serialnumber, ARRAY_SIZE(desc->serialnumber));
+        ERR("Failed to get USB udev %s.", !usb_dev ? "device" : "interface");
+        return;
     }
+
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "idVendor"))) sscanf(tmp, "%x", &desc->vid);
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "idProduct"))) sscanf(tmp, "%x", &desc->pid);
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "bcdDevice"))) sscanf(tmp, "%x", &desc->version);
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "manufacturer")))
+        ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->manufacturer, ARRAY_SIZE(desc->manufacturer));
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "product")))
+        ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->product, ARRAY_SIZE(desc->product));
+    if ((tmp = udev_device_get_sysattr_value(usb_dev, "serial")))
+        ntdll_umbstowcs(tmp, strlen(tmp) + 1, desc->serialnumber, ARRAY_SIZE(desc->serialnumber));
+    else
+        desc->serialnumber[0] = 0; /* Don't report a serial number if the USB device doesn't report one. */
+    if (!(tmp = udev_device_get_sysattr_value(usb_dev, "bNumInterfaces")) || !sscanf(tmp, "%u", &num_ifaces))
+        ERR("Failed to get number of USB interfaces.\n");
+
+    if (num_ifaces != 1 && (tmp = udev_device_get_sysattr_value(iface, "bInterfaceNumber"))) sscanf(tmp, "%x", &iface_num);
+    if ((tmp = udev_device_get_sysattr_value(iface, "bInterfaceClass"))) sscanf(tmp, "%x", &class);
+    if ((tmp = udev_device_get_sysattr_value(iface, "bInterfaceSubClass"))) sscanf(tmp, "%x", &subclass);
+    if ((tmp = udev_device_get_sysattr_value(iface, "bInterfaceProtocol"))) sscanf(tmp, "%x", &protocol);
+    desc->bus_id = ((class & 0xff) << 16) | ((subclass & 0xff) << 8) | (protocol & 0xff);
+    desc->interface = iface_num;
 }
 
 static NTSTATUS hidraw_device_create(struct udev_device *dev, int fd, const char *devnode, struct device_desc desc)
 {
 #ifdef HAVE_LINUX_HIDRAW_H
     static const WCHAR hidraw[] = {'h','i','d','r','a','w',0};
-    static const WCHAR zeros[] = {'0','0','0','0',0};
     struct base_device *impl;
     char buffer[MAX_PATH];
 
@@ -1187,7 +1202,6 @@ static NTSTATUS hidraw_device_create(struct udev_device *dev, int fd, const char
         ntdll_umbstowcs(buffer, strlen(buffer) + 1, desc.product, ARRAY_SIZE(desc.product));
 
     if (!desc.manufacturer[0]) memcpy(desc.manufacturer, hidraw, sizeof(hidraw));
-    if (!desc.serialnumber[0]) memcpy(desc.serialnumber, zeros, sizeof(zeros));
 
     if (!(impl = raw_device_create(&hidraw_device_vtbl, sizeof(struct hidraw_device))))
         return STATUS_NO_MEMORY;
@@ -1209,7 +1223,6 @@ static NTSTATUS lnxev_device_create(struct udev_device *dev, int fd, const char 
 {
 #ifdef HAS_PROPER_INPUT_HEADER
     static const WCHAR evdev[] = {'e','v','d','e','v',0};
-    static const WCHAR zeros[] = {'0','0','0','0',0};
     int axis_count = 0, button_count = 0;
     struct lnxev_info info = {0};
     struct lnxev_device *impl;
@@ -1228,7 +1241,6 @@ static NTSTATUS lnxev_device_create(struct udev_device *dev, int fd, const char 
     if (!desc.manufacturer[0]) memcpy(desc.manufacturer, evdev, sizeof(evdev));
     if (!desc.product[0]) ntdll_umbstowcs(info.name, strlen(info.name) + 1, desc.product, ARRAY_SIZE(desc.product));
     if (!desc.serialnumber[0]) ntdll_umbstowcs(info.uniq, strlen(info.uniq) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
-    if (!desc.serialnumber[0]) memcpy(desc.serialnumber, zeros, sizeof(zeros));
 
     if (!(impl = hid_device_create(&lnxev_device_vtbl, sizeof(struct lnxev_device))))
         return STATUS_NO_MEMORY;
@@ -1346,7 +1358,7 @@ static NTSTATUS lnxev_device_create(struct udev_device *dev, int fd, const char 
 
 static void udev_add_device(struct udev_device *dev, int fd)
 {
-    struct device_desc desc = { .input = -1 };
+    struct device_desc desc = { .interface = -1, .bus_id = -1 };
     const char *subsystem, *devnode;
     int bus = 0;
 
@@ -1364,11 +1376,12 @@ static void udev_add_device(struct udev_device *dev, int fd)
 
     TRACE("udev %s syspath %s\n", debugstr_a(devnode), udev_device_get_syspath(dev));
 
-    get_device_subsystem_info(dev, "hid", NULL, &desc, &bus);
-    get_device_subsystem_info(dev, "input", NULL, &desc, &bus);
-    get_device_subsystem_info(dev, "usb", "usb_device", &desc, &bus);
+    get_device_subsystem_info(dev, "hid", &desc, &bus);
+    get_device_subsystem_info(dev, "input", &desc, &bus);
     if (bus == BUS_BLUETOOTH) desc.bus_type = BUS_TYPE_BLUETOOTH;
     else if (bus == BUS_USB) desc.bus_type = BUS_TYPE_USB;
+
+    if (desc.bus_type == BUS_TYPE_USB) get_device_usb_info(dev, &desc);
 
     if (!(subsystem = udev_device_get_subsystem(dev)))
     {

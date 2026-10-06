@@ -310,6 +310,13 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
     case VT_I2:
         *r = jsval_number(V_I2(var));
         return S_OK;
+    case VT_I8:
+        if (ctx->html_mode)
+        {
+            *r = jsval_number(V_I8(var));
+            return S_OK;
+        }
+        return jsval_variant(r, var);
     case VT_UI2:
         *r = jsval_number(V_UI2(var));
         return S_OK;
@@ -320,12 +327,12 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
         *r = jsval_number(V_UI4(var));
         return S_OK;
     case VT_UI8:
-        /*
-         * Native doesn't support VT_UI8 here, but it's needed for IE9+ APIs
-         * (native IE9 doesn't use jscript.dll for JavaScript).
-         */
-        *r = jsval_number(V_UI8(var));
-        return S_OK;
+        if (ctx->html_mode)
+        {
+            *r = jsval_number(V_UI8(var));
+            return S_OK;
+        }
+        return jsval_variant(r, var);
     case VT_R4:
         *r = jsval_number(V_R4(var));
         return S_OK;

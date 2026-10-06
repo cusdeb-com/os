@@ -4164,11 +4164,6 @@ static void output_test_module( struct makefile *make, unsigned int arch )
     output( "\t%secho \"%s_test.exe TESTRES \\\"%s\\\"\" | %s -u -o $@\n", cmd_prefix( "WRC" ),
             basemodule, obj_dir_path( make, stripped ), wrc );
 
-    if (make->disabled[arch] || (parent && parent->disabled[arch]))
-    {
-        make->ok_files[arch] = empty_strarray;
-        return;
-    }
     output_filenames_obj_dir( make, make->ok_files[arch] );
     output( ": %s", obj_dir_path( make, testmodule ));
     if (parent)
@@ -4281,15 +4276,15 @@ static void output_subdirs( struct makefile *make )
         {
             if (submakes[i]->disabled[arch]) continue;
             strarray_addall_path( &all_targets, submakes[i]->obj_dir, submakes[i]->all_targets[arch] );
+            if (!submakes[i]->testdll) continue;
             strarray_addall_path( &testclean_files, submakes[i]->obj_dir, submakes[i]->ok_files[arch] );
+            strarray_addall_path( &buildtest_deps, submakes[i]->obj_dir, submakes[i]->all_targets[arch] );
         }
         if (submakes[i]->disabled[0]) continue;
 
         strarray_addall_path( &all_targets, submakes[i]->obj_dir, submakes[i]->font_files );
         if (!strcmp( submakes[i]->obj_dir, "tools" ) || !strncmp( submakes[i]->obj_dir, "tools/", 6 ))
-            strarray_add( &tooldeps_deps, obj_dir_path( submakes[i], "all" ));
-        if (submakes[i]->testdll)
-            strarray_add( &buildtest_deps, obj_dir_path( submakes[i], "all" ));
+            strarray_addall_path( &tooldeps_deps, submakes[i]->obj_dir, submakes[i]->all_targets[0] );
     }
     strarray_addall( &dependencies, makefile_deps );
     output( "all:" );
@@ -4351,9 +4346,10 @@ static void output_subdirs( struct makefile *make )
 
     if (tooldeps_deps.count)
     {
-        output( "__tooldeps__:" );
+        output( "tools __tooldeps__:" );
         output_filenames( tooldeps_deps );
         output( "\n" );
+        strarray_add_uniq( &make->phony_targets, "tools" );
         strarray_add_uniq( &make->phony_targets, "__tooldeps__" );
     }
 
@@ -4919,9 +4915,13 @@ static void load_sources( struct makefile *make )
 
     if (make->obj_dir)
     {
-        make->disabled[0] = strarray_exists( disabled_dirs[0], make->obj_dir );
+        const char *parent_dir = make->testdll ? replace_extension( make->obj_dir, "/tests", "" ) : NULL;
+        make->disabled[0] = strarray_exists( disabled_dirs[0], make->obj_dir ) ||
+                            (parent_dir && strarray_exists( disabled_dirs[0], parent_dir ));
         for (arch = 1; arch < archs.count; arch++)
-            make->disabled[arch] = make->disabled[0] || strarray_exists( disabled_dirs[arch], make->obj_dir );
+            make->disabled[arch] = make->disabled[0] ||
+                                   strarray_exists( disabled_dirs[arch], make->obj_dir ) ||
+                                   (parent_dir && strarray_exists( disabled_dirs[arch], parent_dir ));
     }
     make->external   = make->obj_dir && strarray_exists( external_dirs, make->obj_dir );
     make->is_win16   = strarray_exists( make->extradllflags, "-m16" );

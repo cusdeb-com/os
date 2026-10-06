@@ -1063,11 +1063,6 @@ static void test_inet_pton(void)
         ok(WSAGetLastError() == (ret ? 0xdeadbeef : WSAEINVAL), "got error %u\n", WSAGetLastError());
         ok(addr == ipv4_tests[i].addr, "got addr %#08lx\n", addr);
 
-        WSASetLastError(0xdeadbeef);
-        addr = inet_addr(ipv4_tests[i].input);
-        ok(addr == ipv4_tests[i].ret ? ipv4_tests[i].addr : INADDR_NONE, "got addr %#08lx\n", addr);
-        ok(WSAGetLastError() == 0xdeadbeef, "got error %u\n", WSAGetLastError());
-
         winetest_pop_context();
     }
 
@@ -1272,6 +1267,8 @@ static void test_WSAAddressToString(void)
         { { 0xab20, 0, 0, 0, 0, 0, 0, 0x120 }, 0, 0xfa81, "[20ab::2001]:33274" },
         { { 0xab20, 0, 0, 0, 0, 0, 0, 0x120 }, 0x1234, 0xfa81, "[20ab::2001%4660]:33274" },
         { { 0xab20, 0, 0, 0, 0, 0, 0, 0x120 }, 0x1234, 0, "20ab::2001%4660" },
+        { { 0x1111, 0x2222, 0x3333, 0x4444, 0x0002, 0xfe5e, 0x7b7b, 0x7b7b }, ULONG_MAX, 0xffff,
+          "[1111:2222:3333:4444:200:5efe:123.123.123.123%4294967295]:65535" },
     };
     static struct
     {
