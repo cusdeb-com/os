@@ -175,7 +175,7 @@ Last-Modified: Mon, 13 Jul 2026 20:00:00 +0300
  /***
 --- a/src/dlls/comctl32/toolbar.c
 +++ b/src/dlls/comctl32/toolbar.c
-@@ -620,6 +620,49 @@
+@@ -621,6 +621,49 @@
                wine_dbgstr_rect(rcText));
  
  	hOldFont = SelectObject (hdc, infoPtr->hFont);

@@ -10,7 +10,7 @@ Last-Modified: Wed, 12 Aug 2026 15:45:00 +0300
 
 --- a/src/dlls/win32u/window.c
 +++ b/src/dlls/win32u/window.c
-@@ -2210,11 +2210,11 @@
+@@ -2293,11 +2293,11 @@
      if ((icon = get_icon_info( icon, ret ))) return icon;
      if ((icon = get_icon_info( (HICON)send_message( hwnd, WM_GETICON, type, 0 ), ret ))) return icon;
      if ((icon = get_icon_info( (HICON)get_class_long_ptr( hwnd, GCLP_HICON, FALSE ), ret ))) return icon;
