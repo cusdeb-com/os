@@ -2,7 +2,6 @@
 
 typedef ULONG PTR32;
 
-extern BOOL wrap_wglCopyContext( TEB *teb, HGLRC hglrcSrc, HGLRC hglrcDst, UINT mask );
 extern BOOL wrap_wglDeleteContext( TEB *teb, HGLRC oldContext );
 extern BOOL wrap_wglSwapBuffers( TEB *teb, HDC hdc );
 extern void wrap_glClear( TEB *teb, GLbitfield mask, PFN_glClear func );
@@ -15,7 +14,6 @@ extern void wrap_glGetDoublev( TEB *teb, GLenum pname, GLdouble *data, PFN_glGet
 extern GLenum wrap_glGetError( TEB *teb, PFN_glGetError func );
 extern void wrap_glGetFloatv( TEB *teb, GLenum pname, GLfloat *data, PFN_glGetFloatv func );
 extern void wrap_glGetIntegerv( TEB *teb, GLenum pname, GLint *data, PFN_glGetIntegerv func );
-extern const GLubyte *wrap_glGetString( TEB *teb, GLenum name, PFN_glGetString func );
 extern void wrap_glReadBuffer( TEB *teb, GLenum src, PFN_glReadBuffer func );
 extern void wrap_glReadPixels( TEB *teb, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels, PFN_glReadPixels func );
 extern void wrap_glViewport( TEB *teb, GLint x, GLint y, GLsizei width, GLsizei height, PFN_glViewport func );
@@ -28,6 +26,7 @@ extern void wrap_glFramebufferDrawBufferEXT( TEB *teb, GLuint framebuffer, GLenu
 extern void wrap_glFramebufferDrawBuffersEXT( TEB *teb, GLuint framebuffer, GLsizei n, const GLenum *bufs, PFN_glFramebufferDrawBuffersEXT func );
 extern void wrap_glFramebufferReadBufferEXT( TEB *teb, GLuint framebuffer, GLenum mode, PFN_glFramebufferReadBufferEXT func );
 extern void wrap_glGetFramebufferParameteriv( TEB *teb, GLenum target, GLenum pname, GLint *params, PFN_glGetFramebufferParameteriv func );
+extern void wrap_glGetFramebufferParameterivEXT( TEB *teb, GLuint framebuffer, GLenum pname, GLint *params, PFN_glGetFramebufferParameterivEXT func );
 extern void wrap_glGetInteger64v( TEB *teb, GLenum pname, GLint64 *data, PFN_glGetInteger64v func );
 extern void wrap_glGetUnsignedBytevEXT( TEB *teb, GLenum pname, GLubyte *data, PFN_glGetUnsignedBytevEXT func );
 extern GLsync wrap_glImportSyncEXT( TEB *teb, GLenum external_sync_type, GLintptr external_sync, GLbitfield flags, GLsync handle, PFN_glImportSyncEXT func );

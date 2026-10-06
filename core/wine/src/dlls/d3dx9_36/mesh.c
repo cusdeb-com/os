@@ -660,8 +660,8 @@ static BOOL declaration_equals(const D3DVERTEXELEMENT9 *declaration1, const D3DV
     UINT size1 = 0, size2 = 0;
 
     /* Find the size of each declaration */
-    while (declaration1[size1].Stream != 0xff) size1++;
-    while (declaration2[size2].Stream != 0xff) size2++;
+    while (size1 < MAX_FVF_DECL_SIZE && declaration1[size1].Stream != 0xff) size1++;
+    while (size2 < MAX_FVF_DECL_SIZE && declaration2[size2].Stream != 0xff) size2++;
 
     /* If not same size then they are definitely not equal */
     if (size1 != size2)
@@ -1380,14 +1380,19 @@ static HRESULT WINAPI d3dx9_mesh_UpdateSemantics(ID3DXMesh *iface, D3DVERTEXELEM
         return D3DERR_INVALIDCALL;
     }
 
-    /* New declaration must not contain non-zero Stream value  */
-    for (i = 0; declaration[i].Stream != 0xff; i++)
+    /* New declaration must not contain non-zero Stream values */
+    for (i = 0; i < MAX_FVF_DECL_SIZE && declaration[i].Stream != 0xff; i++)
     {
         if (declaration[i].Stream != 0)
         {
             WARN("Invalid declaration. New declaration contains non-zero Stream value.\n");
             return D3DERR_INVALIDCALL;
         }
+    }
+    if (i >= MAX_FVF_DECL_SIZE)
+    {
+        WARN("Declaration is too long, ignoring.\n");
+        return D3D_OK;
     }
 
     This->num_elem = i + 1;
@@ -1671,11 +1676,12 @@ static HRESULT WINAPI d3dx9_mesh_OptimizeInplace(ID3DXMesh *iface, DWORD flags, 
         return E_NOTIMPL;
     }
 
+    dword_indices = malloc(This->numfaces * 3 * sizeof(DWORD));
+    if (!dword_indices) return E_OUTOFMEMORY;
+
     hr = iface->lpVtbl->LockIndexBuffer(iface, 0, &indices);
     if (FAILED(hr)) goto cleanup;
 
-    dword_indices = malloc(This->numfaces * 3 * sizeof(DWORD));
-    if (!dword_indices) return E_OUTOFMEMORY;
     if (This->options & D3DXMESH_32BIT) {
         memcpy(dword_indices, indices, This->numfaces * 3 * sizeof(DWORD));
     } else {
@@ -1889,130 +1895,6 @@ static const struct ID3DXMeshVtbl D3DXMesh_Vtbl =
     d3dx9_mesh_OptimizeInplace,
     d3dx9_mesh_SetAttributeTable,
 };
-
-
-/* Algorithm taken from the article: An Efficient and Robust Ray-Box Intersection Algorithm
-Amy Williams             University of Utah
-Steve Barrus             University of Utah
-R. Keith Morley          University of Utah
-Peter Shirley            University of Utah
-
-International Conference on Computer Graphics and Interactive Techniques  archive
-ACM SIGGRAPH 2005 Courses
-Los Angeles, California
-
-This algorithm is free of patents or of copyrights, as confirmed by Peter Shirley himself.
-
-Algorithm: Consider the box as the intersection of three slabs. Clip the ray
-against each slab, if there's anything left of the ray after we're
-done we've got an intersection of the ray with the box. */
-BOOL WINAPI D3DXBoxBoundProbe(const D3DXVECTOR3 *pmin, const D3DXVECTOR3 *pmax,
-        const D3DXVECTOR3 *prayposition, const D3DXVECTOR3 *praydirection)
-{
-    FLOAT div, tmin, tmax, tymin, tymax, tzmin, tzmax;
-
-    div = 1.0f / praydirection->x;
-    if ( div >= 0.0f )
-    {
-        tmin = ( pmin->x - prayposition->x ) * div;
-        tmax = ( pmax->x - prayposition->x ) * div;
-    }
-    else
-    {
-        tmin = ( pmax->x - prayposition->x ) * div;
-        tmax = ( pmin->x - prayposition->x ) * div;
-    }
-
-    if ( tmax < 0.0f ) return FALSE;
-
-    div = 1.0f / praydirection->y;
-    if ( div >= 0.0f )
-    {
-        tymin = ( pmin->y - prayposition->y ) * div;
-        tymax = ( pmax->y - prayposition->y ) * div;
-    }
-    else
-    {
-        tymin = ( pmax->y - prayposition->y ) * div;
-        tymax = ( pmin->y - prayposition->y ) * div;
-    }
-
-    if ( ( tymax < 0.0f ) || ( tmin > tymax ) || ( tymin > tmax ) ) return FALSE;
-
-    if ( tymin > tmin ) tmin = tymin;
-    if ( tymax < tmax ) tmax = tymax;
-
-    div = 1.0f / praydirection->z;
-    if ( div >= 0.0f )
-    {
-        tzmin = ( pmin->z - prayposition->z ) * div;
-        tzmax = ( pmax->z - prayposition->z ) * div;
-    }
-    else
-    {
-        tzmin = ( pmax->z - prayposition->z ) * div;
-        tzmax = ( pmin->z - prayposition->z ) * div;
-    }
-
-    if ( (tzmax < 0.0f ) || ( tmin > tzmax ) || ( tzmin > tmax ) ) return FALSE;
-
-    return TRUE;
-}
-
-HRESULT WINAPI D3DXComputeBoundingBox(const D3DXVECTOR3 *pfirstposition,
-        DWORD numvertices, DWORD dwstride, D3DXVECTOR3 *pmin, D3DXVECTOR3 *pmax)
-{
-    D3DXVECTOR3 vec;
-    unsigned int i;
-
-    if( !pfirstposition || !pmin || !pmax ) return D3DERR_INVALIDCALL;
-
-    *pmin = *pfirstposition;
-    *pmax = *pmin;
-
-    for(i=0; i<numvertices; i++)
-    {
-        vec = *( (const D3DXVECTOR3*)((const char*)pfirstposition + dwstride * i) );
-
-        if ( vec.x < pmin->x ) pmin->x = vec.x;
-        if ( vec.x > pmax->x ) pmax->x = vec.x;
-
-        if ( vec.y < pmin->y ) pmin->y = vec.y;
-        if ( vec.y > pmax->y ) pmax->y = vec.y;
-
-        if ( vec.z < pmin->z ) pmin->z = vec.z;
-        if ( vec.z > pmax->z ) pmax->z = vec.z;
-    }
-
-    return D3D_OK;
-}
-
-HRESULT WINAPI D3DXComputeBoundingSphere(const D3DXVECTOR3 *pfirstposition,
-        DWORD numvertices, DWORD dwstride, D3DXVECTOR3 *pcenter, float *pradius)
-{
-    D3DXVECTOR3 temp;
-    FLOAT d;
-    unsigned int i;
-
-    if( !pfirstposition || !pcenter || !pradius ) return D3DERR_INVALIDCALL;
-
-    temp.x = 0.0f;
-    temp.y = 0.0f;
-    temp.z = 0.0f;
-    *pradius = 0.0f;
-
-    for(i=0; i<numvertices; i++)
-        D3DXVec3Add(&temp, &temp, (const D3DXVECTOR3*)((const char*)pfirstposition + dwstride * i));
-
-    D3DXVec3Scale(pcenter, &temp, 1.0f / numvertices);
-
-    for(i=0; i<numvertices; i++)
-    {
-        d = D3DXVec3Length(D3DXVec3Subtract(&temp, (const D3DXVECTOR3*)((const char*)pfirstposition + dwstride * i), pcenter));
-        if ( d > *pradius ) *pradius = d;
-    }
-    return D3D_OK;
-}
 
 static void append_decl_element(D3DVERTEXELEMENT9 *declaration, UINT *idx, UINT *offset,
         D3DDECLTYPE type, D3DDECLUSAGE usage, UINT usage_idx)
@@ -2362,69 +2244,6 @@ UINT WINAPI D3DXGetDeclLength(const D3DVERTEXELEMENT9 *decl)
     return element - decl;
 }
 
-BOOL WINAPI D3DXIntersectTri(const D3DXVECTOR3 *p0, const D3DXVECTOR3 *p1, const D3DXVECTOR3 *p2,
-        const D3DXVECTOR3 *praypos, const D3DXVECTOR3 *praydir, float *pu, float *pv, float *pdist)
-{
-    D3DXMATRIX m;
-    D3DXVECTOR4 vec;
-
-    TRACE("p0 %p, p1 %p, p2 %p, praypos %p, praydir %p, pu %p, pv %p, pdist %p.\n",
-            p0, p1, p2, praypos, praydir, pu, pv, pdist);
-
-    m.m[0][0] = p1->x - p0->x;
-    m.m[1][0] = p2->x - p0->x;
-    m.m[2][0] = -praydir->x;
-    m.m[3][0] = 0.0f;
-    m.m[0][1] = p1->y - p0->y;
-    m.m[1][1] = p2->y - p0->y;
-    m.m[2][1] = -praydir->y;
-    m.m[3][1] = 0.0f;
-    m.m[0][2] = p1->z - p0->z;
-    m.m[1][2] = p2->z - p0->z;
-    m.m[2][2] = -praydir->z;
-    m.m[3][2] = 0.0f;
-    m.m[0][3] = 0.0f;
-    m.m[1][3] = 0.0f;
-    m.m[2][3] = 0.0f;
-    m.m[3][3] = 1.0f;
-
-    vec.x = praypos->x - p0->x;
-    vec.y = praypos->y - p0->y;
-    vec.z = praypos->z - p0->z;
-    vec.w = 0.0f;
-
-    if ( D3DXMatrixInverse(&m, NULL, &m) )
-    {
-        D3DXVec4Transform(&vec, &vec, &m);
-        if ( (vec.x >= 0.0f) && (vec.y >= 0.0f) && (vec.x + vec.y <= 1.0f) && (vec.z >= 0.0f) )
-        {
-            if (pu) *pu = vec.x;
-            if (pv) *pv = vec.y;
-            if (pdist) *pdist = fabsf( vec.z );
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-
-BOOL WINAPI D3DXSphereBoundProbe(const D3DXVECTOR3 *center, float radius,
-        const D3DXVECTOR3 *ray_position, const D3DXVECTOR3 *ray_direction)
-{
-    D3DXVECTOR3 difference = {0};
-    float a, b, c, d;
-
-    D3DXVec3Subtract(&difference, ray_position, center);
-    c = D3DXVec3LengthSq(&difference) - radius * radius;
-    if (c < 0.0f)
-        return TRUE;
-    a = D3DXVec3LengthSq(ray_direction);
-    b = D3DXVec3Dot(&difference, ray_direction);
-    d = b * b - a * c;
-
-    return d >= 0.0f && (b <= 0.0f || d > b * b);
-}
-
 /*************************************************************************
  * D3DXCreateMesh
  */
@@ -2456,10 +2275,15 @@ HRESULT WINAPI D3DXCreateMesh(DWORD numfaces, DWORD numvertices, DWORD options,
     {
         return D3DERR_INVALIDCALL;
     }
-    for (i = 0; declaration[i].Stream != 0xff; i++)
+    for (i = 0; i < MAX_FVF_DECL_SIZE - 1 && declaration[i].Stream != 0xff; i++)
         if (declaration[i].Stream != 0)
             return D3DERR_INVALIDCALL;
     num_elem = i + 1;
+    if (num_elem >= MAX_FVF_DECL_SIZE)
+    {
+        WARN("Declaration is too long.\n");
+        return D3DERR_INVALIDCALL;
+    }
 
     if (options & D3DXMESH_32BIT)
         index_format = D3DFMT_INDEX32;
@@ -3053,7 +2877,7 @@ static HRESULT parse_normals(ID3DXFileData *filedata, struct mesh_data *mesh, DW
     mesh->num_normals = *(uint32_t *)data;
     data += sizeof(uint32_t);
     if (data_size < sizeof(uint32_t) * 2 + mesh->num_normals * sizeof(D3DXVECTOR3) +
-            num_face_indices * sizeof(uint32_t))
+            mesh->num_poly_faces * sizeof(uint32_t) + num_face_indices * sizeof(uint32_t))
     {
         WARN("Truncated data (%Id bytes).\n", data_size);
         goto end;
@@ -3152,7 +2976,7 @@ static HRESULT parse_skin_mesh_header(ID3DXFileData *filedata, struct mesh_data 
 static HRESULT parse_skin_weights_info(ID3DXFileData *filedata, struct mesh_data *mesh_data, DWORD flags)
 {
     unsigned int index = mesh_data->skin_weights_info_count;
-    unsigned int influence_count;
+    uint32_t influence_count;
     const char *name;
     const BYTE *data;
     SIZE_T data_size;
@@ -3171,6 +2995,13 @@ static HRESULT parse_skin_weights_info(ID3DXFileData *filedata, struct mesh_data
 
     if (FAILED(hr = filedata->lpVtbl->Lock(filedata, &data_size, (const void **)&data)))
         return hr;
+
+    if (data_size < sizeof(name) + sizeof(influence_count))
+    {
+        WARN("Truncated data (%Id bytes).\n", data_size);
+        filedata->lpVtbl->Unlock(filedata);
+        return E_FAIL;
+    }
 
     /* FIXME: String will have to be retrieved directly instead of through a
      * pointer once our ID3DXFileData implementation is fixed. */

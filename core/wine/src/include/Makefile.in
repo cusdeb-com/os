@@ -128,7 +128,7 @@ SOURCES = \
 	d3d.h \
 	d3d10.idl \
 	d3d10_1.idl \
-	d3d10_1shader.h \
+	d3d10_1shader.idl \
 	d3d10effect.idl \
 	d3d10misc.h \
 	d3d10sdklayers.idl \
@@ -1131,6 +1131,7 @@ SOURCES = \
 	wine/irpcss.idl \
 	wine/itss.idl \
 	wine/list.h \
+	wine/lsass.idl \
 	wine/mfinternal.idl \
 	wine/mmsystem16.h \
 	wine/mscvpdb.h \

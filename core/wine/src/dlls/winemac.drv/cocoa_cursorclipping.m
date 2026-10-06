@@ -19,6 +19,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#import "config.h"
+#import "macdrv.h"
+
 #import "cocoa_app.h"
 #import "cocoa_cursorclipping.h"
 #import "cocoa_window.h"
@@ -428,9 +431,7 @@ static void scale_rect_for_retina_mode(BOOL mode, CGRect *cursorClipRect)
 
     + (BOOL) isAvailable
     {
-        NSOperatingSystemVersion requiredVersion = { 10, 13, 0 };
-        return [[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:requiredVersion] &&
-               [NSWindow instancesRespondToSelector:@selector(setMouseConfinementRect:)];
+        return [NSWindow instancesRespondToSelector:@selector(setMouseConfinementRect:)];
     }
 
     /* Returns the region of the given rect that intersects with the given

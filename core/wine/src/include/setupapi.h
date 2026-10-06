@@ -265,7 +265,7 @@ DECL_WINELIB_SETUPAPI_TYPE_AW(PSP_DEVINSTALL_PARAMS)
 #define DI_GENERALPAGE_ADDED   0x00001000
 #define DI_RESOURCEPAGE_ADDED  0x00002000
 #define DI_PROPERTIES_CHANGE   0x00004000
-#define DI_INF_IS_SORTED       0x00080000
+#define DI_INF_IS_SORTED       0x00008000
 #define DI_ENUMSINGLEINF       0x00010000
 #define DI_DONOTCALLCONFIGMG   0x00020000
 #define DI_INSTALLDISABLED     0x00040000
@@ -1690,7 +1690,7 @@ WINSETUPAPI BOOL     WINAPI SetupGetFileQueueCount( HSPFILEQ, UINT, PUINT );
 WINSETUPAPI BOOL     WINAPI SetupGetFileQueueFlags( HSPFILEQ, PDWORD );
 WINSETUPAPI BOOL     WINAPI SetupGetInfFileListA(PCSTR, DWORD, PSTR, DWORD, PDWORD);
 WINSETUPAPI BOOL     WINAPI SetupGetInfFileListW(PCWSTR, DWORD, PWSTR, DWORD, PDWORD);
-#define                     SetupGetInfFileList WINELIB_NAME_AW(SetupGetFileList)
+#define                     SetupGetInfFileList WINELIB_NAME_AW(SetupGetInfFileList)
 WINSETUPAPI BOOL     WINAPI SetupGetInfInformationA( LPCVOID, DWORD, PSP_INF_INFORMATION, DWORD, PDWORD);
 WINSETUPAPI BOOL     WINAPI SetupGetInfInformationW( LPCVOID, DWORD, PSP_INF_INFORMATION, DWORD, PDWORD);
 #define                     SetupGetInfInformation WINELIB_NAME_AW(SetupGetInfInformation)
@@ -1779,7 +1779,7 @@ WINSETUPAPI BOOL     WINAPI SetupQueryFileLogW(HSPFILELOG, PCWSTR, PCWSTR, Setup
 #define                     SetupQueryFileLog WINELIB_NAME_AW(SetupQueryFileLog)
 WINSETUPAPI BOOL     WINAPI SetupQueryInfFileInformationA(PSP_INF_INFORMATION, UINT, PSTR, DWORD, PDWORD);
 WINSETUPAPI BOOL     WINAPI SetupQueryInfFileInformationW(PSP_INF_INFORMATION, UINT, PWSTR, DWORD, PDWORD);
-#define                     SetupQueryInfFileInformation WINELIB_NAME_AW(SetupQueryInFileInformation)
+#define                     SetupQueryInfFileInformation WINELIB_NAME_AW(SetupQueryInfFileInformation)
 WINSETUPAPI BOOL     WINAPI SetupQueryInfOriginalFileInformationA(PSP_INF_INFORMATION, UINT, PSP_ALTPLATFORM_INFO, PSP_ORIGINAL_FILE_INFO_A);
 WINSETUPAPI BOOL     WINAPI SetupQueryInfOriginalFileInformationW(PSP_INF_INFORMATION, UINT, PSP_ALTPLATFORM_INFO, PSP_ORIGINAL_FILE_INFO_W);
 #define                     SetupQueryInfOriginalFileInformation WINELIB_NAME_AW(SetupQueryInfOriginalFileInformation)

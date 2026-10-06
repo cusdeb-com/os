@@ -44,7 +44,7 @@ static NTSTATUS (WINAPI *pNtQuerySemaphore)( HANDLE, SEMAPHORE_INFORMATION_CLASS
 static NTSTATUS (WINAPI *pNtQuerySystemTime)( LARGE_INTEGER * );
 static NTSTATUS (WINAPI *pNtReleaseKeyedEvent)( HANDLE, const void *, BOOLEAN, const LARGE_INTEGER * );
 static NTSTATUS (WINAPI *pNtReleaseMutant)( HANDLE, LONG * );
-static NTSTATUS (WINAPI *pNtReleaseSemaphore)( HANDLE, ULONG, ULONG * );
+static NTSTATUS (WINAPI *pNtReleaseSemaphore)( HANDLE, LONG, ULONG * );
 static NTSTATUS (WINAPI *pNtResetEvent)( HANDLE, LONG * );
 static NTSTATUS (WINAPI *pNtSetEvent)( HANDLE, LONG * );
 static NTSTATUS (WINAPI *pNtSetEventBoostPriority)( HANDLE );
@@ -511,6 +511,16 @@ static void test_semaphore(void)
     ok( status == STATUS_SUCCESS, "NtQuerySemaphore failed %08lx\n", status );
     ok( info.CurrentCount == 0, "expected 0, got %ld\n", info.CurrentCount );
     ok( info.MaximumCount == 2, "expected 2, got %ld\n", info.MaximumCount );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, -1, &prev);
+    ok( status == STATUS_INVALID_PARAMETER, "NtReleaseSemaphore failed %08lx\n", status );
+    ok( prev == 0xdeadbeef, "NtReleaseSemaphore failed, expected 0xdeadbeef, got %ld\n", prev );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, 0, &prev);
+    ok( status == STATUS_INVALID_PARAMETER, "NtReleaseSemaphore failed %08lx\n", status );
+    ok( prev == 0xdeadbeef, "NtReleaseSemaphore failed, expected 0xdeadbeef, got %ld\n", prev );
 
     prev = 0xdeadbeef;
     status = pNtReleaseSemaphore(semaphore, 3, &prev);

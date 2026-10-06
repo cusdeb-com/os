@@ -93,7 +93,7 @@ static struct batch_context *push_batch_context(WCHAR *command, struct batch_fil
 
     context = xalloc(sizeof(struct batch_context));
     context->file_position.QuadPart = pos;
-    context->command = command;
+    WCMD_split_command_build(command, &context->split_command);
     memset(context->shift_count, 0x00, sizeof(context->shift_count));
     context->prev_context = prev;
     context->batch_file = batch_file;
@@ -116,6 +116,7 @@ static struct batch_context *pop_batch_context(struct batch_context *ctx)
         free(batchfile);
         ctx->batch_file = NULL;
     }
+    WCMD_split_command_dispose(&ctx->split_command);
     free(ctx);
     return prev;
 }
@@ -141,6 +142,105 @@ RETURN_CODE WCMD_call_batch(const WCHAR *file, WCHAR *command)
     context = pop_batch_context(context);
 
     return return_code;
+}
+
+BOOL WCMD_next_word(const WCHAR *s, const WCHAR *delims, WCHAR **start, size_t *length)
+{
+    const WCHAR *ptr;
+    if (!s || !*s) return FALSE;
+    for (ptr = s; *ptr && wcschr(delims, *ptr); ptr++) {}
+    if (!*ptr) return FALSE;
+    *start = (WCHAR*)ptr;
+    while (*ptr && !wcschr(delims, *ptr))
+    {
+        /* If we find a quote, advance until we get the end quote */
+        if (*ptr++ == '"') while (*ptr && *ptr++ != '"') {}
+    }
+    *length = ptr - *start;
+    return TRUE;
+}
+
+WCHAR *WCMD_dup(const WCHAR *s, size_t length)
+{
+    WCHAR *ret;
+
+    if (!s) length = 0;
+    ret = xalloc((length + 1) * sizeof(WCHAR));
+    memcpy(ret, s, length * sizeof(WCHAR));
+    ret[length] = L'\0';
+    return ret;
+}
+
+WCHAR *WCMD_dup_unquoted(const WCHAR *s, size_t length)
+{
+    size_t i, j;
+    WCHAR *ret;
+
+    if (!s) length = 0;
+    ret = xalloc((length + 1) * sizeof(WCHAR));
+    for (i = j = 0; j < length; j++)
+        if (s[j] != L'"') ret[i++] = s[j];
+    ret[i] = L'\0';
+    return ret;
+}
+
+struct word_iterator *WCMD_word_iterator_init(struct word_iterator *iterator, const WCHAR *string, const WCHAR *delims, unsigned int flags)
+{
+    iterator->from = string;
+    iterator->position = 0;
+    iterator->length = 0;
+    iterator->delimiters = delims;
+    iterator->flags = flags;
+    iterator->raw_argument = NULL;
+    iterator->unquoted_argument = NULL;
+    iterator->is_an_option = FALSE;
+
+    return iterator;
+}
+
+/* we need to handle two levels:
+ * - first level: the words separated by 'delims'
+ * - second level: options can be packed as '/Q/S' in a single word.
+ */
+BOOL WCMD_word_iterator_advance(struct word_iterator *iterator)
+{
+    WCHAR *start;
+    size_t length;
+    size_t delta_in_option = 0;
+
+    iterator->position += iterator->length;
+    if (!WCMD_next_word(&iterator->from[iterator->position], iterator->delimiters, &start, &length)) return FALSE;
+    /* we need a bit of tweaking for / delimiter as start of option
+     * + it can introduce an option as first character
+     * + it can introduce an option when in quotes (for certain commands only, eg CHOICE)
+     * + if in an option, / becomes a delimiter (eg /P/Q is handled as two options)
+     * + if not an option, / is not a delimiter and is part of arg
+     */
+    if (iterator->flags & WORD_WITH_QUOTED_OPT)
+    {
+        const WCHAR *p;
+        for (p = start; *p == L'"' && p < start + length; p++) {}
+        if (p < start + length && *p == L'/') delta_in_option = p - start + 1;
+    }
+    else if (iterator->flags & WORD_WITH_OPT)
+    {
+        if (start[0] == L'/') delta_in_option = 1;
+    }
+    if (delta_in_option)
+    {
+        WCHAR *p = wmemchr(start + delta_in_option, L'/', length - delta_in_option);
+        if (p)
+            length = p - start;
+    }
+
+    iterator->position = start - iterator->from;
+    iterator->length = length;
+    free(iterator->raw_argument);
+    free(iterator->unquoted_argument);
+    iterator->raw_argument = WCMD_dup(start, length);
+    iterator->unquoted_argument = WCMD_dup_unquoted(start, length);
+    iterator->is_an_option = delta_in_option != 0;
+    return iterator->length != 0;
 }
 
 /*******************************************************************
@@ -172,8 +272,7 @@ RETURN_CODE WCMD_call_batch(const WCHAR *file, WCHAR *command)
  *  other API calls, e.g. c:\"a b"\c is returned as c:\a b\c. However, some commands
  *  need to preserve the exact syntax (echo, for, etc) hence the raw option.
  */
-WCHAR *WCMD_parameter_with_delims (WCHAR *s, int n, WCHAR **start,
-                                   BOOL raw, BOOL wholecmdline, const WCHAR *delims)
+WCHAR *WCMD_parameter_with_delims(WCHAR *s, int n, WCHAR **start, BOOL raw, const WCHAR *delims)
 {
     int curParamNb = 0;
     static WCHAR param[MAXSTRING];
@@ -200,12 +299,6 @@ WCHAR *WCMD_parameter_with_delims (WCHAR *s, int n, WCHAR **start,
         while (*p) {
             /* Once we have found a delimiter, break */
             if (wcschr(delims, *p) != NULL) break;
-
-            /* Very odd special case - Seems as if a ( acts as a delimiter which is
-               not swallowed but is effective only when it comes between the program
-               name and the parameters. Need to avoid this triggering when used
-               to walk parameters generally.                                         */
-            if (wholecmdline && curParamNb == 0 && *p=='(') break;
 
             /* If we find a quote, copy until we get the end quote */
             if (*p == '"') {
@@ -244,10 +337,9 @@ WCHAR *WCMD_parameter_with_delims (WCHAR *s, int n, WCHAR **start,
  * default set of delimiter characters. For parameters, see the main
  * function above.
  */
-WCHAR *WCMD_parameter (WCHAR *s, int n, WCHAR **start, BOOL raw,
-                       BOOL wholecmdline)
+WCHAR *WCMD_parameter (WCHAR *s, int n, WCHAR **start, BOOL raw)
 {
-  return WCMD_parameter_with_delims (s, n, start, raw, wholecmdline, L" \t,=;");
+    return WCMD_parameter_with_delims(s, n, start, raw, STANDARD_DELIMS);
 }
 
 /****************************************************************************
@@ -423,11 +515,14 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
      the batch label is in                                                     */
   if (*lastModifier == '0' && modifierLen > 1 && context->batch_file) {
     lstrcpyW(outputparam, context->batch_file->path_name);
-  } else if ((*lastModifier >= '0' && *lastModifier <= '9')) {
-    lstrcpyW(outputparam,
-            WCMD_parameter (context -> command,
-                            *lastModifier-'0' + context -> shift_count[*lastModifier-'0'],
-                            NULL, FALSE, TRUE));
+  } else if (*lastModifier >= '0' && *lastModifier <= '9') {
+      const WCHAR *start;
+      if (WCMD_split_command_get_positional_argument(&context->split_command, *lastModifier, &start))
+      {
+          wcscpy(outputparam, start);
+      }
+      else
+          *outputparam = L'\0';
   } else {
     if (for_var_is_valid(*lastModifier))
         lstrcpyW(outputparam, forloopcontext->variable[*lastModifier]);
@@ -549,11 +644,10 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
     if (wmemchr(firstModifier, 's', modifierLen) != NULL) {
       if (finaloutput[0] != 0x00) lstrcatW(finaloutput, L" ");
 
-      /* GetShortPathNameW converts each existing path component to its
-         short form and leaves non-existing components as-is. If it fails
-         (e.g. the drive doesn't exist), fall back to converting just the
-         directory portion and appending the filename unchanged.          */
-      if (!GetShortPathNameW(fullfilename, fullfilename, ARRAY_SIZE(fullfilename)) && filepart) {
+      /* Convert fullfilename's path to a short path - Save filename away as
+         only path is valid, name may not exist which causes GetShortPathName
+         to fail if it is provided                                            */
+      if (filepart) {
         lstrcpyW(thisoutput, filepart);
         *filepart = 0x00;
         GetShortPathNameW(fullfilename, fullfilename, ARRAY_SIZE(fullfilename));

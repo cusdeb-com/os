@@ -2297,25 +2297,8 @@ static NTSTATUS server_get_file_info( HANDLE handle, IO_STATUS_BLOCK *io, void *
 }
 
 
-static unsigned int server_open_file_object( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
-                                             ULONG sharing, ULONG options )
-{
-    unsigned int status;
-
-    SERVER_START_REQ( open_file_object )
-    {
-        req->access     = access;
-        req->attributes = attr->Attributes;
-        req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
-        req->sharing    = sharing;
-        req->options    = options;
-        wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
-        status = wine_server_call( req );
-        *handle = wine_server_ptr_handle( reply->handle );
-    }
-    SERVER_END_REQ;
-    return status;
-}
+static unsigned int server_open_file_object( HANDLE *ret_handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
+                                             ULONG sharing, ULONG options );
 
 
 /* retrieve device/inode number for all the drives */
@@ -3222,9 +3205,12 @@ static void get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
 {
     const WCHAR *name = attr->ObjectName->Buffer;
     unsigned int i, prefix_len = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
-    TEB64 *teb64 = get_teb64( NtCurrentTeb() );
+    struct thread_data *data = get_thread_data();
+    BOOL disabled;
 
-    if (!teb64) return;
+    if (!is_old_wow64()) return;
+
+    disabled = data->teb ? get_teb64( data->teb )->TlsSlots[WOW64_TLS_FILESYSREDIR] : data->filesys_redir;
 
     if (!attr->RootDirectory)
     {
@@ -3243,7 +3229,7 @@ static void get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
         if (!is_same_file( &windir, &st ))
         {
             if (!is_same_file( &sysdir, &st )) return;
-            if (teb64->TlsSlots[WOW64_TLS_FILESYSREDIR]) return;
+            if (disabled) return;
             if (name[0] == '\\') return;
 
             /* only check for paths that should NOT be redirected */
@@ -3266,8 +3252,7 @@ static void get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
     /* sysnative is redirected even when redirection is disabled */
 
     if (replace_path( attr, redir, prefix_len, sysnativeW, system32W )) return;
-
-    if (teb64->TlsSlots[WOW64_TLS_FILESYSREDIR]) return;
+    if (disabled) return;
 
     for (i = 0; i < ARRAY_SIZE( no_redirect ); i++)
         if (starts_with_path( name + prefix_len, len - prefix_len, no_redirect[i] )) return;
@@ -4634,7 +4619,7 @@ NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MASK acce
     unsigned int status;
     data_size_t len;
 
-    if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     SERVER_START_REQ( create_file )
     {
@@ -4677,6 +4662,9 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
 
     *handle = 0;
     if (!attr || !attr->ObjectName) return STATUS_INVALID_PARAMETER;
+
+    if ((options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) && !(access & SYNCHRONIZE))
+        return STATUS_INVALID_PARAMETER;
 
     if (alloc_size) FIXME( "alloc_size not supported\n" );
 
@@ -4785,7 +4773,7 @@ NTSTATUS WINAPI NtCreateMailslotFile( HANDLE *handle, ULONG access, OBJECT_ATTRI
 
     *handle = 0;
     if (!attr) return STATUS_INVALID_PARAMETER;
-    if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     SERVER_START_REQ( create_mailslot )
     {
@@ -4827,7 +4815,7 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
     /* assume we only get relative timeout */
     if (timeout && timeout->QuadPart > 0) FIXME( "Wrong time %s\n", wine_dbgstr_longlong(timeout->QuadPart) );
 
-    if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
+    if ((status = wine_server_alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     SERVER_START_REQ( create_named_pipe )
     {
@@ -4891,8 +4879,17 @@ NTSTATUS WINAPI NtQueryFullAttributesFile( const OBJECT_ATTRIBUTES *attr,
     unsigned int status;
     UNICODE_STRING nt_name;
     OBJECT_ATTRIBUTES new_attr = *attr;
+    HANDLE file;
 
-    if (!(status = get_nt_and_unix_names( &new_attr, &nt_name, &unix_name, FILE_OPEN, TRUE )))
+    status = get_nt_and_unix_names( &new_attr, &nt_name, &unix_name, FILE_OPEN, TRUE );
+    if (status == STATUS_BAD_DEVICE_TYPE &&
+        !(status = server_open_file_object( &file, 0, &new_attr, 0, 0 )))
+    {
+        NtClose( file );
+        status = STATUS_INVALID_INFO_CLASS;
+    }
+
+    if (!status)
     {
         ULONG attributes;
         struct stat st;
@@ -5535,6 +5532,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 struct async_fileio_read
 {
     struct async_fileio io;
+    HANDLE              handle;
     char               *buffer;
     unsigned int        already;
     unsigned int        count;
@@ -5544,6 +5542,7 @@ struct async_fileio_read
 struct async_fileio_write
 {
     struct async_fileio io;
+    HANDLE              handle;
     const char         *buffer;
     unsigned int        already;
     unsigned int        count;
@@ -5552,6 +5551,7 @@ struct async_fileio_write
 struct async_fileio_read_changes
 {
     struct async_fileio io;
+    HANDLE              handle;
     void               *buffer;
     ULONG               buffer_size;
     ULONG               data_size;
@@ -5577,7 +5577,7 @@ void release_fileio( struct async_fileio *io )
     }
 }
 
-struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE handle )
+struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback )
 {
     /* first free remaining previous fileinfos */
     struct async_fileio *io = InterlockedExchangePointer( (void **)&fileio_freelist, NULL );
@@ -5590,10 +5590,7 @@ struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE
     }
 
     if ((io = malloc( size )))
-    {
         io->callback = callback;
-        io->handle   = handle;
-    }
     return io;
 }
 
@@ -5625,7 +5622,7 @@ static BOOL async_read_proc( void *user, ULONG_PTR *info, unsigned int *status )
     {
     case STATUS_ALERTED: /* got some new data */
         /* check to see if the data is ready (non-blocking) */
-        if ((*status = server_get_unix_fd( fileio->io.handle, FILE_READ_DATA, &fd,
+        if ((*status = server_get_unix_fd( fileio->handle, FILE_READ_DATA, &fd,
                                           &needs_close, NULL, NULL )))
             break;
 
@@ -5676,7 +5673,7 @@ static BOOL async_write_proc( void *user, ULONG_PTR *info, unsigned int *status 
     {
     case STATUS_ALERTED:
         /* write some data (non-blocking) */
-        if ((*status = server_get_unix_fd( fileio->io.handle, FILE_WRITE_DATA, &fd,
+        if ((*status = server_get_unix_fd( fileio->handle, FILE_WRITE_DATA, &fd,
                                           &needs_close, &type, NULL )))
             break;
 
@@ -5724,6 +5721,39 @@ static void set_sync_iosb( IO_STATUS_BLOCK *io, NTSTATUS status, ULONG_PTR info,
     }
 }
 
+
+static unsigned int server_open_file_object( HANDLE *ret_handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
+                                             ULONG sharing, ULONG options )
+{
+    HANDLE handle, wait_handle;
+    struct async_irp *async;
+    unsigned int status;
+
+    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
+        return STATUS_NO_MEMORY;
+
+    SERVER_START_REQ( open_file_object )
+    {
+        req->access     = access;
+        req->attributes = attr->Attributes;
+        req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
+        req->sharing    = sharing;
+        req->options    = options;
+        req->async_user = wine_server_client_ptr( &async->io );
+        wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        status = wine_server_call( req );
+        handle = wine_server_ptr_handle( reply->handle );
+        wait_handle = wine_server_ptr_handle( reply->wait );
+    }
+    SERVER_END_REQ;
+
+    if (wait_handle) status = wait_async( wait_handle, FALSE );
+    if (status) NtClose( handle );
+    else *ret_handle = handle;
+    return status;
+}
+
+
 /* do a read call through the server */
 static unsigned int server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_context,
                                       IO_STATUS_BLOCK *io, void *buffer, ULONG size,
@@ -5734,7 +5764,7 @@ static unsigned int server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTI
     HANDLE wait_handle;
     ULONG options;
 
-    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
+    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
         return STATUS_NO_MEMORY;
 
     async->buffer  = buffer;
@@ -5769,7 +5799,7 @@ static unsigned int server_write_file( HANDLE handle, HANDLE event, PIO_APC_ROUT
     HANDLE wait_handle;
     ULONG options;
 
-    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
+    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
         return STATUS_NO_MEMORY;
 
     async->buffer  = NULL;
@@ -5806,7 +5836,7 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
     HANDLE wait_handle;
     ULONG options;
 
-    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
+    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
         return STATUS_NO_MEMORY;
     async->buffer  = out_buffer;
     async->size    = out_size;
@@ -5955,9 +5985,10 @@ static unsigned int register_async_file_read( HANDLE handle, HANDLE event,
     struct async_fileio_read *fileio;
     unsigned int status;
 
-    if (!(fileio = (struct async_fileio_read *)alloc_fileio( sizeof(*fileio), async_read_proc, handle )))
+    if (!(fileio = (struct async_fileio_read *)alloc_fileio( sizeof(*fileio), async_read_proc )))
         return STATUS_NO_MEMORY;
 
+    fileio->handle = handle;
     fileio->already = already;
     fileio->count = length;
     fileio->buffer = buffer;
@@ -6470,12 +6501,13 @@ NTSTATUS WINAPI NtWriteFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, v
         {
             struct async_fileio_write *fileio;
 
-            fileio = (struct async_fileio_write *)alloc_fileio( sizeof(*fileio), async_write_proc, handle );
+            fileio = (struct async_fileio_write *)alloc_fileio( sizeof(*fileio), async_write_proc );
             if (!fileio)
             {
                 status = STATUS_NO_MEMORY;
                 goto err;
             }
+            fileio->handle = handle;
             fileio->already = total;
             fileio->count = length;
             fileio->buffer = buffer;
@@ -6865,7 +6897,7 @@ NTSTATUS WINAPI NtFlushBuffersFileEx( HANDLE handle, ULONG flags, void *params, 
     {
         struct async_irp *async;
 
-        if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
+        if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
             return STATUS_NO_MEMORY;
         async->buffer  = NULL;
         async->size    = 0;
@@ -7069,7 +7101,7 @@ static BOOL read_changes_apc( void *user, ULONG_PTR *info, unsigned int *status 
     {
         SERVER_START_REQ( read_change )
         {
-            req->handle = wine_server_obj_handle( fileio->io.handle );
+            req->handle = wine_server_obj_handle( fileio->handle );
             wine_server_set_reply( req, fileio->data, fileio->data_size );
             *status = wine_server_call( req );
             size = wine_server_reply_size( reply );
@@ -7160,9 +7192,10 @@ NTSTATUS WINAPI NtNotifyChangeDirectoryFile( HANDLE handle, HANDLE event, PIO_AP
     if (filter == 0 || (filter & ~FILE_NOTIFY_ALL)) return STATUS_INVALID_PARAMETER;
 
     fileio = (struct async_fileio_read_changes *)alloc_fileio(
-        offsetof(struct async_fileio_read_changes, data[size]), read_changes_apc, handle );
+        offsetof(struct async_fileio_read_changes, data[size]), read_changes_apc );
     if (!fileio) return STATUS_NO_MEMORY;
 
+    fileio->handle      = handle;
     fileio->buffer      = buffer;
     fileio->buffer_size = buffer_size;
     fileio->data_size   = size;
@@ -7404,7 +7437,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         struct async_irp *async;
         HANDLE wait_handle;
 
-        if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
+        if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
             return STATUS_NO_MEMORY;
         async->buffer  = buffer;
         async->size    = length;
@@ -7642,14 +7675,72 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 }
 
 
+static NTSTATUS set_volume_label( HANDLE handle, const FILE_FS_LABEL_INFORMATION *info )
+{
+    ULONGLONG data[64];
+    struct mountmgr_unix_drive *drive = (struct mountmgr_unix_drive *)data;
+    size_t len = info->VolumeLabelLength / sizeof(WCHAR);
+    const char *mount_point;
+    int fd, needs_close;
+    NTSTATUS status;
+    char *path, *labelA;
+
+    if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+        return status;
+
+    if ((status = get_mountmgr_fs_info( handle, fd, drive, sizeof(data) )))
+    {
+        if (needs_close) close( fd );
+        return status;
+    }
+    mount_point = (const char *)data + drive->mount_point_offset;
+
+    if (needs_close) close( fd );
+
+    if (drive->fs_type != MOUNTMGR_FS_TYPE_NTFS)
+        return STATUS_ACCESS_DENIED;
+
+    if (mount_point[0] == '/')
+        asprintf( &path, "%s/.windows-label", mount_point );
+    else
+        asprintf( &path, "%s/dosdevices/%s/.windows-label", config_dir, mount_point );
+    fd = open( path, O_WRONLY | O_CREAT | O_TRUNC, 0666 );
+    free( path );
+    if (fd < 0)
+        return errno_to_status( errno );
+    labelA = malloc( len * 3 + 1 );
+    len = ntdll_wcstoumbs( info->VolumeLabel, len, labelA, len * 3, FALSE );
+    write( fd, labelA, len );
+    free( labelA );
+    close( fd );
+    return STATUS_SUCCESS;
+}
+
+
 /******************************************************************************
  *              NtSetVolumeInformationFile   (NTDLL.@)
  */
 NTSTATUS WINAPI NtSetVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io, void *info,
                                             ULONG length, FS_INFORMATION_CLASS class )
 {
-    FIXME( "(%p,%p,%p,0x%08x,0x%08x) stub\n", handle, io, info, length, class );
-    return STATUS_SUCCESS;
+    NTSTATUS status;
+
+    TRACE( "handle %p length %u class %#x\n", handle, length, class );
+
+    switch (class)
+    {
+    case FileFsLabelInformation:
+        status = set_volume_label( handle, info );
+        break;
+
+    default:
+        FIXME("class %#x not handled\n", class);
+        status = STATUS_SUCCESS;
+        break;
+    }
+    io->Status = status;
+    if (!status) io->Information = 0;
+    return status;
 }
 
 

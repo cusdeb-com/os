@@ -269,19 +269,11 @@ static unsigned int get_pe_file_info( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *n
     memset( info, 0, sizeof(*info) );
     if (!(status = get_nt_and_unix_names( attr, nt_name, unix_name, FILE_OPEN, FALSE )))
     {
-        status = open_unix_file( handle, *unix_name, GENERIC_READ, attr, 0,
+        status = open_unix_file( handle, *unix_name, GENERIC_READ | SYNCHRONIZE, attr, 0,
                                  FILE_SHARE_READ | FILE_SHARE_DELETE,
                                  FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0 );
     }
-    if (status)
-    {
-        if (is_prefix_bootstrap && is_system_dir_path( attr->ObjectName, &info->machine ))
-        {
-            TRACE( "assuming %04x builtin for %s\n", info->machine, debugstr_us(attr->ObjectName));
-            return STATUS_SUCCESS;
-        }
-        return status;
-    }
+    if (status) goto done;
 
     if (!(status = NtCreateSection( &mapping, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY |
                                     SECTION_MAP_READ | SECTION_MAP_EXECUTE,
@@ -307,6 +299,13 @@ static unsigned int get_pe_file_info( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *n
             status = get_non_pe_file_info( unix_fd, info );
             if (needs_close) close( unix_fd );
         }
+    }
+
+ done:
+    if (status && is_prefix_bootstrap && is_system_dir_path( attr->ObjectName, &info->machine ))
+    {
+        TRACE( "assuming %04x builtin for %s\n", info->machine, debugstr_us(attr->ObjectName));
+        return STATUS_SUCCESS;
     }
     return status;
 }
@@ -420,7 +419,8 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
     {
         if (!(pid = fork()))  /* grandchild */
         {
-            if ((peb->ProcessParameters && params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
+            if ((peb && peb->ProcessParameters &&
+                 params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
                 params->ConsoleHandle == NULL)
@@ -591,7 +591,8 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
         {
             close( fd[0] );
 
-            if ((peb->ProcessParameters && params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
+            if ((peb && peb->ProcessParameters &&
+                 params->ProcessGroupId != peb->ProcessParameters->ProcessGroupId) ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
                 params->ConsoleHandle == NULL)
@@ -780,7 +781,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         goto done;
     env_size = get_env_size( params, &winedebug );
 
-    if ((status = alloc_object_attributes( process_attr, &objattr, &attr_len ))) goto done;
+    if ((status = wine_server_alloc_object_attributes( process_attr, &objattr, &attr_len ))) goto done;
 
     if ((status = alloc_handle_list( handles_attr, &handles, &handles_size )))
     {
@@ -862,7 +863,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         goto done;
     }
 
-    if ((status = alloc_object_attributes( thread_attr, &objattr, &attr_len ))) goto done;
+    if ((status = wine_server_alloc_object_attributes( thread_attr, &objattr, &attr_len ))) goto done;
 
     SERVER_START_REQ( new_thread )
     {

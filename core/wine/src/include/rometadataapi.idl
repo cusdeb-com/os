@@ -1,5 +1,6 @@
 /*
  * Copyright 2025 Vibhav Pant
+ * Copyright 2026 Vibhav Pant for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -41,6 +42,12 @@ typedef mdToken mdAssembly;
 typedef mdToken mdAssemblyRef;
 typedef mdToken mdTypeSpec;
 typedef mdToken mdString;
+typedef mdToken mdGenericParam;
+typedef mdToken mdMethodSpec;
+typedef mdToken mdGenericParamConstraint;
+typedef mdToken mdFile;
+typedef mdToken mdExportedType;
+typedef mdToken mdManifestResource;
 
 cpp_quote("#endif")
 
@@ -102,6 +109,27 @@ typedef struct COR_FIELD_OFFSET
     mdFieldDef ridOfField;
     UINT32 ulOffset;
 } COR_FIELD_OFFSET;
+
+typedef struct OSINFO
+{
+    ULONG dwOSPlatformId;
+    ULONG dwOSMajorVersion;
+    ULONG dwOSMinorVersion;
+} OSINFO;
+
+typedef struct ASSEMBLYMETADATA
+{
+    USHORT usMajorVersion;
+    USHORT usMinorVersion;
+    USHORT usBuildNumber;
+    USHORT usRevisionNumber;
+    [string, size_is(cbLocale)] WCHAR *szLocale;
+    ULONG cbLocale;
+    [size_is(ulProcessor)] ULONG *rProcessor;
+    ULONG ulProcessor;
+    [size_is(ulOS)] OSINFO *rOS;
+    ULONG ulOS;
+} ASSEMBLYMETADATA;
 
 [
     local,
@@ -333,4 +361,99 @@ interface IMetaDataImport : IUnknown
                                      [out] ULONG *call_conv);
 
     HRESULT IsGlobal([in] mdToken token, [out] int *is_global);
+}
+
+[
+    local,
+    object,
+    uuid(fce5efa0-8bba-4f8e-a036-8f2022b08466)
+]
+interface IMetaDataImport2 : IMetaDataImport
+{
+    HRESULT EnumGenericParams([in, out] HCORENUM *henum, [in] mdToken token,
+                              [out, size_is(len), length_is(*count)] mdGenericParam *params,
+                              ULONG len, ULONG *count);
+
+    HRESULT GetGenericParamProps([in] mdGenericParam param, ULONG *idx, ULONG *flags, mdToken *parent, DWORD *reserved,
+                                 [out, string, size_is(len), length_is(*reqd)]WCHAR *name, ULONG len, ULONG *reqd);
+
+    HRESULT GetMethodSpecProps([in] mdMethodSpec method, [out] mdToken *parent,
+                               [out, size_is(, *sig_len)] const COR_SIGNATURE **sig_blob, ULONG *sig_len);
+
+    HRESULT EnumGenericParamConstraints([in, out] HCORENUM *henum, mdGenericParam param,
+                                        [out, size_is(len), length_is(*count)] mdGenericParamConstraint *constraints,
+                                        ULONG len, ULONG *count);
+
+    HRESULT GetGenericParamConstraintProps([in] mdGenericParamConstraint constraint, [out] mdGenericParam *param,
+                                           [out] mdToken *type);
+
+    HRESULT GetPEKind([out] DWORD *kind, [out] DWORD *machine);
+
+    HRESULT GetVersionString([out, string, size_is(len), length_is(*count)] WCHAR *version, DWORD len, DWORD *count);
+
+    HRESULT EnumMethodSpecs([in, out] HCORENUM *henum, mdToken token,
+                            [out, size_is(len), length_is(*reqd)] mdMethodSpec *specs, ULONG len, ULONG *reqd);
+}
+
+[
+    local,
+    object,
+    uuid(ee62470b-e94b-424e-9b7c-2f00c9249f93)
+]
+interface IMetaDataAssemblyImport : IUnknown
+{
+    HRESULT GetAssemblyProps([in] mdAssembly assembly, [out, size_is(, *key_len)] const BYTE **pub_key,
+                             [out] ULONG *key_len, [out] ULONG *hash_alg,
+                             [out, string, size_is(name_len), length_is(*name_count)] WCHAR *name,
+                             [in] ULONG name_len, [out] ULONG *name_count, ASSEMBLYMETADATA *metadata,
+                             [out] ULONG *flags);
+
+    HRESULT GetAssemblyRefProps([in]  mdAssemblyRef assembly,
+                                [out, size_is(, *key_or_token_len)] const BYTE **key_or_token,
+                                [out] ULONG *key_or_token_len,
+                                [out, string, size_is(name_len), length_is(*name_count)] WCHAR *name,
+                                [in] ULONG name_len, [out] ULONG *name_count, [out] ASSEMBLYMETADATA *metadata,
+                                [out, size_is(, *hash_len)] const BYTE **hash_blob, [out] ULONG *hash_len,
+                                [out] ULONG *flags);
+
+    HRESULT GetFileProps([in] mdFile file, [out, string, size_is(name_len), length_is(*name_count)] WCHAR *name,
+                         [in] ULONG name_len, [out] ULONG *name_count, [out, size_is(, *hash_len)] const BYTE **hash,
+                         [out] ULONG *hash_len, [out] ULONG *flags);
+
+    HRESULT GetExportedTypeProps([in] mdExportedType type,
+                                 [out, string, size_is(name_len), length_is(*name_count)] WCHAR *name,
+                                 [in] ULONG name_len, [out] ULONG *name_count, [out] mdToken *impl,
+                                 [out] mdTypeDef *typeDef, [out] ULONG *flags);
+
+    HRESULT GetManifestResourceProps([in] mdManifestResource rsrc,
+                                     [out, string, size_is(name_len), length_is(*name_count)] WCHAR *name,
+                                     [in] ULONG name_len, [out] ULONG *name_count, [out] mdToken *impl,
+                                     [out] ULONG *offset, ULONG *flags);
+
+    HRESULT EnumAssemblyRefs([in, out] HCORENUM *henum, [out, size_is(len), length_is(*count)] mdAssemblyRef *refs,
+                             [in] ULONG len, [out] ULONG *count);
+
+    HRESULT EnumFiles([in, out] HCORENUM *henum, [out, size_is(len), length_is(*count)] mdFile *files, [in] ULONG len,
+                      [out] ULONG *count);
+
+    HRESULT EnumExportedTypes([in, out] HCORENUM *henum, [out, size_is(len), length_is(*count)] mdExportedType *types,
+                              [in] ULONG len, [out] ULONG *count);
+
+    HRESULT EnumManifestResources([in, out] HCORENUM *henum,
+                                  [out, size_is(len), length_is(*count)] mdManifestResource *rsrcs, [in] ULONG len,
+                                  [out] ULONG *count);
+
+    HRESULT GetAssemblyFromScope([out] mdAssembly *assembly);
+
+    HRESULT FindExportedTypeByName([in, string] const WCHAR *name, [in] mdToken enclosing_class,
+                                   [out] mdExportedType *type);
+
+    HRESULT FindManifestResourceByName([in, string] const WCHAR *name, [out] mdManifestResource *rsrc);
+
+    HRESULT CloseEnum([in] HCORENUM henum);
+
+    HRESULT FindAssembliesByName([in, string, unique] const WCHAR *root, [in, string, unique] const WCHAR *subdirs,
+                                 [in, string] const WCHAR *name,
+                                 [out, size_is(len), length_is(*count)] IUnknown **assemblies, [in] ULONG len,
+                                 [out] ULONG *count);
 }

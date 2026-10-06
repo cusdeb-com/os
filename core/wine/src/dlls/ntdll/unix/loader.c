@@ -124,6 +124,7 @@ const char *wineloader = NULL;
 const char **dll_paths = NULL;
 const char **system_dll_paths = NULL;
 const char *user_name = NULL;
+void *main_module = NULL;
 SECTION_IMAGE_INFORMATION main_image_info = { NULL };
 
 /* die on a fatal error; use only during initialization */
@@ -954,8 +955,7 @@ static NTSTATUS open_builtin_so_file( char *name, OBJECT_ATTRIBUTES *attr, void 
 /***********************************************************************
  *           open_main_image_so_file
  */
-static NTSTATUS open_main_image_so_file( const char *name, UNICODE_STRING *nt_name, void **module,
-                                         SECTION_IMAGE_INFORMATION *image_info )
+static NTSTATUS open_main_image_so_file( const char *name, UNICODE_STRING *nt_name )
 {
     struct pe_image_info pe_info;
     NTSTATUS status;
@@ -971,8 +971,8 @@ static NTSTATUS open_main_image_so_file( const char *name, UNICODE_STRING *nt_na
             nt_name->Length -= 3 * sizeof(WCHAR);
         }
     }
-    status = dlopen_dll( name, nt_name, module, &pe_info, FALSE );
-    if (!status) virtual_fill_image_information( &pe_info, image_info );
+    status = dlopen_dll( name, nt_name, &main_module, &pe_info, FALSE );
+    if (!status) virtual_fill_image_information( &pe_info, &main_image_info );
     return status;
 }
 
@@ -987,8 +987,7 @@ static NTSTATUS open_builtin_so_file( char *name, OBJECT_ATTRIBUTES *attr, void 
     return STATUS_DLL_NOT_FOUND;
 }
 
-static NTSTATUS open_main_image_so_file( const char *name, UNICODE_STRING *nt_name, void **module,
-                                         SECTION_IMAGE_INFORMATION *image_info )
+static NTSTATUS open_main_image_so_file( const char *name, UNICODE_STRING *nt_name )
 {
     return STATUS_INVALID_IMAGE_FORMAT;
 }
@@ -1272,8 +1271,13 @@ NTSTATUS load_builtin( struct pe_mapping_info *pe_mapping, USHORT machine,
         loadorder = LO_BUILTIN;  /* builtin with no fallback since mapping a fake dll is not useful */
     }
 
-    if (is_arm64ec() && pe_mapping->image.is_hybrid && search_machine == IMAGE_FILE_MACHINE_AMD64)
-        search_machine = current_machine;
+    if (current_machine == IMAGE_FILE_MACHINE_ARM64 && search_machine == IMAGE_FILE_MACHINE_AMD64)
+    {
+        /* force loading the x64 version of the builtin */
+        if (!pe_mapping->image.is_hybrid && !machine) machine = IMAGE_FILE_MACHINE_AMD64;
+        /* but make sure we load from the aarch64 builtin directory */
+        search_machine = IMAGE_FILE_MACHINE_ARM64;
+    }
 
     switch (loadorder)
     {
@@ -1416,62 +1420,54 @@ BOOL is_system_dir_path( const UNICODE_STRING *path, WORD *machine )
 
 
 /***********************************************************************
- *           open_main_image
+ *           load_main_exe
  */
-static NTSTATUS open_main_image( UNICODE_STRING *nt_name, void **module, SECTION_IMAGE_INFORMATION *info,
-                                 enum loadorder loadorder, USHORT machine )
+NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine )
 {
+    NTSTATUS status = STATUS_DLL_NOT_FOUND;
     OBJECT_ATTRIBUTES attr;
-    SIZE_T size = 0;
     char *unix_name;
-    NTSTATUS status;
     HANDLE mapping;
     UNICODE_STRING true_nt_name;
+    SIZE_T size = 0;
+    USHORT search_machine;
+    BOOL is_system_dir = is_system_dir_path( nt_name, &search_machine );
+    enum loadorder loadorder = get_load_order( nt_name, is_system_dir, NULL );
 
-    if (loadorder == LO_DISABLED) NtTerminateProcess( GetCurrentProcess(), STATUS_DLL_NOT_FOUND );
+    if (loadorder == LO_DISABLED) NtTerminateProcess( GetCurrentProcess(), status );
 
     InitializeObjectAttributes( &attr, nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
-    if (get_nt_and_unix_names( &attr, &true_nt_name, &unix_name, FILE_OPEN, FALSE )) return STATUS_DLL_NOT_FOUND;
+    if (!get_nt_and_unix_names( &attr, &true_nt_name, &unix_name, FILE_OPEN, FALSE ))
+        status = open_dll_file( unix_name, &attr, &mapping );
 
-    status = open_dll_file( unix_name, &attr, &mapping );
     if (!status)
     {
-        status = virtual_map_module( mapping, module, &size, info, 0, 0, machine );
-        if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH && info->ComPlusNativeReady)
+        status = virtual_map_main_module( mapping, load_machine );
+        if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH && main_image_info.ComPlusNativeReady)
         {
-            info->Machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
+            main_image_info.Machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
             status = STATUS_SUCCESS;
         }
         NtClose( mapping );
     }
     else if (status == STATUS_INVALID_IMAGE_NOT_MZ && loadorder != LO_NATIVE)
     {
-        status = open_main_image_so_file( unix_name, attr.ObjectName, module, info );
+        status = open_main_image_so_file( unix_name, attr.ObjectName );
     }
     free( unix_name );
     free( true_nt_name.Buffer );
-    return status;
-}
 
-
-/***********************************************************************
- *           load_main_exe
- */
-NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **module )
-{
-    unsigned int status;
-    SIZE_T size;
-    USHORT search_machine;
-    BOOL is_system_dir = is_system_dir_path( nt_name, &search_machine );
-    enum loadorder loadorder = get_load_order( nt_name, is_system_dir, NULL );
-
-    status = open_main_image( nt_name, module, &main_image_info, loadorder, load_machine );
-    if (status != STATUS_DLL_NOT_FOUND) return status;
-
-    /* if path is in system dir, we can load the builtin even if the file itself doesn't exist */
-    if (loadorder != LO_NATIVE && is_prefix_bootstrap && is_system_dir)
-        status = find_builtin_dll( nt_name, NULL, module, &size, &main_image_info, 0, 0,
-                                   search_machine, load_machine, FALSE, 0 );
+    switch (status)
+    {
+    case STATUS_DLL_NOT_FOUND:
+    case STATUS_INVALID_IMAGE_FORMAT:
+    case STATUS_NOT_SUPPORTED:
+        /* if path is in system dir, we can load the builtin even if the file itself doesn't exist */
+        if (loadorder != LO_NATIVE && is_prefix_bootstrap && is_system_dir)
+            status = find_builtin_dll( nt_name, NULL, &main_module, &size, &main_image_info, 0, 0,
+                                       search_machine, load_machine, FALSE, 0 );
+        break;
+    }
     return status;
 }
 
@@ -1481,7 +1477,7 @@ NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **mod
  *
  * Load start.exe as main image.
  */
-NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module )
+NTSTATUS load_start_exe( UNICODE_STRING *nt_name )
 {
     static const WCHAR startW[] = {'s','t','a','r','t','.','e','x','e',0};
     unsigned int status;
@@ -1491,7 +1487,8 @@ NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module )
     wcscpy( image, get_machine_wow64_dir( current_machine ));
     wcscat( image, startW );
     init_unicode_string( nt_name, image );
-    status = find_builtin_dll( nt_name, NULL, module, &size, &main_image_info, 0, 0, current_machine, 0, FALSE, 0 );
+    status = find_builtin_dll( nt_name, NULL, &main_module, &size,
+                               &main_image_info, 0, 0, current_machine, 0, FALSE, 0 );
     if (!NT_SUCCESS(status))
     {
         MESSAGE( "wine: failed to load start.exe: %x\n", status );
@@ -1854,17 +1851,17 @@ static ULONG_PTR get_image_address(void)
  */
 static void start_main_thread(void)
 {
-    TEB *teb = virtual_alloc_first_teb();
+    struct thread_data *data = virtual_alloc_first_thread_data();
 
-    dbg_init();
-    startup_info_size = server_init_process();
+    server_init_process( data );
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
     init_startup_info();
+    dbg_init();
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
     set_load_order_app_name( main_wargv[0] );
-    init_thread_stack( teb, 0, 0, 0 );
+    init_thread_stack( data->teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
     load_wow64_ntdll( main_image_info.Machine );

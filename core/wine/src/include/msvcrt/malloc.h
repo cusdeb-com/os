@@ -65,6 +65,7 @@ _ACRTIMP int    __cdecl _heapwalk(_HEAPINFO*);
 _ACRTIMP intptr_t __cdecl _get_heap_handle(void);
 _ACRTIMP size_t __cdecl _get_sbh_threshold(void);
 _ACRTIMP int    __cdecl _set_sbh_threshold(size_t size);
+_ACRTIMP int    __cdecl _resetstkoflw(void);
 
 #ifdef _MSC_VER
 void *_alloca(size_t size);
@@ -80,5 +81,11 @@ void *_alloca(size_t size);
 # elif defined(_MSC_VER)
 # define alloca(x) _alloca((x))
 # endif
+
+/* Simplistic _malloca/_freea implementation.
+ * Native allocates on stack for blocks smaller than a given threshold.
+ */
+#define _malloca(sz) malloc(sz)
+#define _freea(ptr) free(ptr)
 
 #endif /* __WINE_MALLOC_H */

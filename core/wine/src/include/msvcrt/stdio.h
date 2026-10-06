@@ -137,6 +137,7 @@ _ACRTIMP size_t __cdecl fwrite(const void*,size_t,size_t,FILE*);
 _ACRTIMP int    __cdecl getc(FILE*);
 _ACRTIMP int    __cdecl getchar(void);
 _ACRTIMP char*  __cdecl gets(char*);
+_ACRTIMP char*  __cdecl gets_s(char*, rsize_t);
 _ACRTIMP void   __cdecl perror(const char*);
 _ACRTIMP int    __cdecl putc(int,FILE*);
 _ACRTIMP int    __cdecl putchar(int);
@@ -149,6 +150,7 @@ _ACRTIMP int    __cdecl setvbuf(FILE*,char*,int,size_t);
 _ACRTIMP FILE*  __cdecl tmpfile(void);
 _ACRTIMP errno_t __cdecl tmpfile_s(FILE**);
 _ACRTIMP char*  __cdecl tmpnam(char*);
+_ACRTIMP errno_t __cdecl tmpnam_s(char*,size_t);
 _ACRTIMP int    __cdecl ungetc(int,FILE*);
 _ACRTIMP unsigned int __cdecl _get_output_format(void);
 _ACRTIMP unsigned int __cdecl _set_output_format(unsigned int);
@@ -205,6 +207,12 @@ static inline int __cdecl _vsnprintf_s_l(char *buffer, size_t size, size_t count
 {
     int ret = __stdio_common_vsnprintf_s(_CRT_INTERNAL_LOCAL_PRINTF_OPTIONS, buffer, size, count, format, locale, args);
     return ret < 0 ? -1 : ret;
+}
+
+static inline int __cdecl vsnprintf_s(char *buffer, size_t size, size_t count, const char *format, va_list args) __WINE_CRT_PRINTF_ATTR(4, 0);
+static inline int __cdecl vsnprintf_s(char *buffer, size_t size, size_t count, const char *format, va_list args)
+{
+    return _vsnprintf_s_l(buffer, size, count, format, NULL, args);
 }
 
 static inline int __cdecl _snprintf_s(char *buffer, size_t size, size_t count, const char *format, ...) __WINE_CRT_PRINTF_ATTR(4, 5);
@@ -826,5 +834,15 @@ static inline wint_t fputwchar(wint_t wc) { return _fputwchar(wc); }
 static inline int getw(FILE* file) { return _getw(file); }
 static inline int putw(int val, FILE* file) { return _putw(val, file); }
 static inline FILE* wpopen(const wchar_t* command,const wchar_t* mode) { return _wpopen(command, mode); }
+
+#ifdef __cplusplus
+extern "C++" {
+template <size_t S> inline char *get_s(char (&dst)[S]) { return wget_s(dst, S); }
+template <size_t S> inline char *tmpnam_s(char (&dst)[S]) { return tmpnam_s(dst, S); }
+template <size_t S> inline int vsprintf_s(char (&dst)[S], const char *fmt, va_list args) {return vsprintf_s(dst, S, fmt, args);}
+template <size_t S> inline int _vsnprintf_s(char (&dst)[S], size_t count, const char *fmt, va_list args) {return _vsnprintf_s(dst, S, count, fmt, args);}
+template <size_t S> inline int vsnprintf_s(char (&dst)[S], size_t count, const char *fmt, va_list args) {return vsnprintf_s(dst, S, count, fmt, args);}
+} /* extern "C++" */
+#endif /* __cplusplus */
 
 #endif /* __WINE_STDIO_H */

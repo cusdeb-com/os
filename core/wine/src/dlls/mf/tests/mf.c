@@ -4018,6 +4018,7 @@ static HRESULT WINAPI test_time_source_GetUnderlyingClock(IMFPresentationTimeSou
 }
 
 DEFINE_EXPECT(test_time_source_sink_OnClockStart);
+DEFINE_EXPECT(test_time_source_sink_OnClockStop);
 
 static IMFPresentationTimeSourceVtbl test_time_source_vtbl =
 {
@@ -4066,7 +4067,11 @@ static HRESULT WINAPI test_time_source_sink_OnClockStart(IMFClockStateSink *ifac
 
 static HRESULT WINAPI test_time_source_sink_OnClockStop(IMFClockStateSink *iface, MFTIME system_time)
 {
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    hr = (expect_test_time_source_sink_OnClockStop) ? S_OK : E_NOTIMPL;
+    CHECK_EXPECT(test_time_source_sink_OnClockStop);
+    return hr;
 }
 
 static HRESULT WINAPI test_time_source_sink_OnClockPause(IMFClockStateSink *iface, MFTIME system_time)
@@ -4135,6 +4140,7 @@ static void test_presentation_clock(void)
         { CLOCK_START, MFCLOCK_STATE_RUNNING, MFCLOCK_STATE_RUNNING },
     };
     IMFClockStateSink test_sink = { &test_clock_sink_vtbl };
+    struct test_seek_clock_sink *test_clock_sink;
     struct test_time_source *test_time_source;
     IMFPresentationTimeSource *time_source;
     MFCLOCK_PROPERTIES props, props2;
@@ -4246,6 +4252,21 @@ static void test_presentation_clock(void)
 
     hr = IMFRateControl_SetRate(rate_control, FALSE, 0.0f);
     ok(hr == MF_E_CLOCK_NO_TIME_SOURCE, "Unexpected hr %#lx.\n", hr);
+
+    /* SetTimer() with no time source. MFTIMER_RELATIVE is not tested because native crashes. */
+    for (i = 0; i < ARRAY_SIZE(callbacks); ++i)
+    {
+        callbacks[i] = create_test_callback(FALSE);
+        events[i] = impl_from_IMFAsyncCallback(callbacks[i])->event;
+    }
+
+    hr = IMFPresentationClock_QueryInterface(clock, &IID_IMFTimer, (void **)&timer);
+    ok(hr == S_OK, "got hr %#lx.\n", hr);
+
+    hr = IMFTimer_SetTimer(timer, 0, 1000000, callbacks[0], NULL, &timer_cancel_key);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFTimer_CancelTimer(timer, timer_cancel_key);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     /* Set default time source. */
     hr = MFCreateSystemTimeSource(&time_source);
@@ -4379,15 +4400,6 @@ static void test_presentation_clock(void)
 
     IMFRateControl_Release(rate_control);
 
-    for (i = 0; i < ARRAY_SIZE(callbacks); ++i)
-    {
-        callbacks[i] = create_test_callback(FALSE);
-        events[i] = impl_from_IMFAsyncCallback(callbacks[i])->event;
-    }
-
-    hr = IMFPresentationClock_QueryInterface(clock, &IID_IMFTimer, (void **)&timer);
-    ok(hr == S_OK, "got hr %#lx.\n", hr);
-
     hr = IMFPresentationClock_Start(clock, 200000);
     ok(hr == S_OK, "got hr %#lx.\n", hr);
 
@@ -4455,6 +4467,59 @@ static void test_presentation_clock(void)
 
     hr = IMFPresentationClock_SetTimeSource(clock, time_source);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* After AddClockStateSink() adds an independent clock state sink, an initial OnClock*()
+     * call occurs if the clock state has changed from its initial invalid state. */
+
+    test_clock_sink = create_test_seek_clock_sink();
+
+    /* Test invalid state. */
+    memset(&actual_object_state_record, 0, sizeof(actual_object_state_record));
+    hr = IMFPresentationClock_AddClockStateSink(clock, &test_clock_sink->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Failed to add a sink, hr %#lx.\n", hr);
+    Sleep(50);
+    ok(!actual_object_state_record.state_count, "got count %u\n", actual_object_state_record.state_count);
+    IMFPresentationClock_RemoveClockStateSink(clock, &test_clock_sink->IMFClockStateSink_iface);
+
+    SET_EXPECT(test_time_source_sink_OnClockStop);
+    hr = IMFPresentationClock_Stop(clock);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CHECK_CALLED(test_time_source_sink_OnClockStop);
+
+    memset(&actual_object_state_record, 0, sizeof(actual_object_state_record));
+    hr = IMFPresentationClock_AddClockStateSink(clock, &test_clock_sink->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Failed to add a sink, hr %#lx.\n", hr);
+    Sleep(50);
+    ok(actual_object_state_record.state_count == 1 && actual_object_state_record.states[0] == SINK_ON_CLOCK_STOP,
+            "got count %u, state %u\n", actual_object_state_record.state_count, actual_object_state_record.states[0]);
+    IMFPresentationClock_RemoveClockStateSink(clock, &test_clock_sink->IMFClockStateSink_iface);
+
+    IMFClockStateSink_Release(&test_clock_sink->IMFClockStateSink_iface);
+
+    /* If the clock state sink is also the time source, no initial OnClock*() call is made after AddClockStateSink() */
+
+    hr = IMFPresentationClock_AddClockStateSink(clock, &test_time_source->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    SET_EXPECT(test_time_source_sink_OnClockStart);
+    hr = IMFPresentationClock_Start(clock, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    Sleep(50);
+    CHECK_CALLED(test_time_source_sink_OnClockStart);
+
+    hr = IMFPresentationClock_RemoveClockStateSink(clock, &test_time_source->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFPresentationClock_AddClockStateSink(clock, &test_time_source->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFPresentationClock_RemoveClockStateSink(clock, &test_time_source->IMFClockStateSink_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    SET_EXPECT(test_time_source_sink_OnClockStop);
+    hr = IMFPresentationClock_Stop(clock);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    Sleep(50);
+    CHECK_CALLED(test_time_source_sink_OnClockStop);
 
     hr = IMFPresentationClock_AddClockStateSink(clock, &test_time_source->IMFClockStateSink_iface);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -6804,6 +6869,29 @@ static void test_sar(void)
     hr = IMFMediaSink_QueryInterface(sink, &IID_IMFClockStateSink, (void **)&state_sink);
     ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
 
+    callback = create_test_callback(TRUE);
+
+    /* Flush events */
+    while (SUCCEEDED(IMFStreamSink_GetEvent(stream_sink, MF_EVENT_FLAG_NO_WAIT, &event)))
+        IMFMediaEvent_Release(event);
+
+    /* State sink is in its initial state. */
+    hr = IMFClockStateSink_OnClockStop(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantInit(&propvar);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkStopped, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
+    hr = IMFClockStateSink_OnClockPause(state_sink, 0);
+    ok(hr == MF_E_INVALID_STATE_TRANSITION, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFClockStateSink_OnClockStop(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkStopped, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
     hr = IMFClockStateSink_OnClockStart(state_sink, 0, 0);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
@@ -6830,8 +6918,6 @@ static void test_sar(void)
 
     hr = IMFClockStateSink_OnClockStop(state_sink, 0);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-
-    callback = create_test_callback(TRUE);
 
     /* Flush events */
     while (SUCCEEDED(IMFStreamSink_GetEvent(stream_sink, MF_EVENT_FLAG_NO_WAIT, &event)))
@@ -6944,8 +7030,6 @@ static void test_sar(void)
 
     IMFClockStateSink_Release(state_sink);
 
-    IMFStreamSink_Release(stream_sink);
-
     /* Volume control */
     hr = MFGetService((IUnknown *)sink, &MR_POLICY_VOLUME_SERVICE, &IID_IMFSimpleAudioVolume, (void **)&simple_volume);
     ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
@@ -6978,6 +7062,10 @@ static void test_sar(void)
 
     hr = IMFMediaSink_Shutdown(sink);
     ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFStreamSink_Flush(stream_sink);
+    ok(hr == MF_E_STREAMSINK_REMOVED, "Unexpected hr %#lx.\n", hr);
+    IMFStreamSink_Release(stream_sink);
 
     hr = IMFMediaSink_AddStreamSink(sink, 123, NULL, &stream_sink);
     ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
@@ -7765,12 +7853,16 @@ static void test_evr(void)
     IMFVideoSampleAllocator *allocator;
     IMFMediaTypeHandler *type_handler;
     IMFVideoRenderer *video_renderer;
+    IMFClockStateSink *state_sink;
     IMFPresentationClock *clock;
     IMFMediaSink *sink, *sink2;
+    IMFAsyncCallback *callback;
     IMFAttributes *attributes;
     UINT32 attr_count, value;
     IMFActivate *activate;
+    IMFMediaEvent *event;
     HWND window, window2;
+    PROPVARIANT propvar;
     IMFRateSupport *rs;
     DWORD flags, count;
     LONG sample_count;
@@ -7984,6 +8076,44 @@ static void test_evr(void)
 
     IMFMediaTypeHandler_Release(type_handler);
 
+    hr = IMFMediaSink_QueryInterface(sink, &IID_IMFClockStateSink, (void **)&state_sink);
+    ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
+
+    callback = create_test_callback(TRUE);
+
+    while (SUCCEEDED(IMFStreamSink_GetEvent(stream_sink, MF_EVENT_FLAG_NO_WAIT, &event)))
+        IMFMediaEvent_Release(event);
+
+    /* State sink is in its initial state. */
+    hr = IMFClockStateSink_OnClockStop(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantInit(&propvar);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkStopped, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
+    /* EVR allows stop -> paused. */
+    hr = IMFClockStateSink_OnClockPause(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkPaused, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
+    hr = IMFClockStateSink_OnClockStop(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkStopped, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
+    hr = IMFClockStateSink_OnClockStop(state_sink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = gen_wait_media_event_until_blocking((IMFMediaEventGenerator *)stream_sink, callback, MEStreamSinkStopped, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&propvar);
+
+    IMFAsyncCallback_Release(callback);
+    IMFClockStateSink_Release(state_sink);
+
     /* Stream uses an allocator. */
     check_service_interface(stream_sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IMFVideoSampleAllocator, TRUE);
     check_service_interface(stream_sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, TRUE);
@@ -8068,7 +8198,7 @@ todo_wine {
     ref = IMFActivate_Release(activate);
     ok(ref == 0, "Release returned %ld\n", ref);
     ref = IMFMediaSink_Release(sink);
-    todo_wine
+    flaky todo_wine
     ok(ref == 0, "Release returned %ld\n", ref);
 
     /* Set clock. */

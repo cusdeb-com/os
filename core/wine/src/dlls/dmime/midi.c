@@ -260,7 +260,7 @@ static HRESULT midi_parser_handle_program_change(struct midi_parser *parser, str
     MUSIC_TIME dmusic_time = (ULONGLONG)parser->time * DMUS_PPQ / parser->division;
     instrument.dwPChannel = event->status & 0xf;
     instrument.dwFlags = DMUS_IO_INST_PATCH;
-    instrument.dwPatch = event->data[0];
+    instrument.dwPatch = event->data[0] | (instrument.dwPChannel == 9 ? F_INSTRUMENT_DRUMS : 0);
     if (FAILED(hr = CoCreateInstance(&CLSID_DirectMusicBand, NULL, CLSCTX_INPROC_SERVER,
                        &IID_IDirectMusicBand, (void **)&band)))
         return hr;
@@ -282,7 +282,7 @@ static HRESULT midi_parser_handle_program_change(struct midi_parser *parser, str
 static HRESULT midi_parser_handle_note_on_off(struct midi_parser *parser, struct midi_event *event)
 {
     BYTE new_velocity = (event->status & 0xf0) == MIDI_NOTE_OFF ? 0 : event->data[1]; /* DirectMusic doesn't have noteoff velocity */
-    BYTE note = event->data[0], channel = event->status & 0xf;
+    BYTE note = event->data[0] & 0x7f, channel = event->status & 0xf;
     DWORD index = (DWORD)channel * 128 + note;
     MUSIC_TIME dmusic_time;
     struct midi_seqtrack_item *note_state = parser->note_states[index];
@@ -355,7 +355,9 @@ static HRESULT midi_parser_handle_control(struct midi_parser *parser, struct mid
 static int midi_seqtrack_item_compare(const void *a, const void *b)
 {
     const DMUS_IO_SEQ_ITEM *item_a = a, *item_b = b;
-    return item_a->mtTime - item_b->mtTime;
+    if (item_a->mtTime == item_b->mtTime)
+        return 0;
+    return item_a->mtTime > item_b->mtTime ? 1 : -1;
 }
 
 static HRESULT midi_parser_parse(struct midi_parser *parser, IDirectMusicSegment8 *segment)
@@ -451,12 +453,21 @@ static HRESULT midi_parser_parse(struct midi_parser *parser, IDirectMusicSegment
         parser->time = 0;
         memset(parser->note_states, 0, sizeof(parser->note_states));
     }
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr))
+    {
+        if (collection)
+            IDirectMusicCollection_Release(collection);
+        return hr;
+    }
 
     TRACE("End of file\n");
 
     if ((seq_items = calloc(parser->seqtrack_items_count, sizeof(DMUS_IO_SEQ_ITEM))) == NULL)
+    {
+        if (collection)
+            IDirectMusicCollection_Release(collection);
         return E_OUTOFMEMORY;
+    }
 
     i = 0;
     LIST_FOR_EACH_ENTRY(item, &parser->seqtrack_items, struct midi_seqtrack_item, entry)
@@ -465,7 +476,11 @@ static HRESULT midi_parser_parse(struct midi_parser *parser, IDirectMusicSegment
     qsort(seq_items, parser->seqtrack_items_count, sizeof(DMUS_IO_SEQ_ITEM), midi_seqtrack_item_compare);
 
     music_length = (ULONGLONG)music_length * DMUS_PPQ / parser->division + 1;
-    if (collection) IDirectMusicTrack_SetParam(parser->bandtrack, &GUID_ConnectToDLSCollection, 0, collection);
+    if (collection)
+    {
+        IDirectMusicTrack_SetParam(parser->bandtrack, &GUID_ConnectToDLSCollection, 0, collection);
+        IDirectMusicCollection_Release(collection);
+    }
     if (SUCCEEDED(hr)) hr = IDirectMusicSegment8_SetLength(segment, music_length);
     if (SUCCEEDED(hr)) hr = IDirectMusicSegment8_InsertTrack(segment, parser->bandtrack, 0xffff);
     if (SUCCEEDED(hr)) hr = IDirectMusicSegment8_InsertTrack(segment, parser->chordtrack, 0xffff);

@@ -26,15 +26,7 @@
 #endif
 
 #include "config.h"
-
 #include "macdrv.h"
-
-#include "windef.h"
-#include "winuser.h"
-#include "shellapi.h"
-
-#include "wine/list.h"
-#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(systray);
 
@@ -49,7 +41,7 @@ struct tray_icon
     HICON               image;              /* the image to render */
     WCHAR               tiptext[128];       /* tooltip text */
     DWORD               state;              /* state flags */
-    macdrv_status_item  status_item;
+    WineStatusItem     *status_item;
     UINT                version;
 };
 

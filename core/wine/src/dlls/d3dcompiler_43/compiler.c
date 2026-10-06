@@ -94,6 +94,8 @@ static HRESULT WINAPI d3dcompiler_include_from_file_open(ID3DInclude *iface, D3D
     else
     {
         len = GetCurrentDirectoryA(MAX_PATH, current_dir);
+        if (!len || len >= MAX_PATH)
+            return E_FAIL;
         current_dir[len] = '\\';
         len++;
         initial_dir = current_dir;
@@ -146,19 +148,17 @@ const struct ID3DIncludeVtbl d3dcompiler_include_from_file_vtbl =
     d3dcompiler_include_from_file_close
 };
 
-static const char *get_line(const char **ptr)
+static const char *get_line(const char **ptr, const char *end)
 {
     const char *p, *q;
 
-    p = *ptr;
-    if (!(q = strstr(p, "\n")))
-    {
-        if (!*p)
-            return NULL;
-        *ptr += strlen(p);
-        return p;
-    }
-    *ptr = q + 1;
+    if ((p = *ptr) >= end)
+        return NULL;
+
+    if (!(q = memchr(p, '\n', end - p)))
+        *ptr = end;
+    else
+        *ptr = q + 1;
 
     return p;
 }
@@ -418,10 +418,11 @@ HRESULT WINAPI D3DDisassemble(const void *data, SIZE_T size, UINT flags, const c
         if (*messages && ERR_ON(d3dcompiler))
         {
             const char *ptr = messages;
+            const char *end = ptr + strlen(ptr);
             const char *line;
 
             ERR("Shader log:\n");
-            while ((line = get_line(&ptr)))
+            while ((line = get_line(&ptr, end)))
             {
                 ERR("    %.*s", (int)(ptr - line), line);
             }

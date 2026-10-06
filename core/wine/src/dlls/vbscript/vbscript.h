@@ -315,7 +315,6 @@ typedef enum {
     X(hres,           1, ARG_UINT,    0)          \
     X(errmode,        1, ARG_INT,     0)          \
     X(eqv,            1, 0,           0)          \
-    X(erase,          1, ARG_BSTR,    0)          \
     X(exp,            1, 0,           0)          \
     X(gt,             1, ARG_UINT,    0)          \
     X(gteq,           1, ARG_UINT,    0)          \
@@ -366,6 +365,7 @@ typedef enum {
     X(stop,           1, 0,           0)          \
     X(string,         1, ARG_STR,     0)          \
     X(sub,            1, 0,           0)          \
+    X(throw,          1, ARG_UINT,    0)          \
     X(val,            1, 0,           0)          \
     X(vcall,          1, ARG_UINT,    0)          \
     X(vcallv,         1, ARG_UINT,    0)          \
@@ -468,6 +468,7 @@ HRESULT exec_script(script_ctx_t*,BOOL,function_t*,vbdisp_t*,DISPPARAMS*,VARIANT
 HRESULT exec_global_code(script_ctx_t*,vbscode_t*,VARIANT*,BOOL);
 BOOL is_exec_local_scope(exec_ctx_t*);
 HRESULT exec_add_caller_dynamic_var(script_ctx_t*,exec_ctx_t*,const WCHAR*);
+void release_safearray(SAFEARRAY*);
 void release_dynamic_var(dynamic_var_t*);
 named_item_t *lookup_named_item(script_ctx_t*,const WCHAR*,unsigned);
 void release_named_item(named_item_t*);

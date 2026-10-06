@@ -43,7 +43,7 @@ typedef struct IDirectSoundBufferImpl        IDirectSoundBufferImpl;
 typedef struct DirectSoundDevice             DirectSoundDevice;
 
 /* dsound_convert.h */
-typedef void (*bitsgetfunc)(const IDirectSoundBufferImpl *dsb, BYTE *base, float *dst, unsigned samples, DWORD channel);
+typedef void (*bitsgetfunc)(const IDirectSoundBufferImpl *dsb, BYTE *base, BYTE *dst, unsigned samples, DWORD channel);
 typedef void (*bitsputfunc)(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
 void putieee32(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
 void putieee32_sum(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
@@ -84,8 +84,9 @@ struct DirectSoundDevice
     int                         speaker_num[DS_MAX_CHANNELS];
     int                         num_speakers;
     int                         lfe_channel;
+    BYTE                       *filter_buffer;
     float *tmp_buffer, *cp_buffer;
-    DWORD                       tmp_buffer_len, cp_buffer_len;
+    DWORD                       filter_buffer_len, tmp_buffer_len, cp_buffer_len;
     CO_MTA_USAGE_COOKIE         mta_cookie;
 
     DSVOLUMEPAN                 volpan;
@@ -134,7 +135,7 @@ struct IDirectSoundBufferImpl
     PWAVEFORMATEX               pwfx;
     BufferMemory*               buffer;
     DWORD                       playflags,state;
-    DWORD                       writelead,maxwritelead,buflen;
+    DWORD                       buflen;
     DWORD                       freq;
     DSVOLUMEPAN                 volpan;
     DSBUFFERDESC                dsbd;
@@ -142,14 +143,12 @@ struct IDirectSoundBufferImpl
     float                       firgain;
     DWORD                       freqAdjustNum,freqAdjustDen;
     DWORD                       freqAccNum;
+    DWORD                       input_delay;
+    float                      *input_tail;
+    BOOL                        input_tail_valid;
     /* used for mixing */
     DWORD                       sec_mixpos;
-    /* Holds a copy of the next 'writelead' bytes, to be used for mixing. This makes it
-     * so that these bytes get played once even if this region of the buffer gets overwritten,
-     * which is more in-line with native DirectSound behavior. */
-    BOOL                        use_committed;
-    LPVOID                      committedbuff;
-    DWORD                       committed_mixpos;
+    DWORD                       sec_playpos;
     /* IDirectSoundNotify fields */
     LPDSBPOSITIONNOTIFY         notifies;
     int                         nrofnotifies;

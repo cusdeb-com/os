@@ -44,7 +44,6 @@ struct device
 
     WCHAR device_id[MAX_DEVICE_ID_LEN];
     WCHAR instance_id[MAX_DEVICE_ID_LEN];
-    WCHAR container_id[MAX_GUID_STRING_LEN];
     const GUID *class_guid;
 
     BOOL is_fdo;
@@ -55,7 +54,6 @@ struct func_device
     struct device base;
     HID_DEVICE_ATTRIBUTES attrs;
     HIDP_DEVICE_DESC device_desc;
-    WCHAR serial[256];
 
     ULONG poll_interval;
     KEVENT halt_event;

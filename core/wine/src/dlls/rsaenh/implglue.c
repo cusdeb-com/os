@@ -189,11 +189,15 @@ BOOL duplicate_key_impl( ALG_ID algid, const KEY_CONTEXT *src, KEY_CONTEXT *dst 
     case CALG_3DES:
     case CALG_3DES_112:
     case CALG_DES:
+        *dst = *src;
+        break;
     case CALG_AES:
     case CALG_AES_128:
     case CALG_AES_192:
     case CALG_AES_256:
-        *dst = *src;
+        /* SYMCRYPT_AES_EXPANDED_KEY contains pointers into its own RoundKey
+         * array, so it cannot be copied by assignment. */
+        SymCryptAesKeyCopy( &src->aes, &dst->aes );
         break;
     case CALG_RSA_KEYX:
     case CALG_RSA_SIGN:
@@ -351,18 +355,18 @@ static BOOL rsa_decrypt( const SYMCRYPT_RSAKEY *key, const BYTE *in, SYMCRYPT_NU
 
     if (!(scratch = malloc( scratch_size ))) return FALSE;
 
-    ciphertext = SymCryptIntCreate( scratch, scratch_size, key->nDigitsOfModulus );
+    ciphertext = SymCryptIntCreate( scratch, int_size, key->nDigitsOfModulus );
     offset += int_size;
 
-    plaintext = SymCryptIntCreate( scratch + offset, scratch_size - offset, key->nDigitsOfModulus );
+    plaintext = SymCryptIntCreate( scratch + offset, int_size, key->nDigitsOfModulus );
     offset += int_size;
 
-    tmp = SymCryptIntCreate( scratch + offset, scratch_size - offset, key->nMaxDigitsOfPrimes );
+    tmp = SymCryptIntCreate( scratch + offset, tmp_size, key->nMaxDigitsOfPrimes );
     offset += tmp_size;
 
     for (i = 0; i < key->nPrimes; i++)
     {
-        crt_elements[i] = SymCryptModElementCreate( scratch + offset, scratch_size - offset, key->pmPrimes[i] );
+        crt_elements[i] = SymCryptModElementCreate( scratch + offset, crt_elements_size[i], key->pmPrimes[i] );
         offset += crt_elements_size[i];
     }
 
@@ -456,8 +460,8 @@ BOOL export_public_key_impl( const KEY_CONTEXT *ctx, BYTE *dst, DWORD *pubexp )
     if (SymCryptRsakeyGetValue( ctx->rsa.key, modulus, modulus_size, &pubexp64, 1, NULL, NULL, 0,
                                 SYMCRYPT_NUMBER_FORMAT_LSB_FIRST, 0 ))
     {
-        return FALSE;
         SetLastError( NTE_FAIL );
+        return FALSE;
     }
     *pubexp = pubexp64;
     return TRUE;
@@ -506,8 +510,8 @@ BOOL export_private_key_impl( const KEY_CONTEXT *ctx, BYTE *dst, DWORD *pubexp )
     if (SymCryptRsakeyGetValue( ctx->rsa.key, modulus, modulus_size, &pubexp64, 1, primes, primes_sizes, 2,
                                 SYMCRYPT_NUMBER_FORMAT_LSB_FIRST, 0 ))
     {
-        return FALSE;
         SetLastError( NTE_FAIL );
+        return FALSE;
     }
 
     exponents[0] = primes[1]    + primes_sizes[1];
@@ -518,8 +522,8 @@ BOOL export_private_key_impl( const KEY_CONTEXT *ctx, BYTE *dst, DWORD *pubexp )
     if (SymCryptRsakeyGetCrtValue( ctx->rsa.key, exponents, primes_sizes, 2, coefficient, primes_sizes[0],
                                    private_exp, modulus_size, SYMCRYPT_NUMBER_FORMAT_LSB_FIRST, 0 ))
     {
-        return FALSE;
         SetLastError( NTE_FAIL );
+        return FALSE;
     }
 
     *pubexp = pubexp64;

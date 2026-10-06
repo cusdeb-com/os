@@ -979,12 +979,7 @@ N
 foo
 bar
 before!
-after!
-caret!bang
-!a
-hello
-@todo_wine@^hello
-@todo_wine@ECHO is off.
+@todo_wine@after!
 --- in digit variables
 a %1 %2
 b %1 %2
@@ -1990,7 +1985,7 @@ footype=foo_opencmd
 footype=cmd.exe /c "echo '%1'"
 '@drive@@path@foobar\test.foo'@or_broken@Skipped as not enough permissions
 footype=cmd.exe /c "echo '%*'"
-@todo_wine@' one two three'@or_broken@Skipped as not enough permissions
+' one two three'@or_broken@Skipped as not enough permissions
 foobar@or_broken@Skipped as not enough permissions
 --- resetting association
 original value@or_broken@buggyXP@or_broken@!WINE_FOO!
@@ -2057,12 +2052,12 @@ bat bar@space@
 bar@space@
 bat bar@space@
 ------------ Testing SHIFT ------------
-'p1' 'p2' 'p3' 'p4' 'p5'
-'p2' 'p3' 'p4' 'p5' ''
-'p3' 'p4' 'p5' '' ''
-'p3' 'p5' '' '' ''
-'p3' 'p5' '' '' ''
-'p5' '' '' '' ''
+':shiftFun'/':shiftFun' '"p1"'/'p1' '"p2"' 'p3' '/p4a/p4b' 'p5' '"p1" "p2" p3 /p4a/p4b p5'
+'"p1"'/'p1' '"p2"'/'p2' 'p3' '/p4a/p4b' 'p5' '' '"p1" "p2" p3 /p4a/p4b p5'
+'"p1"'/'p1' 'p3'/'p3' '/p4a/p4b' 'p5' '' '' '"p1" "p2" p3 /p4a/p4b p5'
+'"p1"'/'p1' 'p3'/'p3' 'p5' '' '' '' '"p1" "p2" p3 /p4a/p4b p5'
+'"p1"'/'p1' 'p3'/'p3' 'p5' '' '' '' '"p1" "p2" p3 /p4a/p4b p5'
+'p3'/'p3' 'p5'/'p5' '' '' '' '' '"p1" "p2" p3 /p4a/p4b p5'
 ------------ Testing cmd invocation ------------
 --- a batch file can delete itself
 file correctly deleted
@@ -2315,10 +2310,6 @@ BB@space@
 A2@space@
 BB@space@
 ---
------------- Testing short path modifier ------------
-short name: filename shortened
-short path: non-existent last preserved
-short path: beyond missing preserved
 ------------ Testing combined CALLs/GOTOs ------------
 world
 cheball

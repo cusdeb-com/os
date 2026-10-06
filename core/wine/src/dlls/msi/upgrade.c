@@ -93,7 +93,11 @@ static void append_productcode( MSIPACKAGE *package, const WCHAR *action_prop, c
 
     if (prop) len += lstrlenW( prop );
     len += lstrlenW( product ) + 2;
-    if (!(newprop = malloc( len * sizeof(WCHAR) ))) return;
+    if (!(newprop = malloc( len * sizeof(WCHAR) )))
+    {
+        free( prop );
+        return;
+    }
     if (prop)
     {
         lstrcpyW( newprop, prop );
@@ -128,7 +132,11 @@ static UINT ITERATE_FindRelatedProducts(MSIRECORD *rec, LPVOID param)
     if (rc != ERROR_SUCCESS)
         return ERROR_SUCCESS;
 
-    uirow = MSI_CreateRecord(1);
+    if (!(uirow = MSI_CreateRecord(1)))
+    {
+        RegCloseKey(hkey);
+        return ERROR_OUTOFMEMORY;
+    }
     attributes = MSI_RecordGetInteger(rec,5);
 
     while (rc == ERROR_SUCCESS)

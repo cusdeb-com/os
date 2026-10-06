@@ -34,6 +34,95 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
+static struct wp_image_description_v1 *scrgb_desc;
+static struct wp_image_description_v1 *bt2100_desc;
+static BOOL color_manager_initialized;
+
+static void image_description_failed(void *user_data, struct wp_image_description_v1 *desc,
+                                     uint32_t cause, const char *message)
+{
+    struct wp_image_description_v1 **ret = user_data;
+
+    ERR("cause=%u message=%s\n", cause, debugstr_a(message));
+
+    *ret = NULL;
+    wp_image_description_v1_destroy(desc);
+}
+
+static void image_description_ready2(void *user_data, struct wp_image_description_v1 *desc,
+                                     uint32_t identity_hi, uint32_t identity_lo)
+{
+    struct wp_image_description_v1 **ret = user_data;
+
+    TRACE("id=%#x%x\n", identity_hi, identity_lo);
+
+    *ret = desc;
+}
+
+static void image_description_ready(void *user_data, struct wp_image_description_v1 *desc, uint32_t identity)
+{
+    image_description_ready2(user_data, desc, 0, identity);
+}
+
+static const struct wp_image_description_v1_listener image_description_listener =
+{
+    image_description_failed,
+    image_description_ready,
+    image_description_ready2,
+};
+
+static void color_manager_supported_intent(void *data, struct wp_color_manager_v1 *manager, uint32_t intent)
+{
+}
+
+static void color_manager_supported_feature(void *data, struct wp_color_manager_v1 *manager, uint32_t feature)
+{
+    struct wp_image_description_v1 *desc;
+
+    TRACE("feature %u\n", feature);
+
+    if (feature == WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB && (desc = wp_color_manager_v1_create_windows_scrgb(manager)))
+    {
+        scrgb_desc = (void *)-1;
+        wp_image_description_v1_add_listener(desc, &image_description_listener, &scrgb_desc);
+    }
+    if (feature == WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_BT2100 && (desc = wp_color_manager_v1_create_windows_bt2100(manager)))
+    {
+        bt2100_desc = (void *)-1;
+        wp_image_description_v1_add_listener(desc, &image_description_listener, &bt2100_desc);
+    }
+}
+
+static void color_manager_supported_named_tf(void *data, struct wp_color_manager_v1 *manager, uint32_t tf)
+{
+}
+
+static void color_manager_supported_primaries(void *data, struct wp_color_manager_v1 *manager, uint32_t primaries)
+{
+}
+
+static void color_manager_done(void *data, struct wp_color_manager_v1 *manager)
+{
+    color_manager_initialized = TRUE;
+}
+
+const struct wp_color_manager_v1_listener color_manager_listener =
+{
+    color_manager_supported_intent,
+    color_manager_supported_feature,
+    color_manager_supported_named_tf,
+    color_manager_supported_primaries,
+    color_manager_done,
+};
+
+void color_management_init(void)
+{
+    while (!color_manager_initialized || scrgb_desc == (void *)-1 || bt2100_desc == (void *)-1)
+        wl_display_roundtrip_queue(process_wayland.wl_display, process_wayland.wl_event_queue);
+
+    TRACE("Initialized image descriptors, scRGB %p BT.2100 %p\n", scrgb_desc, bt2100_desc);
+}
+
 static void xdg_surface_handle_configure(void *private, struct xdg_surface *xdg_surface,
                                          uint32_t serial)
 {
@@ -1156,6 +1245,8 @@ static void wayland_client_surface_destroy(struct client_surface *client)
 
     TRACE("%s\n", debugstr_client_surface(client));
 
+    if (surface->color_management)
+        wp_color_management_surface_v1_destroy(surface->color_management);
     if (surface->wp_viewport)
         wp_viewport_destroy(surface->wp_viewport);
     if (surface->wl_subsurface)
@@ -1224,12 +1315,53 @@ static void wayland_client_surface_present(struct client_surface *client, HDC hd
     set_client_surface(hwnd, surface);
 }
 
+static BOOL wayland_client_surface_set_color_space(struct client_surface *client, VkColorSpaceKHR color_space)
+{
+    struct wayland_client_surface *surface = impl_from_client_surface(client);
+    struct wp_image_description_v1 *desc;
+    struct wp_color_manager_v1 *manager;
+
+    TRACE("%s color_space %#x\n", debugstr_client_surface(client), color_space);
+
+    if (!(manager = process_wayland.wp_color_manager_v1)) return FALSE;
+
+    switch (color_space)
+    {
+    case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT: desc = scrgb_desc; break;
+    case VK_COLOR_SPACE_HDR10_ST2084_EXT:         desc = bt2100_desc; break;
+    default:                                      desc = NULL; break;
+    }
+
+    if (!desc)
+    {
+        if (surface->color_management)
+        {
+            wp_color_management_surface_v1_destroy(surface->color_management);
+            surface->color_management = NULL;
+        }
+    }
+    else if (!surface->color_management && !(surface->color_management = wp_color_manager_v1_get_surface(manager, surface->wl_surface)))
+    {
+        WARN("Failed to create color management surface for %s\n", debugstr_client_surface(client));
+        return FALSE;
+    }
+    else
+    {
+        wp_color_management_surface_v1_set_image_description(surface->color_management, desc, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+    }
+    wl_display_flush(process_wayland.wl_display);
+
+    return desc || color_space == -1;
+}
+
 static const struct client_surface_funcs wayland_client_surface_funcs =
 {
+    .size = sizeof(struct wayland_client_surface),
     .destroy = wayland_client_surface_destroy,
     .detach = wayland_client_surface_detach,
     .update = wayland_client_surface_update,
     .present = wayland_client_surface_present,
+    .set_color_space = wayland_client_surface_set_color_space,
 };
 
 struct wayland_client_surface *impl_from_client_surface(struct client_surface *client)
@@ -1238,12 +1370,12 @@ struct wayland_client_surface *impl_from_client_surface(struct client_surface *c
     return CONTAINING_RECORD(client, struct wayland_client_surface, client);
 }
 
-struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format)
+struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format, BOOL raw)
 {
     struct wayland_client_surface *client;
     struct wl_region *empty_region;
 
-    if (!(client = client_surface_create(sizeof(*client), &wayland_client_surface_funcs, hwnd))) return NULL;
+    if (!(client = client_surface_create(&wayland_client_surface_funcs, hwnd, pixel_format, raw))) return NULL;
 
     client->wl_surface =
         wl_compositor_create_surface(process_wayland.wl_compositor);
@@ -1381,11 +1513,8 @@ void wayland_surface_ensure_contents(struct wayland_surface *surface)
         wayland_surface_attach_shm(surface, dummy_shm_buffer, damage);
         wl_surface_commit(surface->wl_surface);
     }
-    else
-    {
-        wayland_shm_buffer_unref(dummy_shm_buffer);
-    }
 
+    wayland_shm_buffer_unref(dummy_shm_buffer);
     if (damage) NtGdiDeleteObjectApp(damage);
 }
 

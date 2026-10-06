@@ -48,7 +48,6 @@ static void *libodbc;
 static SQLRETURN (*pSQLAllocHandle)(SQLSMALLINT,SQLHANDLE,SQLHANDLE*);
 static SQLRETURN (*pSQLAllocHandleStd)(SQLSMALLINT,SQLHANDLE,SQLHANDLE*);
 static SQLRETURN (*pSQLBindCol)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLPOINTER,SQLLEN,SQLLEN*);
-static SQLRETURN (*pSQLBindParam)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLULEN,SQLSMALLINT,SQLPOINTER,SQLLEN*);
 static SQLRETURN (*pSQLBindParameter)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLSMALLINT,SQLULEN,SQLSMALLINT, SQLPOINTER,SQLLEN,SQLLEN*);
 static SQLRETURN (*pSQLBrowseConnect)(SQLHDBC,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
 static SQLRETURN (*pSQLBrowseConnectW)(SQLHDBC,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
@@ -180,7 +179,6 @@ static NTSTATUS load_odbc(void)
     LOAD_FUNC( SQLAllocHandle );
     LOAD_FUNC( SQLAllocHandleStd );
     LOAD_FUNC( SQLBindCol );
-    LOAD_FUNC( SQLBindParam );
     LOAD_FUNC( SQLBindParameter );
     LOAD_FUNC( SQLBrowseConnect );
     LOAD_FUNC( SQLBrowseConnectW );
@@ -516,7 +514,7 @@ static void get_drivers( struct drivers *drivers )
         {
             info_max_size = info_size;
             if (!(info = realloc( info, info_max_size ))) goto error;
-            status = NtEnumerateValueKey( key, idx, KeyValueFullInformation, info, info_max_size, &info_size );
+            status = NtEnumerateValueKey( key, idx, KeyValueBasicInformation, info, info_max_size, &info_size );
         }
 
         if (status == STATUS_NO_MORE_ENTRIES)

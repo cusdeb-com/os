@@ -1012,6 +1012,27 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
             .uAppData = 11,
         },
     };
+    DIACTIONW filled_actions_3[] =
+    {
+        {
+            .dwSemantic = DIMOUSE_BUTTON0,
+            .lptszActionName = L"Button 0",
+            .guidInstance = GUID_SysMouse,
+            .dwObjID = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 3 ),
+            .dwFlags = DIA_APPMAPPED | DIA_APPFIXED,
+            .dwHow = DIAH_DEFAULT,
+            .uAppData = 1,
+        },
+        {
+            .dwSemantic = DIKEYBOARD_2,
+            .lptszActionName = L"Key",
+            .guidInstance = GUID_SysKeyboard,
+            .dwObjID = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 3 ),
+            .dwFlags = DIA_APPMAPPED | DIA_APPFIXED,
+            .dwHow = DIAH_DEFAULT,
+            .uAppData = 2,
+        }
+    };
     DIACTIONFORMATW action_format_2_filled =
     {
         .dwSize = sizeof(DIACTIONFORMATW),
@@ -1024,6 +1045,18 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         .dwBufferSize = 32,
         .lAxisMin = -128,
         .lAxisMax = +128,
+        .tszActionMap = L"Action Map Filled",
+    };
+    DIACTIONFORMATW action_format_3_filled =
+    {
+        .dwSize = sizeof(DIACTIONFORMATW),
+        .dwActionSize = sizeof(*default_actions),
+        .dwNumActions = ARRAY_SIZE(filled_actions_3),
+        .dwDataSize = 4 * ARRAY_SIZE(filled_actions_3),
+        .rgoAction = filled_actions_3,
+        .dwGenre = DIVIRTUAL_DRIVING_RACE,
+        .guidActionMap = GUID_action_mapping_2,
+        .dwBufferSize = 32,
         .tszActionMap = L"Action Map Filled",
     };
     DIPROPRANGE prop_range =
@@ -1455,6 +1488,28 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_PRESERVE );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
     check_diactionformatw( &action_format, &expect_action_format_4 );
+
+    /* Test setting two actions with the same control identifier/dwObjID */
+    hr = IDirectInputDevice8_SetActionMap( mouse, &action_format_3_filled, L"username", DIDSAM_DEFAULT );
+    todo_wine
+    ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_SetActionMap( keyboard, &action_format_3_filled, L"username", DIDSAM_DEFAULT );
+    todo_wine
+    ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
+
+    prop_pointer.diph.dwHow = DIPH_BYID;
+    prop_pointer.diph.dwObj = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 3 );
+    prop_pointer.uData = 0;
+    hr = IDirectInputDevice8_GetProperty( mouse, DIPROP_APPDATA, &prop_pointer.diph );
+    ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
+    ok( prop_pointer.uData == 1, "got uData %#Ix\n", prop_pointer.uData );
+
+    prop_pointer.diph.dwHow = DIPH_BYID;
+    prop_pointer.diph.dwObj = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 3 );
+    prop_pointer.uData = 0;
+    hr = IDirectInputDevice8_GetProperty( keyboard, DIPROP_APPDATA, &prop_pointer.diph );
+    ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
+    ok( prop_pointer.uData == 2, "got uData %#Ix\n", prop_pointer.uData );
 
     IDirectInputDevice8_Release( keyboard );
     IDirectInputDevice8_Release( mouse );
@@ -2071,10 +2126,8 @@ static void test_simple_joystick( DWORD version )
     ok( hr == DI_OK, "GetProperty DIPROP_GUIDANDPATH returned %#lx\n", hr );
     ok( IsEqualGUID( &prop_guid_path.guidClass, &GUID_DEVCLASS_HIDCLASS ), "got guid %s\n",
         debugstr_guid( &prop_guid_path.guidClass ) );
-    todo_wine
     ok( !wcsncmp( prop_guid_path.wszPath, expect_path, wcslen( expect_path ) ), "got path %s\n",
         debugstr_w(prop_guid_path.wszPath) );
-    todo_wine
     ok( !wcscmp( wcsrchr( prop_guid_path.wszPath, '&' ), expect_path_end ), "got path %s\n",
         debugstr_w(prop_guid_path.wszPath) );
 
@@ -6087,7 +6140,7 @@ static void test_joystick_instance_guid( DWORD version )
 #undef MAKE_DESC
 #undef MAKE_ATTR
     };
-    const GUID instance_uuid_init = {0x00000000, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x00, 'D', 'E', 'S', 'T'}};
+    const GUID instance_uuid_init = {0x00000000, 0x0000, 0x1000, {0x80, 0x00, 'D', 'E', 'S', 'T', 0x00, 0x00}};
     struct dinput di = {.version = version}, di2 = {.version = version};
     GUID expect_instances[4], instances[64], *instances_end;
     IDirectInputDevice8W *device;
@@ -6116,6 +6169,7 @@ static void test_joystick_instance_guid( DWORD version )
     hr = dinput_enum_devices( &di, find_test_device_instances, &instances_end );
     ok( hr == DI_OK, "Unexpected hr %#lx.\n", hr );
     ok( instances_end == instances + 4, "Unexpected count %Iu.\n", instances_end - instances );
+    ok( !memcmp( instances[0].Data4 + 2, instance_uuid_init.Data4 + 2, 6 ), "Unexpected guid %s\n", debugstr_guid(instances) );
 
     for (UINT i = 0; i < instances_end - instances; i++)
     {
@@ -6901,13 +6955,26 @@ START_TEST( joystick8 )
         test_simple_joystick( 0x700 );
         test_simple_joystick( 0x800 );
 
-        test_joystick_instance_guid( 0x500 );
-        test_joystick_instance_guid( 0x700 );
-        test_joystick_instance_guid( 0x800 );
+        /*
+         * These tests are currently broken on wine because they rely upon
+         * the enumeration order of SetupDiGetClassDevs()/CM_Get_Device_Interface_List()
+         * returning HID interfaces in the order of creation, which is what
+         * native does. Wine currently returns interfaces in alphabetical order,
+         * which only worked before because our device instance ID values were implemented
+         * incorrectly.
+         */
+        if (!winetest_platform_is_wine)
+        {
+            test_joystick_instance_guid( 0x500 );
+            test_joystick_instance_guid( 0x700 );
+            test_joystick_instance_guid( 0x800 );
 
-        test_joystick_id( 0x500 );
-        test_joystick_id( 0x700 );
-        test_joystick_id( 0x800 );
+            test_joystick_id( 0x500 );
+            test_joystick_id( 0x700 );
+            test_joystick_id( 0x800 );
+        }
+        else
+            skip("Skipping tests that rely upon enumeration order on wine.\n");
 
         test_many_axes_joystick();
         test_driving_wheel_axes();
