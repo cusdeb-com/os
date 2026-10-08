@@ -157,8 +157,8 @@ parse_args() {
 build_x11spice() {
     if [ "${FORCE_REBUILD_FULL}" = true ] || [ "${REBUILD}" = true ] || ! docker image inspect "${X11SPICE_IMAGE}" >/dev/null 2>&1; then
         log info "Building ${X11SPICE_IMAGE} ..."
-        local args=(--network=host -f Dockerfile.x11spice -t "${X11SPICE_IMAGE}" "${HERE}")
-        [ "${FORCE_REBUILD_FULL}" = true ] && args+=(--no-cache)
+        local args=(--network=host -f "${HERE}/Dockerfile.x11spice" -t "${X11SPICE_IMAGE}" "${HERE}")
+        [ "${FORCE_REBUILD_FULL}" = true ] && args+=(--no-cache --pull)
         docker build "${args[@]}"
     else
         log info "Using existing ${X11SPICE_IMAGE}"
@@ -168,7 +168,7 @@ build_x11spice() {
 build_cdex() {
     if [ "${FORCE_REBUILD_FULL}" = true ] || [ "${FORCE_REBUILD_CDEX}" = true ] || [ "${REBUILD}" = true ] || ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
         log info "Building ${IMAGE} ..."
-        local args=(--network=host -f Dockerfile -t "${IMAGE}" --build-arg X11SPICE_IMAGE="${X11SPICE_IMAGE}" "${HERE}")
+        local args=(--network=host -f "${HERE}/Dockerfile" -t "${IMAGE}" --build-arg X11SPICE_IMAGE="${X11SPICE_IMAGE}" "${HERE}")
         { [ "${FORCE_REBUILD_FULL}" = true ] || [ "${FORCE_REBUILD_CDEX}" = true ]; } && args+=(--no-cache)
         docker build "${args[@]}"
     else
