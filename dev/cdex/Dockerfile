@@ -1,37 +1,7 @@
 # CDEX-over-SPICE runtime image.
 
-# Stage 1: build x11spice.
-FROM debian:trixie AS x11spice_build
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    git \
-    gcc \
-    make \
-    libtool \
-    autoconf \
-    automake \
-    pkg-config \
-    xutils-dev \
-    libspice-server-dev \
-    libgtk-3-dev \
-    libxcb1-dev \
-    libxcb-damage0-dev \
-    libxcb-xfixes0-dev \
-    libxcb-shm0-dev \
-    libxcb-xtest0-dev \
-    libxcb-util-dev \
-    libxcb-xkb-dev \
- && rm -rf /var/lib/apt/lists/*
-RUN git clone --depth 1 https://gitlab.freedesktop.org/spice/x11spice.git /tmp/x11spice \
- && cd /tmp/x11spice \
- && ./autogen.sh --prefix=/usr/local \
- && make -j"$(nproc)" \
- && make install DESTDIR=/staging
-
-# Stage 2: runtime image.
-FROM debian:trixie
+ARG X11SPICE_IMAGE=cusdeb-os:x11spice
+FROM ${X11SPICE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Keep package postinst scripts from starting services during the build --
@@ -65,11 +35,8 @@ RUN apt-get update \
     libxcb-xtest0 \
     libxcb-xkb1 \
     sudo \
+ && ldconfig \
  && rm -rf /var/lib/apt/lists/*
-
-# x11spice, from stage 1.
-COPY --from=x11spice_build /staging/usr/local /usr/local
-RUN ldconfig
 
 # Wine won't run its session as root.
 RUN useradd -m -s /bin/bash cusdeb \

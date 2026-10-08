@@ -1,0 +1,43 @@
+# x11spice build image.
+#
+# x11spice is not packaged in Debian Trixie, so it is compiled from source here
+# and installed into /usr/local. The resulting image is used as the base for the
+# CDEX-over-SPICE runtime image (Dockerfile).
+
+FROM debian:trixie AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    gcc \
+    make \
+    libtool \
+    autoconf \
+    automake \
+    pkg-config \
+    xutils-dev \
+    libspice-server-dev \
+    libgtk-3-dev \
+    libxcb1-dev \
+    libxcb-damage0-dev \
+    libxcb-xfixes0-dev \
+    libxcb-shm0-dev \
+    libxcb-xtest0-dev \
+    libxcb-util-dev \
+    libxcb-xkb-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://gitlab.freedesktop.org/spice/x11spice.git /tmp/x11spice \
+ && cd /tmp/x11spice \
+ && ./autogen.sh --prefix=/usr/local \
+ && make -j"$(nproc)" \
+ && make install DESTDIR=/staging
+
+FROM debian:trixie
+
+COPY --from=build /staging/usr/local /usr/local
+
+RUN ldconfig
