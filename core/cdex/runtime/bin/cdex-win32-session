@@ -26,7 +26,7 @@ REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
 # a global export would make 64-bit Wine processes (wineboot, services, ...)
 # try to load the 32-bit native DLLs from system32 and abort. mscoree and
 # winemenubuilder.exe are disabled session-wide via WINEDLLOVERRIDES above.
-REACTOS_DLL_OVERRIDES="desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
+REACTOS_DLL_OVERRIDES="appwiz.cpl=n;desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
 
 # Keep taskbar bridge state/control in the per-user runtime directory so
 # multiple users do not collide on the sticky /tmp shared files.

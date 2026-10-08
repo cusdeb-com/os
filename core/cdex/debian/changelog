@@ -1,3 +1,11 @@
+cdex (0.0.14-1cd) trixie; urgency=medium
+
+  * runtime/bin/cdex-win32-session: override Wine's builtin appwiz.cpl so
+    rundll32 uses ReactOS's NewLinkHere and ConfigStartMenu entrypoints for
+    Start Menu Add and Remove.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 08 Oct 2026 13:07:24 +0300
+
 cdex (0.0.13-1cd) trixie; urgency=medium
 
   * debian/patches/0003-iconcache-ilc-color32.patch: keep shell icon
