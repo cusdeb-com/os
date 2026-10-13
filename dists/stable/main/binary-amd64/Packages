@@ -105,23 +105,23 @@ Description: Spider solitaire card game
  This package is part of the CDEX desktop environment.
 
 Package: wine
-Version: 11.15.0-3cd
+Version: 11.19.0-1cd
 Architecture: amd64
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Installed-Size: 357506
+Installed-Size: 351415
 Depends: binfmt-support, libasound2t64 (>= 1.0.16), libasound2t64:i386, libc6:i386, libfontconfig1, libfontconfig1:i386, libfreetype6, libfreetype6:i386, libgcc-s1:i386, libgl1, libgl1:i386, libgnutls30t64, libgnutls30t64:i386, libjpeg62-turbo, libjpeg62-turbo:i386, libmpg123-0t64, libmpg123-0t64:i386, libncurses6, libncurses6:i386, libpng16-16t64, libpng16-16t64:i386, libx11-6:i386, libxext6:i386, libxml2, libxml2:i386, libxrandr2, libxrandr2:i386, libxrender1, libxrender1:i386, libxxf86vm1, libxxf86vm1:i386, libxinerama1, libxinerama1:i386, libxcursor1, libxcursor1:i386, libxi6, libxi6:i386, libxcomposite1, libxcomposite1:i386, libxfixes3, libxfixes3:i386, libc6 (>= 2.38), libgcc-s1 (>= 3.0), libx11-6, libxext6
 Recommends: libasound2-plugins, libgl1-mesa-dri, libvulkan1, libvulkan1:i386
 Conflicts: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
 Replaces: fonts-wine, libwine, wine-binfmt, wine-stable, wine32, wine64
-Provides: fonts-wine (= 11.15.0-3cd), libwine (= 11.15.0-3cd), wine-binfmt (= 11.15.0-3cd), wine32 (= 11.15.0-3cd), wine64 (= 11.15.0-3cd)
+Provides: fonts-wine (= 11.19.0-1cd), libwine (= 11.19.0-1cd), wine-binfmt (= 11.19.0-1cd), wine32 (= 11.19.0-1cd), wine64 (= 11.19.0-1cd)
 Homepage: https://winehq.org
 Priority: optional
 Section: otherosfs
-Filename: pool/main/w/wine/wine_11.15.0-3cd_amd64.deb
-Size: 63397636
-SHA256: 4c8e4ce19698a57d14954da17a10a229ef05cd424cf4f4064dd2a02487a0b812
-SHA1: 41f70e0911ee1d993dea732ee2b68374b957d593
-MD5sum: af6820cb64f9cf44bd4c4d471012f98b
+Filename: pool/main/w/wine/wine_11.19.0-1cd_amd64.deb
+Size: 63108932
+SHA256: 8c88c2d92c70762d7ee9911a6a1a06505127f74f28733c149d29847af3e0a839
+SHA1: f12893629cc1a426ee7df36c0d065da17ea460c2
+MD5sum: ed0478219d81378114ff4d416a583200
 Description: Free and open-source Win32 implementation (CusDeb build)
  Wine is a compatibility layer for running Windows applications on Unix-like
  operating systems by implementing the Win32 API.
