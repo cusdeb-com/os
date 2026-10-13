@@ -143,7 +143,7 @@ REACTOS_ARTIFACTS := \
 	url.dll \
 	mizu.msstyles
 
-.PHONY: all build clean image shell ensure-image
+.PHONY: all build clean image shell unpatch ensure-image
 .PHONY: build-in-container install-in-container reactos-build
 
 # Public developer interface
@@ -179,6 +179,14 @@ shell: ensure-image
 		--user "$$(id -u):$$(id -g)" \
 		--workdir /workspace \
 		"$(BUILD_IMAGE)" /bin/bash
+
+unpatch: ensure-image
+	$(DOCKER) run --rm \
+		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
+		--user "$$(id -u):$$(id -g)" \
+		--workdir /workspace \
+		"$(BUILD_IMAGE)" \
+		sh -c 'quilt --quiltrc .quiltrc pop -a || [ $$? -eq 2 ]'
 
 # Internal container build interface.
 build-in-container: reactos-build $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
