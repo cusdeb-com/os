@@ -31,7 +31,7 @@ export CCACHE_COMPILERCHECK := content
 
 CONFIGURE := $(REPO_DIR)/src/configure
 
-.PHONY: all build clean image shell ensure-image
+.PHONY: all build clean image shell unpatch ensure-image
 .PHONY: build-in-container install-in-container wine-build64 wine-build32
 
 # Public developer interface.
@@ -67,6 +67,14 @@ shell: ensure-image
 		--user "$$(id -u):$$(id -g)" \
 		--workdir /workspace \
 		"$(BUILD_IMAGE)" /bin/bash
+
+unpatch: ensure-image
+	$(DOCKER) run --rm \
+		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
+		--user "$$(id -u):$$(id -g)" \
+		--workdir /workspace \
+		"$(BUILD_IMAGE)" \
+		sh -c 'quilt --quiltrc .quiltrc pop -a || [ $$? -eq 2 ]'
 
 # Internal container build interface. These targets are called by
 # debian/rules and are not separate developer build steps.
