@@ -2,20 +2,20 @@
 
 # Repository paths
 REPO_DIR := $(CURDIR)
-REACTOS_SRC_DIR := $(REPO_DIR)/src
+UPSTREAM_SRC_DIR := $(REPO_DIR)/src
 
 # Incremental build cache
 BUILD_CACHE_DIR := $(REPO_DIR)/.cdex-build
-BUILD_DIR := $(BUILD_CACHE_DIR)/reactos
+BUILD_DIR := $(BUILD_CACHE_DIR)/cdex
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
 WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
 
 # Generated build inputs
-REACTOS_CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
+CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
 
 # Build tools and generators
-REACTOS_CLASSES_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
+CLASSES_REG_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
 HIVEXREGEDIT := /usr/bin/hivexregedit
 
 # Debian package output
@@ -43,7 +43,7 @@ export ROS_ARCH := i386
 export CFLAGS := $(CFLAGS) -Wno-error=format-security
 export CXXFLAGS := $(CXXFLAGS) -Wno-error=format-security
 
-REACTOS_TARGETS := \
+CDEX_TARGETS := \
 	explorer \
 	filebrowser \
 	control \
@@ -93,7 +93,7 @@ REACTOS_TARGETS := \
 	url \
 	mizu.msstyles
 
-REACTOS_ARTIFACTS := \
+CDEX_ARTIFACTS := \
 	explorer.exe \
 	filebrowser.exe \
 	control.exe \
@@ -144,7 +144,7 @@ REACTOS_ARTIFACTS := \
 	mizu.msstyles
 
 .PHONY: all build clean image shell unpatch ensure-image
-.PHONY: build-in-container install-in-container reactos-build
+.PHONY: build-in-container install-in-container cdex-build
 
 # Public developer interface
 all: build
@@ -189,25 +189,25 @@ unpatch: ensure-image
 		sh -c 'quilt --quiltrc .quiltrc pop -a || [ $$? -eq 2 ]'
 
 # Internal container build interface.
-build-in-container: reactos-build $(REACTOS_CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+build-in-container: cdex-build $(CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
 
-reactos-build:
-	@echo "=== Configuring ReactOS ==="
+cdex-build:
+	@echo "=== Configuring the CDEX build ==="
 	mkdir -p "$(OUT_DIR)"
-	cmake -S "$(REACTOS_SRC_DIR)" -B "$(OUT_DIR)" -G Ninja \
+	cmake -S "$(UPSTREAM_SRC_DIR)" -B "$(OUT_DIR)" -G Ninja \
 		-DENABLE_CCACHE:BOOL=0 \
 		-DENABLE_ROSTESTS=0 \
-		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(REACTOS_SRC_DIR)/toolchain-gcc.cmake" \
+		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(UPSTREAM_SRC_DIR)/toolchain-gcc.cmake" \
 		-DARCH:STRING=i386 \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
-	@echo "=== Building ReactOS targets ==="
-	ninja -C "$(OUT_DIR)" host-tools $(REACTOS_TARGETS)
+	@echo "=== Building CDEX components ==="
+	ninja -C "$(OUT_DIR)" host-tools $(CDEX_TARGETS)
 
-$(REACTOS_CLASSES_REG): $(REACTOS_CLASSES_GENERATOR) \
-		$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf | reactos-build
-	@echo "=== Generating ReactOS Classes registry ==="
-	python3 "$(REACTOS_CLASSES_GENERATOR)" \
-		--hivecls "$(REACTOS_SRC_DIR)/boot/bootdata/hivecls.inf" \
+$(CLASSES_REG): $(CLASSES_REG_GENERATOR) \
+		$(UPSTREAM_SRC_DIR)/boot/bootdata/hivecls.inf | cdex-build
+	@echo "=== Generating the CDEX Classes registry fragment ==="
+	python3 "$(CLASSES_REG_GENERATOR)" \
+		--hivecls "$(UPSTREAM_SRC_DIR)/boot/bootdata/hivecls.inf" \
 		--mkhive "$(OUT_DIR)/host-tools/bin/mkhive" \
 		--utf16le "$(OUT_DIR)/host-tools/bin/utf16le" \
 		--hivexregedit "$(HIVEXREGEDIT)" \
@@ -231,9 +231,9 @@ $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp: wallpapers/cusdeb-race.png
 
 # Internal container install interface. Called by debian/rules after the build phase.
 install-in-container:
-	@echo "=== Installing ReactOS artifacts ==="
+	@echo "=== Installing CDEX components ==="
 	install -d "$(CDEX_DIR)"
-	for artifact in $(REACTOS_ARTIFACTS); do \
+	for artifact in $(CDEX_ARTIFACTS); do \
 		case "$$artifact" in \
 			explorer.exe)    candidate="$(OUT_DIR)/base/shell/explorer/explorer.exe" ;; \
 			filebrowser.exe) candidate="$(OUT_DIR)/base/shell/filebrowser/filebrowser.exe" ;; \
@@ -285,7 +285,7 @@ install-in-container:
 		"$(BIN_DIR)/"
 	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
-	install -m 644 "$(REACTOS_CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
+	install -m 644 "$(CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
 	@echo "=== Installing session/config files ==="
 	install -D -m 644 runtime/xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
 	install -D -m 644 runtime/config/lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"
@@ -313,5 +313,5 @@ install-in-container:
 	@echo "=== Installing the default wallpaper ==="
 	install -D -m 644 "$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp" "$(CDEX_DIR)/Web/Wallpaper/CusDeb Race.bmp"
 
-	@echo "=== Installing ReactOS Marlett font ==="
-	install -D -m 644 "$(REACTOS_SRC_DIR)/media/fonts/Marlett.ttf" "$(CDEX_DIR)/fonts/Marlett.ttf"
+	@echo "=== Installing the Marlett font ==="
+	install -D -m 644 "$(UPSTREAM_SRC_DIR)/media/fonts/Marlett.ttf" "$(CDEX_DIR)/fonts/Marlett.ttf"
