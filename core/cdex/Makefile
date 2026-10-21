@@ -4,9 +4,12 @@
 REPO_DIR := $(CURDIR)
 UPSTREAM_SRC_DIR := $(REPO_DIR)/src
 
+# Build the CDEX payload for native x64 Wine processes.
+CDEX_ARCH := amd64
+
 # Incremental build cache
 BUILD_CACHE_DIR := $(REPO_DIR)/.cdex-build
-BUILD_DIR := $(BUILD_CACHE_DIR)/cdex
+BUILD_DIR := $(BUILD_CACHE_DIR)/cdex-$(CDEX_ARCH)
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
 WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
@@ -16,6 +19,7 @@ CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
 
 # Build tools and generators
 CLASSES_REG_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
+SXS_MANIFEST_GENERATOR := $(REPO_DIR)/tools/prepare_sxs_manifests.py
 HIVEXREGEDIT := /usr/bin/hivexregedit
 
 # Debian package output
@@ -39,7 +43,6 @@ REAPPLY_PATCHES ?= 0
 FONT_FACES := R B RI
 
 # Cross-compilation settings
-export ROS_ARCH := i386
 export CFLAGS := $(CFLAGS) -Wno-error=format-security
 export CXXFLAGS := $(CXXFLAGS) -Wno-error=format-security
 
@@ -47,6 +50,7 @@ CDEX_TARGETS := \
 	explorer \
 	filebrowser \
 	control \
+	rundll32 \
 	calc \
 	mspaint \
 	winmine \
@@ -97,6 +101,7 @@ CDEX_ARTIFACTS := \
 	explorer.exe \
 	filebrowser.exe \
 	control.exe \
+	rundll32.exe \
 	calc.exe \
 	mspaint.exe \
 	winmine.exe \
@@ -198,7 +203,9 @@ cdex-build:
 		-DENABLE_CCACHE:BOOL=0 \
 		-DENABLE_ROSTESTS=0 \
 		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(UPSTREAM_SRC_DIR)/toolchain-gcc.cmake" \
-		-DARCH:STRING=i386 \
+		-DARCH:STRING=$(CDEX_ARCH) \
+		-DCDEX_SXS_CMAKE:FILEPATH="$(REPO_DIR)/tools/sxs_manifests.cmake" \
+		-DCDEX_SXS_TARGETS:STRING="$(CDEX_TARGETS)" \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building CDEX components ==="
 	ninja -C "$(OUT_DIR)" host-tools $(CDEX_TARGETS)
@@ -238,6 +245,7 @@ install-in-container:
 			explorer.exe)    candidate="$(OUT_DIR)/base/shell/explorer/explorer.exe" ;; \
 			filebrowser.exe) candidate="$(OUT_DIR)/base/shell/filebrowser/filebrowser.exe" ;; \
 			control.exe)     candidate="$(OUT_DIR)/base/applications/control/control.exe" ;; \
+			rundll32.exe)    candidate="$(OUT_DIR)/base/system/rundll32/rundll32.exe" ;; \
 			calc.exe)        candidate="$(OUT_DIR)/base/applications/calc/calc.exe" ;; \
 			mspaint.exe)     candidate="$(OUT_DIR)/base/applications/mspaint/mspaint.exe" ;; \
 			winmine.exe)     candidate="$(OUT_DIR)/base/applications/games/winmine/winmine.exe" ;; \
@@ -276,6 +284,9 @@ install-in-container:
 		fi; \
 		install -m 755 "$$candidate" "$(CDEX_DIR)/$$artifact"; \
 	done
+	python3 "$(SXS_MANIFEST_GENERATOR)" assembly \
+		--payload "$(CDEX_DIR)" \
+		--resources "$(OUT_DIR)/cdex-sxs-resources"
 
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"

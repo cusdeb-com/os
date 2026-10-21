@@ -1,3 +1,21 @@
+cdex (0.0.16-1cd) trixie; urgency=medium
+
+  * Makefile and debian/control: build CDEX for AMD64 with x86-64 MinGW,
+    include rundll32, and prepare private SxS manifests before resource
+    linking.
+  * runtime/bin/cdex-* and debian/cdex-base.install: keep Wine system
+    DLL directories intact, use the private ReactOS assembly for
+    packaged shell modules, and route shell and control-panel launches
+    through the ReactOS payload directory.
+  * debian/patches/0020-tray-icon-cross-process.patch: transfer icon
+    pixels between processes and handle Wine tray packets and callbacks.
+  * debian/patches/0021-private-shell-runtime.patch and 0022-build-
+    private-manifests.patch: keep ReactOS shell hosts in the private
+    assembly, remove inactive COM resources, and prepare manifests
+    during CMake configuration.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Wed, 21 Oct 2026 17:45:55 +0300
+
 cdex (0.0.15-1cd) trixie; urgency=medium
 
   * Makefile: use CDEX naming instead of ReactOS for the internal build
