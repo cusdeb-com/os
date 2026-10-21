@@ -2,7 +2,7 @@
 
 A compiled RES file holds a module's resources before linking; a PE file is
 the finished Windows executable, DLL or CPL. This module reads RES records,
-writes merged records and extracts resources from linked x86 PE32 files.
+writes merged records and extracts resources from linked AMD64 PE32+ files.
 
 Resource type, name and language identify each record. The retained resource
 data lets the build preserve existing content and compare linker inputs with
@@ -19,15 +19,15 @@ from typing import BinaryIO
 # Win32 RT_MANIFEST type: identifies the XML resources to merge and validate.
 RT_MANIFEST = 24
 
-# IMAGE_FILE_MACHINE_I386 in the PE COFF header; reject other payload architectures.
-PE_MACHINE_I386 = 0x014C
+# IMAGE_FILE_MACHINE_AMD64 in the PE COFF header; reject other payload architectures.
+PE_MACHINE_AMD64 = 0x8664
 
-# PE32 resource directory location and structures used to inspect final modules.
+# PE32+ resource directory location and structures used to inspect final modules.
 PE_HEADER_POINTER_OFFSET = 0x3C
 PE_COFF_HEADER = struct.Struct("<HHIIIHH")
-PE_OPTIONAL_HEADER_PE32 = 0x010B
-PE_DIRECTORY_COUNT_OFFSET = 92
-PE_DATA_DIRECTORY_OFFSET = 96
+PE_OPTIONAL_HEADER_PE32_PLUS = 0x020B
+PE_DIRECTORY_COUNT_OFFSET = 108
+PE_DATA_DIRECTORY_OFFSET = 112
 PE_RESOURCE_DIRECTORY_INDEX = 2
 PE_RESOURCE_DIRECTORY_HEADER = struct.Struct("<IIHHHH")
 PE_RESOURCE_DIRECTORY_ENTRY = struct.Struct("<II")
@@ -148,7 +148,7 @@ def read_res(path: Path) -> list[Resource]:
 
 
 class PeResourceReader:
-    """Read Win32 resources from a linked x86 PE32 image."""
+    """Read Win32 resources from a linked AMD64 PE32+ image."""
 
     def __init__(self, path: Path):
         """Load the PE file and initialize the resource catalog."""
@@ -178,7 +178,7 @@ class PeResourceReader:
         return format_.unpack_from(self.data, offset)
 
     def _read_headers(self) -> bool:
-        """Validate PE32 headers and locate the resource directory if present."""
+        """Validate PE32+ headers and locate the resource directory if present."""
         data = self.data
         if len(data) < 0x40 or data[:2] != b"MZ":
             raise self._fail("missing DOS header")
@@ -191,17 +191,17 @@ class PeResourceReader:
         machine, section_count, _, _, _, optional_size, _ = self._unpack(
             PE_COFF_HEADER, coff_offset
         )
-        if machine != PE_MACHINE_I386:
-            raise self._fail(f"expected i386 machine, found 0x{machine:04x}")
+        if machine != PE_MACHINE_AMD64:
+            raise self._fail(f"expected AMD64 machine, found 0x{machine:04x}")
 
         optional_offset = coff_offset + PE_COFF_HEADER.size
         optional_end = optional_offset + optional_size
         if optional_end > len(data) or optional_size < PE_DATA_DIRECTORY_OFFSET + 8 * (PE_RESOURCE_DIRECTORY_INDEX + 1):
-            raise self._fail("truncated PE32 optional header")
+            raise self._fail("truncated PE32+ optional header")
 
         magic, = self._unpack(struct.Struct("<H"), optional_offset, optional_end)
-        if magic != PE_OPTIONAL_HEADER_PE32:
-            raise self._fail(f"expected PE32 optional header, found 0x{magic:04x}")
+        if magic != PE_OPTIONAL_HEADER_PE32_PLUS:
+            raise self._fail(f"expected PE32+ optional header, found 0x{magic:04x}")
 
         directory_count, = self._unpack(struct.Struct("<I"), optional_offset + PE_DIRECTORY_COUNT_OFFSET, optional_end)
         if directory_count <= PE_RESOURCE_DIRECTORY_INDEX:
@@ -298,7 +298,7 @@ class PeResourceReader:
 
 
 def read_pe_resources(path: Path) -> list[Resource]:
-    """Read Win32 resources from a linked x86 PE32 image."""
+    """Read Win32 resources from a linked AMD64 PE32+ image."""
     return PeResourceReader(path).read()
 
 

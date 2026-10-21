@@ -4,12 +4,12 @@
 REPO_DIR := $(CURDIR)
 UPSTREAM_SRC_DIR := $(REPO_DIR)/src
 
-# Build the ReactOS payload as 32-bit PE binaries for the existing CDEX shell.
-CDEX_ARCH := i386
+# Build the CDEX payload for native x64 Wine processes.
+CDEX_ARCH := amd64
 
 # Incremental build cache
 BUILD_CACHE_DIR := $(REPO_DIR)/.cdex-build
-BUILD_DIR := $(BUILD_CACHE_DIR)/cdex
+BUILD_DIR := $(BUILD_CACHE_DIR)/cdex-$(CDEX_ARCH)
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
 WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
@@ -35,7 +35,7 @@ DOC_DIR := $(DESTDIR)/usr/share/doc/cdex-base/ubuntu-font
 
 # Container build settings
 DOCKER ?= docker
-BUILD_IMAGE ?= cdex-buildenv:bookworm-i386
+BUILD_IMAGE ?= cdex-buildenv:bookworm-amd64
 # Set REAPPLY_PATCHES=1 to reapply the complete Quilt series before building.
 REAPPLY_PATCHES ?= 0
 
@@ -43,7 +43,7 @@ REAPPLY_PATCHES ?= 0
 FONT_FACES := R B RI
 
 # Cross-compilation settings
-export ROS_ARCH := i386
+export ROS_ARCH := $(CDEX_ARCH)
 export CFLAGS := $(CFLAGS) -Wno-error=format-security
 export CXXFLAGS := $(CXXFLAGS) -Wno-error=format-security
 

@@ -30,7 +30,7 @@ PRIVATE_IDENTITY = {
     "type": "win32",
     "name": ASSEMBLY_NAME,
     "version": "1.0.0.0",
-    "processorArchitecture": "x86",
+    "processorArchitecture": "amd64",
 }
 
 # Request themed Common Controls v6 from Wine for the private shell assembly.
