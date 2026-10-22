@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""Prepare SxS manifest resources and the shared ReactOS DLL/COM assembly.
+
+The resources command merges a private assembly dependency into each module's
+compiled RES records, then produces the COFF object consumed by the linker.
+The assembly command validates those dependencies and collects the providers'
+COM classes into one shared assembly manifest during packaging.
+
+Code is grouped into RES records, registry scripts, manifest XML and the two
+build commands. Finished PE files are read only to check their architecture.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import BinaryIO
+
+# Windows assembly schema namespace used for manifest elements.
+XML_NAMESPACE = "urn:schemas-microsoft-com:asm.v1"
+
+# ElementTree search alias; manifest serialization uses the default namespace.
+XML_NAMESPACES = {"asm": XML_NAMESPACE}
+
+# Shared SxS assembly referenced by every packaged ReactOS module.
+ASSEMBLY_NAME = "CusDeb.ReactOSShell"
+
+# Module dependencies and the shared manifest must use this exact identity.
+PRIVATE_IDENTITY = {
+    "type": "win32",
+    "name": ASSEMBLY_NAME,
+    "version": "1.0.0.0",
+    "processorArchitecture": "amd64",
+}
+
+# Request themed Common Controls v6 from Wine for the private shell assembly.
+COMMON_CONTROLS_IDENTITY = {
+    "type": "win32",
+    "name": "Microsoft.Windows.Common-Controls",
+    "version": "6.0.0.0",
+    "processorArchitecture": "*",
+    "publicKeyToken": "6595b64144ccf1df",
+    "language": "*",
+}
+
+# ReactOS DLL providers selected by SxS; their RGS resources supply private COM classes.
+SHELL_PROVIDERS = (
+    "shell32.dll", "shlwapi.dll", "browseui.dll", "rshell.dll",
+    "shdocvw.dll", "version.dll", "sendmail.dll", "w32time.dll",
+)
+
+# Win32 RT_MANIFEST type: identifies the XML resources to merge and validate.
+RT_MANIFEST = 24
+
+# IMAGE_FILE_MACHINE_AMD64 in the PE COFF header; reject other payload architectures.
+PE_MACHINE_AMD64 = 0x8664
+
+# RES identifier marker: the next WORD is an ordinal instead of UTF-16 text.
+RES_ORDINAL_MARKER = 0xFFFF
+
+# Two little-endian DWORDs starting each RES record: DataSize and HeaderSize.
+RES_RECORD_SIZES = struct.Struct("<II")
+
+# Fixed 16-byte footer: DataVersion (DWORD), MemoryFlags/LanguageId (WORD each),
+# Version/Characteristics (DWORD each). LanguageId distinguishes translations.
+RES_METADATA = struct.Struct("<IHHII")
+
+# Required 32-byte RES null record: no data, ordinal type/name 0, zero metadata.
+RES_NULL_RECORD = (
+    RES_RECORD_SIZES.pack(0, 32)
+    + struct.pack("<HHHH", RES_ORDINAL_MARKER, 0, RES_ORDINAL_MARKER, 0)
+    + RES_METADATA.pack(0, 0, 0, 0, 0)
+)
+
+# Accept complete brace-delimited CLSIDs before emitting COM class declarations.
+GUID_PATTERN = re.compile(r"\{[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\}\Z")
+
+# Match quoted values and GUIDs before braces/words so they remain single tokens.
+RGS_TOKEN_PATTERN = re.compile(
+    r"'(?:[^']|'')*'"         # Single-quoted string, with doubled quote escapes.
+    r'|"[^"]*"'              # Double-quoted string.
+    r"|\{[0-9a-fA-F-]{36}\}"  # A GUID is one token, not a nested block.
+    r"|[{}=]"
+    r"|[^\s{}=]+"
+)
+
+# RGS prefixes consumed before the actual registry key or value name.
+RGS_MODIFIERS = {"noremove", "forceremove", "delete", "remove", "val"}
+
+# SxS threadingModel values accepted when exporting InprocServer32 metadata.
+COM_THREADING_MODELS = {"Apartment", "Both", "Free", "Neutral"}
+
+ET.register_namespace("", XML_NAMESPACE)
+
+
+# Win32 resource records
+
+
+@dataclass
+class Resource:
+    """One RES record, keeping its original header and replaceable payload.
+
+    The raw header preserves language, flags and version metadata when a
+    manifest's XML changes. Only the payload size is updated during writing.
+    """
+
+    type: int | str
+    name: int | str
+    header: bytes
+    data: bytes
+
+    @property
+    def language(self) -> int:
+        """Return the language ID stored in the record's metadata footer."""
+        metadata_offset = len(self.header) - RES_METADATA.size
+        _, _, language, _, _ = RES_METADATA.unpack_from(self.header, metadata_offset)
+        return language
+
+    @property
+    def key(self) -> tuple[int | str, int | str, int]:
+        """Return the type/name/language identity used to detect duplicates."""
+        return self.type, self.name, self.language
+
+    def write(self, output: BinaryIO) -> None:
+        """Write this record with its current payload and DWORD padding."""
+        header = bytearray(self.header)
+        struct.pack_into("<I", header, 0, len(self.data))
+
+        output.write(header)
+        output.write(self.data)
+        output.write(b"\0" * (-len(self.data) % 4))
+
+
+def read_resource_identifier(data: bytes, offset: int, limit: int) -> tuple[int | str, int]:
+    """Return an ordinal or UTF-16 name and the byte offset after it.
+
+    ``limit`` is the exclusive end of the identifier area, before the record's
+    metadata. Truncated ordinals and unterminated names raise ValueError.
+    """
+    if offset + 2 > limit:
+        raise ValueError("Truncated resource identifier")
+
+    value = struct.unpack_from("<H", data, offset)[0]
+    if value == RES_ORDINAL_MARKER:
+        if offset + 4 > limit:
+            raise ValueError("Truncated resource ordinal")
+        return struct.unpack_from("<H", data, offset + 2)[0], offset + 4
+
+    start = offset
+    while offset + 2 <= limit:
+        if data[offset:offset + 2] == b"\0\0":
+            return data[start:offset].decode("utf-16le"), offset + 2
+
+        offset += 2
+
+    raise ValueError("Unterminated resource name")
+
+
+def read_res(path: Path) -> list[Resource]:
+    """Read compiled RES records, excluding the stream's empty first record.
+
+    Original header and payload bytes are retained for later merging. Invalid
+    record bounds or identifiers fail instead of returning partial resources.
+    """
+    data = path.read_bytes()
+    resources = []
+    offset = 0
+
+    while offset < len(data):
+        data_size, header_size = RES_RECORD_SIZES.unpack_from(data, offset)
+        header_end = offset + header_size
+        if header_size < 24 or header_end + data_size > len(data):
+            raise ValueError(f"Invalid resource record in {path}")
+
+        metadata_offset = header_end - RES_METADATA.size
+        resource_type, position = read_resource_identifier(data, offset + 8, metadata_offset)
+        resource_name, _ = read_resource_identifier(data, position, metadata_offset)
+
+        if resource_type != 0 or resource_name != 0 or data_size:
+            resources.append(Resource(
+                resource_type, resource_name,
+                data[offset:header_end], data[header_end:header_end + data_size],
+            ))
+
+        offset = (header_end + data_size + 3) & ~3  # Records are DWORD-aligned.
+
+    return resources
+
+
+def write_res(path: Path, resources: list[Resource], module_name: str) -> None:
+    """Write a RES stream, rejecting duplicate type/name/language identities.
+
+    ``module_name`` identifies the module in duplicate-resource diagnostics.
+    The caller supplies a temporary path so a failure cannot replace an output.
+    """
+    seen = set()
+
+    with path.open("wb") as output:
+        output.write(RES_NULL_RECORD)
+        for resource in resources:
+            if resource.key in seen:
+                raise ValueError(f"Duplicate resource in {module_name}: {resource.key}")
+
+            seen.add(resource.key)
+            resource.write(output)
+
+
+# ATL registry scripts and COM metadata
+
+
+@dataclass
+class RegistryNode:
+    """An RGS registry key or value with its nested entries."""
+
+    name: str
+    value: str | None = None
+    children: list[RegistryNode] = field(default_factory=list)
+
+    def child(self, name: str) -> RegistryNode | None:
+        """Find the first direct child by case-insensitive registry name."""
+        for node in self.children:
+            if node.name.casefold() == name.casefold():
+                return node
+
+        return None
+
+
+class RegistryParser:
+    """Parse ATL RGS resources into registry nodes using a token cursor.
+
+    Registration modifiers and value type tokens are consumed; key names,
+    values and nesting are retained for COM class extraction.
+    """
+
+    def __init__(self, data: bytes):
+        """Decode UTF-8 or BOM-marked UTF-16 input and tokenize its RGS text."""
+        encoding = "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+        text = data.decode(encoding).rstrip("\x00")
+        text = re.sub(r"(?m)^\s*//.*$", "", text)
+
+        self.tokens = RGS_TOKEN_PATTERN.findall(text)
+        self.position = 0
+
+    def parse(self) -> list[RegistryNode]:
+        """Consume the whole script and return its top-level registry nodes."""
+        nodes = self._entries()
+        if self.position != len(self.tokens):
+            raise ValueError("Unexpected trailing RGS tokens")
+
+        return nodes
+
+    def _take(self) -> str:
+        """Advance one token, unquote strings and reject premature EOF."""
+        if self.position == len(self.tokens):
+            raise ValueError("Truncated RGS resource")
+
+        token = self.tokens[self.position]
+        self.position += 1
+
+        if token.startswith(("'", '"')):
+            return token[1:-1].replace("''", "'")
+
+        return token
+
+    def _entries(self, nested: bool = False) -> list[RegistryNode]:
+        """Read sibling entries and consume the closing brace of a nested block."""
+        nodes = []
+
+        while self.position < len(self.tokens) and self.tokens[self.position] != "}":
+            name = self._take()
+            if name.casefold() in RGS_MODIFIERS:
+                name = self._take()
+
+            node = RegistryNode(name)
+
+            if self.position < len(self.tokens) and self.tokens[self.position] == "=":
+                self._take()  # Equals sign.
+                self._take()  # Registry value type.
+                node.value = self._take()
+
+            if self.position < len(self.tokens) and self.tokens[self.position] == "{":
+                self._take()
+                node.children = self._entries(nested=True)
+
+            nodes.append(node)
+
+        if nested and self._take() != "}":
+            raise ValueError("Unbalanced RGS resource")
+
+        return nodes
+
+
+def com_classes(nodes: list[RegistryNode]) -> Iterator[dict[str, str]]:
+    """Yield manifest attributes for COM classes implemented by this module.
+
+    Only InprocServer32 entries referring to the RGS module placeholder are
+    included. Invalid CLSIDs and unsupported threading models raise ValueError.
+    """
+    for node in nodes:
+        if node.name.casefold() == "clsid":
+            for cls in node.children:
+                server = cls.child("InprocServer32")
+                if server is None or server.value not in {"%MODULE%", "%MODULE_RAW%"}:
+                    continue
+
+                if not GUID_PATTERN.fullmatch(cls.name):
+                    raise ValueError(f"Unresolved COM class: {cls.name}")
+
+                attributes = {"clsid": cls.name.upper()}
+
+                model = server.child("ThreadingModel")
+                if model is not None:
+                    if model.value not in COM_THREADING_MODELS:
+                        raise ValueError(f"Unsupported threading model: {model.value}")
+                    attributes["threadingModel"] = model.value
+
+                progid = cls.child("ProgID")
+                if progid is not None and progid.value:
+                    attributes["progid"] = progid.value
+
+                yield attributes
+
+        yield from com_classes(node.children)
+
+
+def collect_com_classes(
+    provider: str, resources: list[Resource], owners: dict[str, str],
+) -> dict[str, dict[str, str]]:
+    """Collect one provider's COM classes, keyed by CLSID.
+
+    ``owners`` is shared across providers and updated in place. A CLSID owned
+    by different providers or repeated with conflicting metadata is rejected.
+    """
+    classes = {}
+    for resource in resources:
+        if resource.type != "REGISTRY":
+            continue
+
+        nodes = RegistryParser(resource.data).parse()
+        for attributes in com_classes(nodes):
+            clsid = attributes["clsid"]
+            owner = owners.get(clsid)
+
+            if owner is not None and owner != provider:
+                raise ValueError(f"COM class {clsid} is supplied by both {owner} and {provider}")
+            if clsid in classes and classes[clsid] != attributes:
+                raise ValueError(f"Conflicting COM metadata for {clsid}")
+
+            owners[clsid] = provider
+            classes[clsid] = attributes
+    return classes
+
+
+# Manifest XML
+
+
+def xml_tag(name: str) -> str:
+    """Qualify an element name with the Windows assembly XML namespace."""
+    return f"{{{XML_NAMESPACE}}}{name}"
+
+
+def new_manifest(identity: dict[str, str]) -> ET.Element:
+    """Create an assembly root containing the supplied assembly identity."""
+    root = ET.Element(xml_tag("assembly"), manifestVersion="1.0")
+    ET.SubElement(root, xml_tag("assemblyIdentity"), identity)
+    return root
+
+
+def private_dependencies(root: ET.Element) -> list[ET.Element]:
+    """Return the direct dependency identities referring to our private assembly."""
+    identities = root.findall(
+        "asm:dependency/asm:dependentAssembly/asm:assemblyIdentity", XML_NAMESPACES,
+    )
+
+    return [identity for identity in identities if identity.get("name") == ASSEMBLY_NAME]
+
+
+def add_private_dependency(root: ET.Element) -> None:
+    """Add the private dependency in place, accepting an existing matching one.
+
+    An existing dependency with conflicting identity attributes raises
+    ValueError. Unrelated manifest elements are preserved.
+    """
+    for identity in private_dependencies(root):
+        if identity.attrib != PRIVATE_IDENTITY:
+            raise ValueError("Conflicting private assembly identity")
+
+        return
+
+    dependency = ET.SubElement(root, xml_tag("dependency"))
+    dependent_assembly = ET.SubElement(dependency, xml_tag("dependentAssembly"))
+    ET.SubElement(dependent_assembly, xml_tag("assemblyIdentity"), PRIVATE_IDENTITY)
+
+
+def manifest_ids(kind: str) -> tuple[int, ...]:
+    """Return relevant manifest IDs, primary first: EXE 1 or DLL 2 and 123."""
+    return (1,) if kind == "exe" else (2, 123)
+
+
+def merge_manifest_dependencies(resources: list[Resource], kind: str) -> bool:
+    """Attach the dependency and report whether a primary manifest was present."""
+    ids = manifest_ids(kind)
+    primary_found = False
+
+    for resource in resources:
+        if resource.type != RT_MANIFEST or resource.name not in ids:
+            continue
+
+        root = ET.fromstring(resource.data)
+        add_private_dependency(root)
+        resource.data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        if resource.name == ids[0]:
+            primary_found = True
+
+    return primary_found
+
+
+def require_private_dependencies(module: Path, resources: list[Resource]) -> None:
+    """Require exactly one matching private dependency in each relevant manifest.
+
+    Reject modules without a relevant manifest and manifests with missing,
+    duplicate or conflicting private dependency identities.
+    """
+    kind = "exe" if module.suffix.lower() == ".exe" else "dll"
+    manifests = [
+        resource for resource in resources
+        if resource.type == RT_MANIFEST and resource.name in manifest_ids(kind)
+    ]
+    if not manifests:
+        raise ValueError(f"Private dependency missing: {module.name}")
+
+    for manifest in manifests:
+        identities = private_dependencies(ET.fromstring(manifest.data))
+        if len(identities) != 1 or identities[0].attrib != PRIVATE_IDENTITY:
+            raise ValueError(f"Private dependency missing: {module.name}")
+
+
+def write_xml(root: ET.Element, path: Path) -> None:
+    """Write a UTF-8 manifest with an XML declaration."""
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+
+
+# Resource preparation before linking
+
+
+def create_default_manifest_resource(
+    module: str, resource_id: int, compiler: str, work: Path,
+) -> list[Resource]:
+    """Compile a neutral-language primary manifest using temporary files.
+
+    The manifest identifies ``module`` and depends on the private assembly.
+    Return the compiler's RES records for inclusion in the module's resources.
+    """
+    identity = {**PRIVATE_IDENTITY, "name": f"CusDeb.ReactOS.{module}"}
+    root = new_manifest(identity)
+    add_private_dependency(root)
+
+    manifest = work / "default.xml"
+    write_xml(root, manifest)
+
+    rc_file = work / "default.rc"
+    res_file = work / "default.res"
+    rc_file.write_text(f'LANGUAGE 0, 0\n{resource_id} {RT_MANIFEST} "{manifest}"\n')
+
+    subprocess.run([
+        compiler, "-J", "rc", "-O", "res", str(rc_file), str(res_file),
+    ], check=True)
+
+    return read_res(res_file)
+
+
+def prepare_resources(args: argparse.Namespace) -> None:
+    """Handle resources: merge manifests, compile COFF and publish both outputs.
+
+    A missing primary manifest is created. RES and COFF files are prepared in
+    a temporary directory; each destination is replaced only after compilation.
+    """
+    resources = []
+    for source in args.inputs:
+        resources.extend(read_res(source))
+
+    primary_found = merge_manifest_dependencies(resources, args.kind)
+
+    with tempfile.TemporaryDirectory(dir=args.output.parent) as directory:
+        work = Path(directory)
+
+        if not primary_found:
+            resources.extend(create_default_manifest_resource(
+                args.module, manifest_ids(args.kind)[0], args.compiler, work,
+            ))
+
+        res_file = work / "merged.res"
+        object_file = work / "merged.obj"
+        write_res(res_file, resources, args.module)
+
+        subprocess.run([
+            args.compiler, "-J", "res", "-O", "coff", str(res_file), str(object_file),
+        ], check=True)
+
+        res_file.replace(args.output)
+        object_file.replace(args.object)
+
+
+# Shared assembly generation during packaging
+
+
+def load_module_resources(payload: Path, resource_directory: Path) -> dict[str, list[Resource]]:
+    """Load and validate the resource catalog for every packaged EXE, DLL and CPL.
+
+    PE headers must identify AMD64 modules. Each build-generated .res-path
+    index points to the compiled RES file whose private dependencies are checked.
+    """
+    modules = sorted(
+        path for path in payload.iterdir() if path.suffix.lower() in {".exe", ".dll", ".cpl"}
+    )
+    catalogs = {}
+
+    for module in modules:
+        data = module.read_bytes()
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]  # DOS header e_lfanew.
+        signature = data[pe_offset:pe_offset + 4]
+        machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
+        if signature != b"PE\0\0" or machine != PE_MACHINE_AMD64:
+            raise ValueError(f"Expected an AMD64 PE module: {module}")
+
+        index = resource_directory / f"{module.name}.res-path"
+        resources = read_res(Path(index.read_text()))
+        require_private_dependencies(module, resources)
+        catalogs[module.name] = resources
+
+    return catalogs
+
+
+def prepare_assembly(args: argparse.Namespace) -> None:
+    """Handle assembly: validate modules and write the shared DLL/COM manifest."""
+    catalogs = load_module_resources(args.payload, args.resources)
+
+    assembly = new_manifest(PRIVATE_IDENTITY)
+    dependency = ET.SubElement(assembly, xml_tag("dependency"))
+    dependent_assembly = ET.SubElement(dependency, xml_tag("dependentAssembly"))
+    ET.SubElement(dependent_assembly, xml_tag("assemblyIdentity"), COMMON_CONTROLS_IDENTITY)
+
+    owners: dict[str, str] = {}
+    for provider in SHELL_PROVIDERS:
+        provider_element = ET.SubElement(assembly, xml_tag("file"), name=provider)
+        classes = collect_com_classes(provider, catalogs[provider], owners)
+
+        for clsid in sorted(classes):
+            ET.SubElement(provider_element, xml_tag("comClass"), classes[clsid])
+
+        print(f"Private provider: {provider}, COM classes: {len(classes)}", flush=True)
+
+    write_xml(assembly, args.payload / f"{ASSEMBLY_NAME}.manifest")
+
+
+def main() -> None:
+    """Parse build command arguments and dispatch to the selected stage."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(required=True)
+
+    resources = commands.add_parser("resources", help="Embed private dependencies before linking")
+    resources.add_argument("--compiler", required=True)
+    resources.add_argument("--kind", choices=("exe", "dll"), required=True)
+    resources.add_argument("--module", required=True)
+    resources.add_argument("--output", type=Path, required=True)
+    resources.add_argument("--object", type=Path, required=True)
+    resources.add_argument("--inputs", type=Path, nargs="*", default=[])
+    resources.set_defaults(handler=prepare_resources)
+
+    assembly = commands.add_parser("assembly", help="Generate the shared DLL/COM assembly")
+    assembly.add_argument("--payload", type=Path, required=True)
+    assembly.add_argument("--resources", type=Path, required=True)
+    assembly.set_defaults(handler=prepare_assembly)
+
+    args = parser.parse_args()
+    args.handler(args)
+
+
+if __name__ == "__main__":
+    main()

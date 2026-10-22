@@ -15,18 +15,17 @@ export WINEDEBUG="${WINEDEBUG:--all}"
 # desktop/driver host, and without it no Wine window can be created at all.
 # It is prevented from stealing the shell role by a Wine patch instead
 # (set_shell_window is only honoured for shell-enabled named desktops).
-export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d"
+# Keep Wine's UI engine, as in the existing CDEX session. No native DLL
+# override is inherited by applications launched from the ReactOS shell.
+export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d;comctl32=b;uxtheme=b"
 
 REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
 REACTOS_PREFIX="$HOME/.wine"
 REACTOS_DRIVE_DIR="$REACTOS_PREFIX/drive_c/reactos"
 REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
 
-# The native ReactOS DLL overrides are scoped to the 32-bit shell processes:
-# a global export would make 64-bit Wine processes (wineboot, services, ...)
-# try to load the 32-bit native DLLs from system32 and abort. mscoree and
-# winemenubuilder.exe are disabled session-wide via WINEDLLOVERRIDES above.
-REACTOS_DLL_OVERRIDES="appwiz.cpl=n;desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
+# Embedded manifests select the common private DLL/COM assembly for every
+# packaged ReactOS module. External applications keep Wine's system DLLs.
 
 # Keep taskbar bridge state/control in the per-user runtime directory so
 # multiple users do not collide on the sticky /tmp shared files.
@@ -180,28 +179,14 @@ prepare_reactos_payload() {
     return 1
   fi
 
-  install -d "$REACTOS_PREFIX/drive_c/windows/syswow64" "$REACTOS_PREFIX/drive_c/cusdeb"
+  install -d "$REACTOS_PREFIX/drive_c/cusdeb"
   # Replace any existing copied payload with a live symlink so that
   # post-install application packages are visible immediately.
   rm -rf "$REACTOS_DRIVE_DIR"
   ln -s "$REACTOS_SOURCE_DIR" "$REACTOS_DRIVE_DIR"
 
-  install -m 755 "$REACTOS_SOURCE_DIR/filebrowser.exe" "$REACTOS_PREFIX/drive_c/windows/explorer.exe"
-
-  # The payload DLLs and CPLs are 32-bit PE binaries. In a 64-bit prefix the
-  # 32-bit system directory is syswow64; placing them in system32 would make
-  # 64-bit Wine processes (wineboot, services, ...) fail to load them.
-  for dll in shell32.dll shlwapi.dll browseui.dll rshell.dll shdocvw.dll uxtheme.dll version.dll sendmail.dll w32time.dll; do
-    rm -f "$REACTOS_PREFIX/drive_c/windows/syswow64/$dll"
-    ln -s "$REACTOS_SOURCE_DIR/$dll" "$REACTOS_PREFIX/drive_c/windows/syswow64/$dll"
-  done
-  if compgen -G "$REACTOS_SOURCE_DIR/*.cpl" >/dev/null; then
-    for cpl in "$REACTOS_SOURCE_DIR"/*.cpl; do
-      [ -f "$cpl" ] || continue
-      rm -f "$REACTOS_PREFIX/drive_c/windows/syswow64/$(basename "$cpl")"
-      ln -s "$cpl" "$REACTOS_PREFIX/drive_c/windows/syswow64/$(basename "$cpl")"
-    done
-  fi
+  # DLLs, CPLs and executables remain in C:\reactos. Do not replace Wine's
+  # system32/syswow64 files or its explorer.exe with the ReactOS payload.
   if [ -f "$REACTOS_SOURCE_DIR/mizu.msstyles" ]; then
     install -d "$REACTOS_PREFIX/drive_c/windows/Resources/Themes/Mizu"
     rm -f "$REACTOS_PREFIX/drive_c/windows/Resources/Themes/Mizu/mizu.msstyles"
@@ -260,9 +245,8 @@ create_reactos_shortcuts() {
   local cscript_rc=0
   # Suppress Wine debug spam; failure is logged by the caller via return value.
   # The builtin shell libraries are forced here because shortcut creation must
-  # not pick up the ReactOS shell DLLs; the session-wide WINEDLLOVERRIDES
-  # already disables mscoree, winemenubuilder and the builtin explorer.
-  WINEDEBUG=-all WINEDLLOVERRIDES="$WINEDLLOVERRIDES;shell32=b;shlwapi=b;browseui=b;rshell=b;shdocvw=b;version=b" wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
+  # use Wine's system DLLs, without a ReactOS activation context.
+  WINEDEBUG=-all wine cscript.exe //nologo 'C:\\create-cusdeb-shortcuts.js' >/dev/null 2>&1 || cscript_rc=1
   rm -f "$REACTOS_PREFIX/drive_c/create-cusdeb-shortcuts.js"
   # Wait for wineserver so that registry changes and shortcut writes are flushed
   # before Explorer starts.
@@ -372,7 +356,7 @@ restore_saved_resolution
 log_stage "reactos-explorer-start"
 splash_update 95
 
-WINEDLLOVERRIDES="$WINEDLLOVERRIDES;$REACTOS_DLL_OVERRIDES" wine 'C:\reactos\reactos-explorer.exe' &
+wine 'C:\reactos\reactos-explorer.exe' &
 
 stop_splash
 wait "$wm_pid"

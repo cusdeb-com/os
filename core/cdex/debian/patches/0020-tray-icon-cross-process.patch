@@ -1,0 +1,1115 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Preserve notification icons across ReactOS and Wine processes.
+ Transfer icon pixels, accept Wine notification packets, and measure the tray
+ from its toolbar. Support version 4 callback packing, keyboard activation,
+ hover notifications and NIF_SHOWTIP while retaining versions 0 and 3.
+Last-Modified: Fri, 16 Oct 2026 17:39:40 +0300
+
+--- a/src/base/shell/explorer/syspager.cpp
++++ b/src/base/shell/explorer/syspager.cpp
+@@ -27,6 +27,7 @@
+ {
+     // Must keep a separate copy since the original is unioned with uTimeout.
+     UINT uVersionCopy;
++    BOOL OwnIcon;
+ };
+ 
+ struct IconWatcherData
+@@ -151,6 +152,7 @@
+     int m_VisibleButtonCount;
+ 
+     CBalloonQueue * m_BalloonQueue;
++    InternalIconData * m_HoverItem;
+ 
+ public:
+     CNotifyToolbar();
+@@ -159,17 +161,22 @@
+     int GetVisibleButtonCount();
+     int FindItem(IN HWND hWnd, IN UINT uID, InternalIconData ** pdata);
+     int FindExistingSharedIcon(HICON handle);
+-    BOOL AddButton(IN CONST NOTIFYICONDATA *iconData);
++    BOOL AddButton(IN CONST NOTIFYICONDATA *iconData, BOOL ownIcon);
+     BOOL SwitchVersion(IN CONST NOTIFYICONDATA *iconData);
+-    BOOL UpdateButton(IN CONST NOTIFYICONDATA *iconData);
++    BOOL UpdateButton(IN CONST NOTIFYICONDATA *iconData, BOOL ownIcon);
+     BOOL RemoveButton(IN CONST NOTIFYICONDATA *iconData);
+     VOID ResizeImagelist();
+-    bool SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg);
++    bool SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg, const POINT *anchor = NULL);
++    void SendSelectEvent(int index, BOOL keyboard);
+     void RefreshToolbarMetrics(BOOL bForceRefresh);
+ 
+ private:
+     LRESULT OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+     LRESULT OnCtxMenu(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
++    LRESULT OnKeyEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
++    LRESULT OnMouseLeave(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
++    POINT GetIconPosition(int index);
++    void SetHoverItem(InternalIconData *item);
+     VOID SendMouseEvent(IN WORD wIndex, IN UINT uMsg, IN WPARAM wParam);
+     LRESULT OnMouseEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
+     LRESULT OnTooltipShow(INT uCode, LPNMHDR hdr, BOOL& bHandled);
+@@ -178,6 +185,9 @@
+     BEGIN_MSG_MAP(CNotifyToolbar)
+         MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
+         MESSAGE_HANDLER(WM_CONTEXTMENU, OnCtxMenu)
++        MESSAGE_HANDLER(WM_KEYDOWN, OnKeyEvent)
++        MESSAGE_HANDLER(WM_KEYUP, OnKeyEvent)
++        MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
+         MESSAGE_RANGE_HANDLER(WM_MOUSEFIRST, WM_MOUSELAST, OnMouseEvent)
+         NOTIFY_CODE_HANDLER(TTN_SHOW, OnTooltipShow)
+     END_MSG_MAP()
+@@ -243,7 +253,7 @@
+         COM_INTERFACE_ENTRY_IID(IID_IOleWindow, IOleWindow)
+     END_COM_MAP()
+ 
+-    BOOL NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconData);
++    BOOL NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconData, BOOL ownIcon);
+     void GetSize(IN BOOL IsHorizontal, IN PSIZE size);
+ 
+     DECLARE_WND_CLASS_EX(szSysPagerWndClass, CS_DBLCLKS, COLOR_3DFACE)
+@@ -669,7 +679,8 @@
+ CNotifyToolbar::CNotifyToolbar() :
+     m_ImageList(NULL),
+     m_VisibleButtonCount(0),
+-    m_BalloonQueue(NULL)
++    m_BalloonQueue(NULL),
++    m_HoverItem(NULL)
+ {
+ }
+ 
+@@ -719,7 +730,7 @@
+     return -1;
+ }
+ 
+-BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData)
++BOOL CNotifyToolbar::AddButton(_In_ CONST NOTIFYICONDATA *iconData, BOOL ownIcon)
+ {
+     TBBUTTON tbBtn = { 0 };
+     InternalIconData * notifyItem;
+@@ -744,6 +755,7 @@
+ 
+     notifyItem->hWnd = iconData->hWnd;
+     notifyItem->uID = iconData->uID;
++    notifyItem->uFlags = iconData->uFlags;
+ 
+     tbBtn.fsState = TBSTATE_ENABLED;
+     tbBtn.fsStyle = BTNS_NOPREFIX;
+@@ -761,11 +773,10 @@
+     {
+         notifyItem->uCallbackMessage = iconData->uCallbackMessage;
+     }
+-
+     if (iconData->uFlags & NIF_ICON)
+     {
+         notifyItem->hIcon = iconData->hIcon;
+-        BOOL hasSharedIcon = notifyItem->dwState & NIS_SHAREDICON;
++        BOOL hasSharedIcon = !ownIcon && (notifyItem->dwState & NIS_SHAREDICON);
+         if (hasSharedIcon)
+         {
+             INT iIcon = FindExistingSharedIcon(notifyItem->hIcon);
+@@ -779,6 +790,12 @@
+         else
+         {
+             tbBtn.iBitmap = ImageList_AddIcon(m_ImageList, notifyItem->hIcon);
++            if (tbBtn.iBitmap < 0)
++            {
++                delete notifyItem;
++                return FALSE;
++            }
++            notifyItem->OwnIcon = ownIcon;
+         }
+     }
+ 
+@@ -805,7 +822,7 @@
+         m_VisibleButtonCount++;
+     }
+ 
+-    /* TODO: support VERSION_4 (NIF_GUID, NIF_REALTIME, NIF_SHOWTIP) */
++    /* TODO: NIF_GUID identification and NIF_REALTIME balloon scheduling. */
+ 
+     CToolbar::AddButton(&tbBtn);
+     SetButtonSize(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+@@ -828,12 +845,19 @@
+         return FALSE;
+     }
+ 
+-    if (iconData->uVersion != 0 && iconData->uVersion != NOTIFYICON_VERSION)
++    if (iconData->uVersion != 0 && iconData->uVersion != NOTIFYICON_VERSION &&
++        iconData->uVersion != NOTIFYICON_VERSION_4)
+     {
+         WARN("Tried to set the version of icon %d from hWnd %08x, to an unknown value %d. Vista+ program?\n", iconData->uID, iconData->hWnd, iconData->uVersion);
+         return FALSE;
+     }
+ 
++    // Version 4 encodes the identifier in one WORD.
++    if (iconData->uVersion == NOTIFYICON_VERSION_4 && notifyItem->uID > MAXWORD)
++        return FALSE;
++    if (m_HoverItem == notifyItem)
++        SetHoverItem(NULL);
++
+     // We can not store the version in the uVersion field, because it's union'd with uTimeout,
+     // which we also need to keep track of.
+     notifyItem->uVersionCopy = iconData->uVersion;
+@@ -841,7 +865,7 @@
+     return TRUE;
+ }
+ 
+-BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData)
++BOOL CNotifyToolbar::UpdateButton(_In_ CONST NOTIFYICONDATA *iconData, BOOL ownIcon)
+ {
+     InternalIconData * notifyItem;
+     TBBUTTONINFO tbbi = { 0 };
+@@ -857,7 +881,7 @@
+     if (index < 0)
+     {
+         WARN("Icon %d from hWnd %08x DOES NOT EXIST!\n", iconData->uID, iconData->hWnd);
+-        return AddButton(iconData);
++        return FALSE;
+     }
+ 
+     TBBUTTON btn;
+@@ -867,6 +891,16 @@
+     tbbi.cbSize = sizeof(tbbi);
+     tbbi.dwMask = TBIF_BYINDEX | TBIF_COMMAND;
+     tbbi.idCommand = index;
++    // Toggling NIS_HIDDEN must preserve TBSTATE_ENABLED and other state bits.
++    tbbi.fsState = btn.fsState;
++
++    if (m_HoverItem == notifyItem &&
++        ((iconData->uFlags & (NIF_TIP | NIF_SHOWTIP)) ||
++         ((iconData->uFlags & NIF_STATE) && (iconData->dwStateMask & NIS_HIDDEN) &&
++          (iconData->dwState & NIS_HIDDEN))))
++        SetHoverItem(NULL);
++    if (iconData->uFlags & (NIF_TIP | NIF_SHOWTIP))
++        notifyItem->uFlags = (notifyItem->uFlags & ~NIF_SHOWTIP) | (iconData->uFlags & NIF_SHOWTIP);
+ 
+     if (iconData->uFlags & NIF_STATE)
+     {
+@@ -897,15 +931,19 @@
+ 
+     if (iconData->uFlags & NIF_ICON)
+     {
+-        BOOL hasSharedIcon = notifyItem->dwState & NIS_SHAREDICON;
++        BOOL hasSharedIcon = !ownIcon && (notifyItem->dwState & NIS_SHAREDICON);
+         if (hasSharedIcon)
+         {
+             INT iIcon = FindExistingSharedIcon(iconData->hIcon);
+             if (iIcon >= 0)
+             {
++                HICON oldIcon = notifyItem->OwnIcon ? notifyItem->hIcon : NULL;
+                 notifyItem->hIcon = iconData->hIcon;
++                notifyItem->OwnIcon = FALSE;
+                 tbbi.dwMask |= TBIF_IMAGE;
+                 tbbi.iImage = iIcon;
++                if (oldIcon && oldIcon != iconData->hIcon)
++                    DestroyIcon(oldIcon);
+             }
+             else
+             {
+@@ -914,9 +952,17 @@
+         }
+         else
+         {
++            INT newIconIndex = ImageList_ReplaceIcon(m_ImageList, oldIconIndex, iconData->hIcon);
++            if (newIconIndex < 0)
++                return FALSE;
++
++            HICON oldIcon = notifyItem->OwnIcon ? notifyItem->hIcon : NULL;
+             notifyItem->hIcon = iconData->hIcon;
++            notifyItem->OwnIcon = ownIcon;
+             tbbi.dwMask |= TBIF_IMAGE;
+-            tbbi.iImage = ImageList_ReplaceIcon(m_ImageList, oldIconIndex, notifyItem->hIcon);
++            tbbi.iImage = newIconIndex;
++            if (oldIcon && oldIcon != iconData->hIcon)
++                DestroyIcon(oldIcon);
+         }
+     }
+ 
+@@ -934,7 +980,7 @@
+         notifyItem->uTimeout = iconData->uTimeout;
+     }
+ 
+-    /* TODO: support VERSION_4 (NIF_GUID, NIF_REALTIME, NIF_SHOWTIP) */
++    /* TODO: NIF_GUID identification and NIF_REALTIME balloon scheduling. */
+ 
+     SetButtonInfo(index, &tbbi);
+ 
+@@ -990,8 +1036,12 @@
+         }
+     }
+ 
++    if (m_HoverItem == notifyItem)
++        SetHoverItem(NULL);
+     m_BalloonQueue->RemoveInfo(notifyItem);
+ 
++    if (notifyItem->OwnIcon && notifyItem->hIcon)
++        DestroyIcon(notifyItem->hIcon);
+     DeleteButton(index);
+ 
+     delete notifyItem;
+@@ -1035,6 +1085,18 @@
+ 
+ LRESULT CNotifyToolbar::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+ {
++    SetHoverItem(NULL);
++    int count = GetButtonCount();
++    for (int i = 0; i < count; i++)
++    {
++        InternalIconData *data = GetItemData(i);
++        if (data->OwnIcon && data->hIcon)
++        {
++            DestroyIcon(data->hIcon);
++            data->OwnIcon = FALSE;
++        }
++    }
++
+     if (m_ImageList)
+     {
+         ImageList_Destroy(m_ImageList);
+@@ -1066,10 +1128,10 @@
+     if (notifyItem->uVersionCopy >= NOTIFYICON_VERSION)
+     {
+         /* Transmit the WM_CONTEXTMENU message if the notification icon supports it */
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            WM_CONTEXTMENU);
++        bHandled = TRUE;
++        POINT anchor = lParam == -1 ? GetIconPosition(iBtn) :
++                       POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
++        SendNotifyCallback(notifyItem, WM_CONTEXTMENU, &anchor);
+     }
+     else if (lParam == -1)
+     {
+@@ -1079,20 +1141,14 @@
+          * not needed if the message came from the mouse because in this
+          * case the right-click mouse messages were already sent together.
+          */
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            WM_RBUTTONDOWN);
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            WM_RBUTTONUP);
++        if (!SendNotifyCallback(notifyItem, WM_RBUTTONDOWN))
++            SendNotifyCallback(notifyItem, WM_RBUTTONUP);
+     }
+ 
+     return 0;
+ }
+ 
+-bool CNotifyToolbar::SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg)
++bool CNotifyToolbar::SendNotifyCallback(InternalIconData* notifyItem, UINT uMsg, const POINT *anchor)
+ {
+     if (!::IsWindow(notifyItem->hWnd))
+     {
+@@ -1109,25 +1165,84 @@
+         return true;
+     }
+ 
+-    DWORD pid;
+-    GetWindowThreadProcessId(notifyItem->hWnd, &pid);
++    WPARAM callbackWParam = notifyItem->uID;
++    LPARAM callbackLParam = uMsg;
++    if (notifyItem->uVersionCopy == NOTIFYICON_VERSION_4)
++    {
++        POINT point = {0};
++        if (anchor)
++            point = *anchor;
++        else
++            ::GetCursorPos(&point);
++        callbackWParam = MAKELPARAM(point.x, point.y);
++        callbackLParam = MAKELPARAM(uMsg, notifyItem->uID);
++    }
++    // Clients may enter a menu loop while processing this notification.
++    ::PostMessage(notifyItem->hWnd, notifyItem->uCallbackMessage, callbackWParam, callbackLParam);
++    return false;
++}
++
++POINT CNotifyToolbar::GetIconPosition(int index)
++{
++    RECT rect = {0};
++    GetItemRect(index, &rect);
++    POINT point = {rect.left, rect.top};
++    ClientToScreen(&point);
++    return point;
++}
+ 
+-    if (pid == GetCurrentProcessId() ||
+-        (uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST))
++void CNotifyToolbar::SendSelectEvent(int index, BOOL keyboard)
++{
++    if (index < 0 || index >= GetButtonCount())
++        return;
++    InternalIconData *item = GetItemData(index);
++    POINT anchor = {0};
++    if (keyboard)
++        anchor = GetIconPosition(index);
++    else
++        ::GetCursorPos(&anchor);
++    if (item->uVersionCopy >= NOTIFYICON_VERSION)
++        SendNotifyCallback(item, keyboard ? NIN_KEYSELECT : NIN_SELECT, &anchor);
++    else if (keyboard)
+     {
+-        ::PostMessage(notifyItem->hWnd,
+-                      notifyItem->uCallbackMessage,
+-                      notifyItem->uID,
+-                      uMsg);
++        if (!SendNotifyCallback(item, WM_LBUTTONDOWN, &anchor))
++            SendNotifyCallback(item, WM_LBUTTONUP, &anchor);
+     }
+-    else
++}
++
++LRESULT CNotifyToolbar::OnKeyEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
++{
++    if ((wParam != VK_RETURN && wParam != VK_SPACE) || GetHotItem() < 0)
+     {
+-        ::SendMessage(notifyItem->hWnd,
+-                      notifyItem->uCallbackMessage,
+-                      notifyItem->uID,
+-                      uMsg);
++        bHandled = FALSE;
++        return 0;
+     }
+-    return false;
++    bHandled = TRUE;
++    if (uMsg == WM_KEYUP)
++        SendSelectEvent(GetHotItem(), TRUE);
++    return 0;
++}
++
++void CNotifyToolbar::SetHoverItem(InternalIconData *item)
++{
++    if (m_HoverItem == item)
++        return;
++    InternalIconData *old = m_HoverItem;
++    m_HoverItem = NULL;
++    if (old && ::IsWindow(old->hWnd) && old->uVersionCopy == NOTIFYICON_VERSION_4 &&
++        !(old->uFlags & NIF_SHOWTIP))
++        SendNotifyCallback(old, NIN_POPUPCLOSE);
++    m_HoverItem = item;
++    if (item && ::IsWindow(item->hWnd) && item->uVersionCopy == NOTIFYICON_VERSION_4 &&
++        !(item->uFlags & NIF_SHOWTIP))
++        SendNotifyCallback(item, NIN_POPUPOPEN);
++}
++
++LRESULT CNotifyToolbar::OnMouseLeave(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
++{
++    SetHoverItem(NULL);
++    bHandled = FALSE;
++    return 0;
+ }
+ 
+ VOID CNotifyToolbar::SendMouseEvent(IN WORD wIndex, IN UINT uMsg, IN WPARAM wParam)
+@@ -1166,6 +1281,13 @@
+     POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+     INT iBtn = HitTest(&pt);
+ 
++    if (uMsg == WM_MOUSEMOVE)
++    {
++        SetHoverItem(iBtn >= 0 ? GetItemData(iBtn) : NULL);
++        TRACKMOUSEEVENT tracking = {sizeof(tracking), TME_LEAVE, m_hWnd, 0};
++        ::TrackMouseEvent(&tracking);
++    }
++
+     if (iBtn >= 0)
+     {
+         SendMouseEvent(iBtn, uMsg, wParam);
+@@ -1178,7 +1300,8 @@
+ static VOID GetTooltipText(LPARAM data, LPTSTR szTip, DWORD cchTip)
+ {
+     InternalIconData * notifyItem = reinterpret_cast<InternalIconData *>(data);
+-    if (notifyItem)
++    if (notifyItem && (notifyItem->uVersionCopy != NOTIFYICON_VERSION_4 ||
++                       (notifyItem->uFlags & NIF_SHOWTIP)))
+     {
+         StringCchCopy(szTip, cchTip, notifyItem->szTip);
+     }
+@@ -1360,7 +1483,7 @@
+     return TRUE;
+ }
+ 
+-BOOL CSysPagerWnd::NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconData)
++BOOL CSysPagerWnd::NotifyIcon(DWORD dwMessage, _In_ CONST NOTIFYICONDATA *iconData, BOOL ownIcon)
+ {
+     BOOL ret = FALSE;
+ 
+@@ -1370,7 +1493,7 @@
+     switch (dwMessage)
+     {
+     case NIM_ADD:
+-        ret = Toolbar.AddButton(iconData);
++        ret = Toolbar.AddButton(iconData, ownIcon);
+         if (ret == TRUE)
+         {
+             (void)AddIconToWatcher(iconData);
+@@ -1378,7 +1501,7 @@
+         break;
+ 
+     case NIM_MODIFY:
+-        ret = Toolbar.UpdateButton(iconData);
++        ret = Toolbar.UpdateButton(iconData, ownIcon);
+         break;
+ 
+     case NIM_DELETE:
+@@ -1429,18 +1552,26 @@
+ #else
+     INT rows = 0;
+     INT columns = 0;
+-    INT cyButton = GetSystemMetrics(SM_CYSMICON) + 2;
+-    INT cxButton = GetSystemMetrics(SM_CXSMICON) + 2;
+-    if (!g_TaskbarSettings.UseCompactTrayIcons())
++    DWORD buttonSize = Toolbar.GetButtonSize();
++    INT cxButton = LOWORD(buttonSize);
++    INT cyButton = HIWORD(buttonSize);
++    BOOL hasButtonSize = (cxButton > 0 && cyButton > 0);
++
++    if (!hasButtonSize)
+     {
+-        cyButton = MulDiv(GetSystemMetrics(SM_CYSMICON), 3, 2);
+-        cxButton = MulDiv(GetSystemMetrics(SM_CXSMICON), 3, 2);
++        cyButton = GetSystemMetrics(SM_CYSMICON) + 2;
++        cxButton = GetSystemMetrics(SM_CXSMICON) + 2;
++        if (!g_TaskbarSettings.UseCompactTrayIcons())
++        {
++            cyButton = MulDiv(GetSystemMetrics(SM_CYSMICON), 3, 2);
++            cxButton = MulDiv(GetSystemMetrics(SM_CXSMICON), 3, 2);
++        }
+     }
+     int VisibleButtonCount = Toolbar.GetVisibleButtonCount();
+ 
+     if (IsHorizontal)
+     {
+-        if (!g_TaskbarSettings.UseCompactTrayIcons())
++        if (!hasButtonSize && !g_TaskbarSettings.UseCompactTrayIcons())
+             rows = max(size->cy / MulDiv(cyButton, 3, 2), 1);
+         else
+             rows = max(size->cy / cyButton, 1);
+@@ -1489,39 +1620,7 @@
+     if (iBtn < 0)
+         return 0;
+ 
+-    InternalIconData* notifyItem = Toolbar.GetItemData(iBtn);
+-
+-    if (!::IsWindow(notifyItem->hWnd))
+-        return 0;
+-
+-    // TODO: Improve keyboard handling by looking whether one presses
+-    // on ENTER, etc..., which roughly translates into "double-clicking".
+-
+-    if (notifyItem->uVersionCopy >= NOTIFYICON_VERSION)
+-    {
+-        /* Use new-style notifications if the notification icon supports them */
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            NIN_SELECT); // TODO: Distinguish with NIN_KEYSELECT
+-    }
+-    else if (lParam == -1)
+-    {
+-        /*
+-         * Otherwise, and only if the icon was selected via the keyboard,
+-         * simulate right-click mouse messages. This is not needed if the
+-         * selection was done by mouse because in this case the mouse
+-         * messages were already sent.
+-         */
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            WM_LBUTTONDOWN); // TODO: Distinguish with double-click WM_LBUTTONDBLCLK
+-        ::SendNotifyMessage(notifyItem->hWnd,
+-                            notifyItem->uCallbackMessage,
+-                            notifyItem->uID,
+-                            WM_LBUTTONUP);
+-    }
++    Toolbar.SendSelectEvent(iBtn, lParam == -1);
+ 
+     return 0;
+ }
+@@ -1577,15 +1676,184 @@
+     return 0;
+ }
+ 
++static BOOL GetSerializedTrayIconSize(_In_ CONST TRAYNOTIFYICONINFO *iconInfo, _Out_ SIZE_T *size)
++{
++    ULONGLONG total;
++
++    if (!iconInfo->width || !iconInfo->height || iconInfo->width > 512 || iconInfo->height > 512 ||
++        !iconInfo->planes || !iconInfo->bpp || iconInfo->planes > 255 || iconInfo->bpp > 255 ||
++        !iconInfo->maskSize || !iconInfo->colorSize)
++        return FALSE;
++
++    total = (ULONGLONG)iconInfo->maskSize + iconInfo->colorSize;
++    if (total > 32 * 1024 * 1024)
++        return FALSE;
++
++    ULONGLONG maskMinimum = ((ULONGLONG)iconInfo->width + 15) / 16 * 2 * iconInfo->height;
++    ULONGLONG colorMinimum = ((ULONGLONG)iconInfo->width * iconInfo->planes * iconInfo->bpp + 15) /
++                            16 * 2 * iconInfo->height;
++    if (iconInfo->maskSize < maskMinimum || iconInfo->colorSize < colorMinimum)
++        return FALSE;
++
++    *size = (SIZE_T)total;
++    return TRUE;
++}
++
++static BOOL CreateTrayIconFromPayload(_In_ CONST TRAYNOTIFYICONINFO *iconInfo,
++                                      _Inout_ CONST BYTE **data,
++                                      _Inout_ SIZE_T *available,
++                                      _Out_ HICON *icon)
++{
++    SIZE_T size;
++
++    *icon = NULL;
++    if (!GetSerializedTrayIconSize(iconInfo, &size) || size > *available)
++        return FALSE;
++
++    *icon = CreateIcon(NULL, iconInfo->width, iconInfo->height,
++                       (BYTE)iconInfo->planes, (BYTE)iconInfo->bpp,
++                       *data, *data + iconInfo->maskSize);
++    if (!*icon)
++        return FALSE;
++
++    *data += size;
++    *available -= size;
++    return TRUE;
++}
++
++static BOOL DeserializeTrayNotification(_In_ CONST COPYDATASTRUCT *copyData,
++                                        _In_ CONST TRAYNOTIFYDATAW_V2 *wireData,
++                                        _Out_ NOTIFYICONDATAW *iconData,
++                                        _Out_ BOOL *ownIcon)
++{
++    SIZE_T available;
++    const BYTE *data;
++
++    if (copyData->cbData < FIELD_OFFSET(TRAYNOTIFYDATAW_V2, icon_data))
++        return FALSE;
++
++    available = copyData->cbData - FIELD_OFFSET(TRAYNOTIFYDATAW_V2, icon_data);
++    data = wireData->icon_data;
++    *ownIcon = FALSE;
++    ZeroMemory(iconData, sizeof(*iconData));
++
++    iconData->cbSize = sizeof(*iconData);
++    iconData->hWnd = (HWND)(ULONG_PTR)(ULONG)wireData->hWnd;
++    iconData->uID = wireData->uID;
++    iconData->uFlags = wireData->uFlags;
++    iconData->uCallbackMessage = wireData->uCallbackMessage;
++    iconData->dwState = wireData->dwState & ~NIS_SHAREDICON;
++    iconData->dwStateMask = wireData->dwStateMask & ~NIS_SHAREDICON;
++    iconData->uTimeout = wireData->u.uTimeout;
++    iconData->dwInfoFlags = wireData->dwInfoFlags;
++    iconData->guidItem = wireData->guidItem;
++    lstrcpynW(iconData->szTip, wireData->szTip, _countof(iconData->szTip));
++    lstrcpynW(iconData->szInfo, wireData->szInfo, _countof(iconData->szInfo));
++    lstrcpynW(iconData->szInfoTitle, wireData->szInfoTitle, _countof(iconData->szInfoTitle));
++
++    if (iconData->uFlags & NIF_ICON)
++    {
++        if (!CreateTrayIconFromPayload(&wireData->icon_info, &data, &available, &iconData->hIcon))
++            goto failed;
++        *ownIcon = TRUE;
++    }
++
++    return TRUE;
++
++failed:
++    if (*ownIcon)
++    {
++        DestroyIcon(iconData->hIcon);
++        iconData->hIcon = NULL;
++        *ownIcon = FALSE;
++    }
++    return FALSE;
++}
++
++static BOOL CreateWineTrayIcon(const WineTrayIconInfo& info, const BYTE **data,
++                               SIZE_T *available, HICON *icon)
++{
++    if (!info.width || !info.height || info.width > 512 || info.height > 512 ||
++        !info.planes || info.planes > 255 || !info.bpp || info.bpp > 255)
++        return FALSE;
++    TRAYNOTIFYICONINFO converted = {0};
++    converted.width = info.width;
++    converted.height = info.height;
++    converted.planes = info.planes;
++    converted.bpp = info.bpp;
++    ULONGLONG mask = ((ULONGLONG)info.width * info.height + 15) / 16 * 2;
++    ULONGLONG color = ((ULONGLONG)info.planes * info.width * info.height * info.bpp + 15) / 16 * 2;
++    if (mask + color > 32 * 1024 * 1024)
++        return FALSE;
++    converted.maskSize = (DWORD)mask;
++    converted.colorSize = (DWORD)color;
++    return CreateTrayIconFromPayload(&converted, data, available, icon);
++}
++
+ LRESULT CSysPagerWnd::OnCopyData(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+ {
+     PCOPYDATASTRUCT cpData = (PCOPYDATASTRUCT)lParam;
++    if (!cpData || !cpData->lpData)
++        return FALSE;
++
++    if (IsWineTrayNotification(cpData, wParam))
++    {
++        const WineTrayNotification *wire = (const WineTrayNotification *)cpData->lpData;
++        NOTIFYICONDATAW iconData = {0};
++        iconData.cbSize = sizeof(iconData);
++        iconData.hWnd = (HWND)(LONG_PTR)wire->hWnd;
++        iconData.uID = wire->uID;
++        iconData.uFlags = wire->uFlags;
++        iconData.uCallbackMessage = wire->uCallbackMessage;
++        iconData.dwState = wire->dwState & ~NIS_SHAREDICON;
++        iconData.dwStateMask = wire->dwStateMask & ~NIS_SHAREDICON;
++        iconData.uVersion = wire->u.uVersion;
++        iconData.dwInfoFlags = wire->dwInfoFlags;
++        iconData.guidItem = wire->guidItem;
++        // Copy fixed arrays before terminating them; malformed messages must
++        // never make a string read extend into the bitmap payload.
++        CopyMemory(iconData.szTip, wire->szTip, sizeof(iconData.szTip));
++        CopyMemory(iconData.szInfo, wire->szInfo, sizeof(iconData.szInfo));
++        CopyMemory(iconData.szInfoTitle, wire->szInfoTitle, sizeof(iconData.szInfoTitle));
++        iconData.szTip[_countof(iconData.szTip) - 1] = 0;
++        iconData.szInfo[_countof(iconData.szInfo) - 1] = 0;
++        iconData.szInfoTitle[_countof(iconData.szInfoTitle) - 1] = 0;
++        const BYTE *pixels = wire->icon_data;
++        SIZE_T available = cpData->cbData - FIELD_OFFSET(WineTrayNotification, icon_data);
++        BOOL ownIcon = (iconData.uFlags & NIF_ICON) != 0;
++        if (ownIcon && !CreateWineTrayIcon(wire->icon_info, &pixels, &available, &iconData.hIcon))
++            return FALSE;
++        BOOL ret = NotifyIcon((DWORD)cpData->dwData, &iconData, ownIcon);
++        if (ownIcon && (!ret || (cpData->dwData != NIM_ADD && cpData->dwData != NIM_MODIFY)))
++            DestroyIcon(iconData.hIcon);
++        return ret;
++    }
++
+     if (cpData->dwData == TABDMC_NOTIFY)
+     {
++        if (cpData->cbData >= FIELD_OFFSET(TRAYNOTIFYDATAW_V2, icon_data))
++        {
++            PTRAYNOTIFYDATAW_V2 wireData = (PTRAYNOTIFYDATAW_V2)cpData->lpData;
++            if (wireData->dwSignature == NI_NOTIFY_SIG_SERIALIZED)
++            {
++                NOTIFYICONDATAW iconData;
++                BOOL ownIcon;
++                BOOL ret;
++
++                if (!DeserializeTrayNotification(cpData, wireData, &iconData, &ownIcon))
++                    return FALSE;
++
++                ret = NotifyIcon(wireData->dwMessage, &iconData, ownIcon);
++                if (ownIcon && (!ret || (wireData->dwMessage != NIM_ADD && wireData->dwMessage != NIM_MODIFY)))
++                    DestroyIcon(iconData.hIcon);
++                return ret;
++            }
++        }
++
+         /* A taskbar NotifyIcon notification */
+         PTRAYNOTIFYDATAW pData = (PTRAYNOTIFYDATAW)cpData->lpData;
+-        if (pData->dwSignature == NI_NOTIFY_SIG)
+-            return NotifyIcon(pData->dwMessage, &pData->nid);
++        if (cpData->cbData >= sizeof(*pData) && pData->dwSignature == NI_NOTIFY_SIG)
++            return NotifyIcon(pData->dwMessage, &pData->nid, FALSE);
+     }
+     else if (cpData->dwData == TABDMC_LOADINPROC)
+     {
+--- a/src/dll/win32/shell32/systray.cpp
++++ b/src/dll/win32/shell32/systray.cpp
+@@ -24,6 +24,111 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(shell_notify);
+ 
++#define MAX_TRAY_ICON_BITMAP_SIZE (16 * 1024 * 1024)
++
++typedef struct _TRAYICONPAYLOAD
++{
++    ICONINFO IconInfo;
++    BITMAP Mask;
++    BITMAP Color;
++    TRAYNOTIFYICONINFO Data;
++} TRAYICONPAYLOAD;
++
++static VOID ReleaseTrayIconPayload(_Inout_ TRAYICONPAYLOAD *payload)
++{
++    if (payload->IconInfo.hbmMask)
++        DeleteObject(payload->IconInfo.hbmMask);
++    if (payload->IconInfo.hbmColor)
++        DeleteObject(payload->IconInfo.hbmColor);
++    ZeroMemory(payload, sizeof(*payload));
++}
++
++static BOOL GetTrayBitmapSize(_In_ CONST BITMAP *bitmap, _Out_ DWORD *size)
++{
++    ULONGLONG bytes;
++
++    if (bitmap->bmWidth <= 0 || bitmap->bmHeight <= 0 || bitmap->bmWidthBytes <= 0)
++        return FALSE;
++
++    bytes = (ULONGLONG)bitmap->bmWidthBytes * (ULONGLONG)bitmap->bmHeight;
++    if (bytes == 0 || bytes > MAX_TRAY_ICON_BITMAP_SIZE)
++        return FALSE;
++
++    *size = (DWORD)bytes;
++    return TRUE;
++}
++
++static BOOL GetTrayIconPayload(_In_ HICON icon, _Out_ TRAYICONPAYLOAD *payload)
++{
++    DWORD maskBitmapSize;
++
++    ZeroMemory(payload, sizeof(*payload));
++
++    if (!icon || !GetIconInfo(icon, &payload->IconInfo) || !payload->IconInfo.hbmMask)
++        goto failed;
++
++    if (GetObjectW(payload->IconInfo.hbmMask, sizeof(payload->Mask), &payload->Mask) != sizeof(payload->Mask) ||
++        !GetTrayBitmapSize(&payload->Mask, &maskBitmapSize))
++        goto failed;
++
++    if (payload->IconInfo.hbmColor)
++    {
++        if (GetObjectW(payload->IconInfo.hbmColor, sizeof(payload->Color), &payload->Color) != sizeof(payload->Color) ||
++            !GetTrayBitmapSize(&payload->Color, &payload->Data.colorSize))
++            goto failed;
++
++        payload->Data.width = payload->Color.bmWidth;
++        payload->Data.height = payload->Color.bmHeight;
++        payload->Data.planes = payload->Color.bmPlanes;
++        payload->Data.bpp = payload->Color.bmBitsPixel;
++    }
++    else
++    {
++        if ((payload->Mask.bmHeight & 1) != 0 || (maskBitmapSize & 1) != 0)
++            goto failed;
++
++        payload->Data.width = payload->Mask.bmWidth;
++        payload->Data.height = payload->Mask.bmHeight / 2;
++        payload->Data.planes = payload->Mask.bmPlanes;
++        payload->Data.bpp = payload->Mask.bmBitsPixel;
++        payload->Data.maskSize = maskBitmapSize / 2;
++        payload->Data.colorSize = maskBitmapSize / 2;
++    }
++
++    if (payload->IconInfo.hbmColor)
++        payload->Data.maskSize = maskBitmapSize;
++
++    if (!payload->Data.width || !payload->Data.height || payload->Data.width > 512 ||
++        payload->Data.height > 512 || !payload->Data.planes || !payload->Data.bpp ||
++        payload->Data.planes > 255 || payload->Data.bpp > 255 ||
++        (ULONGLONG)payload->Data.maskSize + payload->Data.colorSize > 32 * 1024 * 1024)
++        goto failed;
++
++    return TRUE;
++
++failed:
++    ReleaseTrayIconPayload(payload);
++    return FALSE;
++}
++
++static BOOL CopyTrayIconPayload(_In_ CONST TRAYICONPAYLOAD *payload, _Out_writes_bytes_(payload->Data.maskSize + payload->Data.colorSize) BYTE *buffer)
++{
++    if (!payload->IconInfo.hbmColor)
++    {
++        DWORD maskAndXorSize = payload->Data.maskSize + payload->Data.colorSize;
++        return GetBitmapBits(payload->IconInfo.hbmMask, maskAndXorSize, buffer) == (LONG)maskAndXorSize;
++    }
++
++    if (GetBitmapBits(payload->IconInfo.hbmMask, payload->Data.maskSize, buffer) != (LONG)payload->Data.maskSize)
++        return FALSE;
++
++    if (payload->Data.colorSize &&
++        GetBitmapBits(payload->IconInfo.hbmColor, payload->Data.colorSize, buffer + payload->Data.maskSize) != (LONG)payload->Data.colorSize)
++        return FALSE;
++
++    return TRUE;
++}
++
+ /*************************************************************************
+  * Shell_NotifyIcon             [SHELL32.296]
+  * Shell_NotifyIconA            [SHELL32.297]
+@@ -48,12 +153,12 @@
+     if (cbSize == sizeof(NOTIFYICONDATAA))
+     {
+         nidW.cbSize = sizeof(nidW);
+-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID /* | NIF_REALTIME | NIF_SHOWTIP */;
++        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_SHOWTIP;
+     }
+     else if (cbSize == NOTIFYICONDATAA_V3_SIZE)
+     {
+         nidW.cbSize = NOTIFYICONDATAW_V3_SIZE;
+-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID;
++        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_SHOWTIP;
+     }
+     else if (cbSize == NOTIFYICONDATAA_V2_SIZE)
+     {
+@@ -130,24 +235,32 @@
+     BOOL ret = FALSE;
+     HWND hShellTrayWnd;
+     DWORD cbSize, dwValidFlags;
+-    TRAYNOTIFYDATAW tnid;
++    NOTIFYICONDATAW nid;
++    TRAYICONPAYLOAD iconPayload;
++    PTRAYNOTIFYDATAW_V2 tnid = NULL;
+     COPYDATASTRUCT data;
++    SIZE_T cbData;
++    SIZE_T cbIconData;
++    BYTE *iconBits;
+ 
+     /* Find a handle to the shell tray window */
+     hShellTrayWnd = FindWindowW(L"Shell_TrayWnd", NULL);
+     if (!hShellTrayWnd)
+         return FALSE; // None found, bail out
+ 
++    ZeroMemory(&nid, sizeof(nid));
++    ZeroMemory(&iconPayload, sizeof(iconPayload));
++
+     /* Validate the structure size and the flags */
+     cbSize = pnid->cbSize;
+     dwValidFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+     if (cbSize == sizeof(NOTIFYICONDATAW))
+     {
+-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID /* | NIF_REALTIME | NIF_SHOWTIP */;
++        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_SHOWTIP;
+     }
+     else if (cbSize == NOTIFYICONDATAW_V3_SIZE)
+     {
+-        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID;
++        dwValidFlags |= NIF_STATE | NIF_INFO | NIF_GUID | NIF_SHOWTIP;
+     }
+     else if (cbSize == NOTIFYICONDATAW_V2_SIZE)
+     {
+@@ -163,45 +276,70 @@
+         }
+     }
+ 
+-    /* Build the data structure */
+-    ZeroMemory(&tnid, sizeof(tnid));
+-    tnid.dwSignature = NI_NOTIFY_SIG;
+-    tnid.dwMessage   = dwMessage;
+-
+-    /* Copy only the needed data, everything else is zeroed out */
+-    CopyMemory(&tnid.nid, pnid, cbSize);
+-    /* Adjust the size (the NOTIFYICONDATA structure is the full-fledged one) and the flags */
+-    tnid.nid.cbSize = sizeof(tnid.nid);
+-    tnid.nid.uFlags &= dwValidFlags;
+-
+-    /* Be sure the szTip member (that could be cut-off) is correctly NULL-terminated */
+-    if (tnid.nid.uFlags & NIF_TIP)
+-    {
+-        if (cbSize <= NOTIFYICONDATAW_V1_SIZE)
+-        {
+-#define NIDV1_TIP_SIZE_W  (NOTIFYICONDATAW_V1_SIZE - FIELD_OFFSET(NOTIFYICONDATAW, szTip))/sizeof(WCHAR)
+-            tnid.nid.szTip[NIDV1_TIP_SIZE_W - 1] = 0;
+-#undef NIDV1_TIP_SIZE_W
+-        }
+-        else
+-        {
+-            tnid.nid.szTip[_countof(tnid.nid.szTip) - 1] = 0;
+-        }
+-    }
+-
+-    /* Be sure the info strings are correctly NULL-terminated */
+-    if (tnid.nid.uFlags & NIF_INFO)
+-    {
+-        tnid.nid.szInfo[_countof(tnid.nid.szInfo) - 1] = 0;
+-        tnid.nid.szInfoTitle[_countof(tnid.nid.szInfoTitle) - 1] = 0;
++    CopyMemory(&nid, pnid, cbSize);
++    nid.cbSize = sizeof(nid);
++    nid.uFlags &= dwValidFlags;
++
++    if (dwMessage != NIM_ADD && dwMessage != NIM_MODIFY)
++        nid.uFlags &= ~NIF_ICON;
++
++    if (nid.uFlags & NIF_TIP)
++        nid.szTip[_countof(nid.szTip) - 1] = UNICODE_NULL;
++    if (nid.uFlags & NIF_INFO)
++    {
++        nid.szInfo[_countof(nid.szInfo) - 1] = UNICODE_NULL;
++        nid.szInfoTitle[_countof(nid.szInfoTitle) - 1] = UNICODE_NULL;
++    }
++
++    if ((nid.uFlags & NIF_ICON) && !GetTrayIconPayload(nid.hIcon, &iconPayload))
++        goto cleanup;
++
++    cbIconData = (SIZE_T)iconPayload.Data.maskSize + iconPayload.Data.colorSize;
++    cbData = FIELD_OFFSET(TRAYNOTIFYDATAW_V2, icon_data) + cbIconData;
++    if (cbData > MAXDWORD)
++        goto cleanup;
++
++    tnid = (PTRAYNOTIFYDATAW_V2)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cbData);
++    if (!tnid)
++        goto cleanup;
++
++    tnid->dwSignature = NI_NOTIFY_SIG_SERIALIZED;
++    tnid->dwMessage = dwMessage;
++    tnid->hWnd = (LONG)(ULONG_PTR)nid.hWnd;
++    tnid->uID = nid.uID;
++    tnid->uFlags = nid.uFlags;
++    tnid->uCallbackMessage = nid.uCallbackMessage;
++    tnid->icon_info = iconPayload.Data;
++    tnid->dwState = nid.dwState;
++    tnid->dwStateMask = nid.dwStateMask;
++    tnid->u.uTimeout = nid.uTimeout;
++    tnid->dwInfoFlags = nid.dwInfoFlags;
++    tnid->guidItem = nid.guidItem;
++    if (nid.uFlags & NIF_TIP)
++        lstrcpynW(tnid->szTip, nid.szTip, _countof(tnid->szTip));
++    if (nid.uFlags & NIF_INFO)
++    {
++        lstrcpynW(tnid->szInfo, nid.szInfo, _countof(tnid->szInfo));
++        lstrcpynW(tnid->szInfoTitle, nid.szInfoTitle, _countof(tnid->szInfoTitle));
++    }
++    if (nid.uFlags & NIF_GUID)
++        tnid->guidItem = nid.guidItem;
++
++    iconBits = tnid->icon_data;
++    if (iconPayload.Data.maskSize)
++    {
++        if (!CopyTrayIconPayload(&iconPayload, iconBits))
++            goto cleanup;
++        iconBits += iconPayload.Data.maskSize + iconPayload.Data.colorSize;
+     }
+-
+-    /* Send the data */
+     data.dwData = TABDMC_NOTIFY;
+-    data.cbData = sizeof(tnid);
+-    data.lpData = &tnid;
+-    if (SendMessageW(hShellTrayWnd, WM_COPYDATA, (WPARAM)pnid->hWnd, (LPARAM)&data))
+-        ret = TRUE;
+-
++    data.cbData = (DWORD)cbData;
++    data.lpData = tnid;
++    ret = SendMessageW(hShellTrayWnd, WM_COPYDATA, (WPARAM)nid.hWnd, (LPARAM)&data);
++
++cleanup:
++    if (tnid)
++        HeapFree(GetProcessHeap(), 0, tnid);
++    ReleaseTrayIconPayload(&iconPayload);
+     return ret;
+ }
+--- a/src/sdk/include/reactos/undocshell.h
++++ b/src/sdk/include/reactos/undocshell.h
+@@ -44,6 +44,18 @@
+ 
+ #if defined (_SHELLAPI_H) || defined (_INC_SHELLAPI)
+ 
++/* Accept Vista tray clients while retaining the NT 5.2 structure ABI. */
++#ifndef NOTIFYICON_VERSION_4
++#define NOTIFYICON_VERSION_4 4
++#endif
++#ifndef NIF_SHOWTIP
++#define NIF_SHOWTIP 0x00000080
++#endif
++#ifndef NIN_POPUPOPEN
++#define NIN_POPUPOPEN (WM_USER + 6)
++#define NIN_POPUPCLOSE (WM_USER + 7)
++#endif
++
+ /****************************************************************************
+  * Taskbar interface WM_COPYDATA structures
+  * See http://www.geoffchappell.com/studies/windows/shell/shell32/api/shlnot/copydata.htm
+@@ -55,6 +67,44 @@
+     DWORD dwMessage;
+     NOTIFYICONDATAW nid; // Always use the latest NOTIFYICONDATAW structure version.
+ } TRAYNOTIFYDATAW, *PTRAYNOTIFYDATAW;
++
++/* Cross-process tray notifications cannot pass an HICON handle directly on
++ * Wine. This fixed-width payload carries the icon bitmap data instead. */
++typedef struct _TRAYNOTIFYICONINFO
++{
++    UINT width;
++    UINT height;
++    UINT planes;
++    UINT bpp;
++    DWORD maskSize;
++    DWORD colorSize;
++} TRAYNOTIFYICONINFO;
++
++typedef struct _TRAYNOTIFYDATAW_V2
++{
++    DWORD dwSignature;
++    DWORD dwMessage;
++    LONG hWnd;
++    UINT uID;
++    UINT uFlags;
++    UINT uCallbackMessage;
++    TRAYNOTIFYICONINFO icon_info;
++    WCHAR szTip[128];
++    DWORD dwState;
++    DWORD dwStateMask;
++    WCHAR szInfo[256];
++    union
++    {
++        UINT uTimeout;
++        UINT uVersion;
++    } u;
++    WCHAR szInfoTitle[64];
++    DWORD dwInfoFlags;
++    GUID guidItem;
++    BYTE icon_data[1];
++} TRAYNOTIFYDATAW_V2, *PTRAYNOTIFYDATAW_V2;
++
++#define NI_NOTIFY_SIG_SERIALIZED 0x3250494e /* "NIP2" */
+ // Note: One could also introduce TRAYNOTIFYDATAA
+ 
+ #define NI_NOTIFY_SIG 0x34753423 /* TRAYNOTIFYDATA */
+--- a/src/base/shell/explorer/precomp.h
++++ b/src/base/shell/explorer/precomp.h
+@@ -66,6 +66,41 @@
+ extern HKEY hkExplorer;
+ extern BOOL bExplorerIsShell;
+ 
++// Wine shell32 sends fixed-width data, with NIM_* in COPYDATASTRUCT::dwData.
++// Keep this layout compatible with Wine's dlls/shell32/systray.c.
++struct WineTrayIconInfo
++{
++    UINT width, height, planes, bpp;
++};
++
++struct WineTrayNotification
++{
++    LONG hWnd;
++    UINT uID, uFlags, uCallbackMessage;
++    WineTrayIconInfo icon_info;
++    WCHAR szTip[128];
++    DWORD dwState, dwStateMask;
++    WCHAR szInfo[256];
++    union { UINT uTimeout, uVersion; } u;
++    WCHAR szInfoTitle[64];
++    DWORD dwInfoFlags;
++    GUID guidItem;
++    WineTrayIconInfo balloon_icon_info;
++    BYTE icon_data[1];
++};
++C_ASSERT(FIELD_OFFSET(WineTrayNotification, icon_data) == 976);
++
++static inline BOOL IsWineTrayNotification(const COPYDATASTRUCT *data, WPARAM sender)
++{
++    if (!data || !data->lpData || data->dwData > NIM_SETVERSION ||
++        data->cbData < FIELD_OFFSET(WineTrayNotification, icon_data))
++        return FALSE;
++    const WineTrayNotification *wire = (const WineTrayNotification *)data->lpData;
++    // ROS appbar/notify messages use overlapping command numbers, but a
++    // different header. Wine's sender window must match its wire handle.
++    return wire->hWnd && (HWND)(LONG_PTR)wire->hWnd == (HWND)sender;
++}
++
+ /*
+  * explorer.c
+  */
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
+@@ -2534,6 +2534,9 @@
+         if (!pCopyData)
+             return FALSE;
+ 
++        if (IsWineTrayNotification(pCopyData, wParam))
++            return ::SendMessageW(m_TrayNotify, uMsg, wParam, lParam);
++
+         switch (pCopyData->dwData)
+         {
+             case TABDMC_APPBAR:
