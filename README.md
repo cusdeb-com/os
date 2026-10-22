@@ -20,6 +20,10 @@ CusDeb OS is a **Win32/Linux** operating system—or, in other words, a Windows-
 
 You can find the latest CusDeb OS live images [here](https://github.com/cusdeb-com/os/releases).
 
+## Authors
+
+See [AUTHORS](AUTHORS.md).
+
 ## Licensing
 
 CusDeb OS consists of components distributed under different licenses.
