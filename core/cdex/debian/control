@@ -5,7 +5,7 @@ Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
 Build-Depends: binutils-mingw-w64-i686,
                bison,
                build-essential,
-               cmake,
+               cmake (>= 3.19),
                debhelper-compat (= 13),
                dpkg-dev,
                fakeroot,
