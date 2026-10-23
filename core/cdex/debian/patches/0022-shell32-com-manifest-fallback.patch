@@ -1,0 +1,29 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Let private COM activation proceed without a registry key.
+ Fall back to CoCreateInstance when ReactOS shell32 cannot open InprocServer32.
+ Preserve the explicit LoadWithoutCOM path for registered shell extensions.
+Last-Modified: Thu, 22 Oct 2026 23:42:30 +0300
+
+--- a/src/dll/win32/shell32/wine/shellole.c
++++ b/src/dll/win32/shell32/wine/shellole.c
+@@ -130,7 +130,11 @@
+ 	swprintf(sKeyName, L"CLSID\\%s\\InprocServer32", sClassID);
+ 
+ 	if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sKeyName, 0, KEY_READ, &hKey))
+-            return E_ACCESSDENIED;
++	{
++	    /* Let COM resolve classes from the active activation context. */
++	    hres = CoCreateInstance(myclsid, pUnkOuter, dwClsCtx, refiid, ppv);
++	    goto end;
++	}
+ 
+         /* if a special registry key is set, we load a shell extension without help of OLE32 */
+         if ((dwClsCtx & CLSCTX_INPROC_SERVER) && !SHQueryValueExW(hKey, L"LoadWithoutCOM", 0, 0, 0, 0))
+@@ -171,7 +175,6 @@
+ 	{
+ 	  ERR("failed (0x%08x) to create CLSID:%s IID:%s\n",
+               hres, shdebugstr_guid(myclsid), shdebugstr_guid(refiid));
+-	  ERR("class not found in registry\n");
+ 	}
+ 
+ 	TRACE("-- instance: %p\n",*ppv);
