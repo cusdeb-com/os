@@ -1,0 +1,61 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Resolve private CDEX control panel applets beside shell32.
+ When SHRunControlPanel receives a bare CPL name, resolve it beside the
+ loaded ReactOS shell32 so desktop Properties and other CPL callers work
+ with the private payload directory.
+Last-Modified: Fri, 23 Oct 2026 16:03:17 +0300
+
+--- a/src/dll/win32/shell32/wine/shellord.c
++++ b/src/dll/win32/shell32/wine/shellord.c
+@@ -32,6 +32,7 @@
+ #include <shlobj.h>
+ #include <undocshell.h>
+ #include <shlwapi.h>
++#include <strsafe.h>
+ #include <commdlg.h>
+ #include <commoncontrols.h>
+ #include "../shellrecyclebin/recyclebin.h"
+@@ -1673,9 +1674,41 @@
+      * However we need to keep it "alive" even when ReactOS is compliled as NT6+
+      * in order to keep control panel elements launch commands.
+      */
+-    WCHAR parameters[MAX_PATH] = L"shell32.dll,Control_RunDLL ";
++    WCHAR parameters[MAX_PATH * 2];
++    WCHAR shellPath[MAX_PATH];
++    WCHAR cplPath[MAX_PATH];
++    WCHAR cplName[MAX_PATH];
++    const WCHAR *suffix = commandLine;
++    SIZE_T cplLength;
++    DWORD pathLength;
+     TRACE("(%s, %p)n", debugstr_w(commandLine), parent);
+-    wcscat(parameters, commandLine);
++
++    while (*suffix && *suffix != L',' && *suffix != L' ')
++        ++suffix;
++
++    cplLength = suffix - commandLine;
++    if (cplLength && cplLength < ARRAYSIZE(cplName))
++    {
++        CopyMemory(cplName, commandLine, cplLength * sizeof(WCHAR));
++        cplName[cplLength] = UNICODE_NULL;
++
++        pathLength = GetModuleFileNameW(shell32_hInstance, shellPath, ARRAYSIZE(shellPath));
++        if (PathIsFileSpecW(cplName) && !_wcsicmp(PathFindExtensionW(cplName), L".cpl") &&
++            pathLength && pathLength < ARRAYSIZE(shellPath) &&
++            PathRemoveFileSpecW(shellPath) &&
++            PathCombineW(cplPath, shellPath, cplName) && PathFileExistsW(cplPath))
++        {
++            if (FAILED(StringCchPrintfW(parameters, ARRAYSIZE(parameters),
++                                        L"shell32.dll,Control_RunDLL %s%s", cplPath, suffix)))
++                return FALSE;
++        }
++        else if (FAILED(StringCchPrintfW(parameters, ARRAYSIZE(parameters),
++                                         L"shell32.dll,Control_RunDLL %s", commandLine)))
++            return FALSE;
++    }
++    else if (FAILED(StringCchPrintfW(parameters, ARRAYSIZE(parameters),
++                                     L"shell32.dll,Control_RunDLL %s", commandLine)))
++        return FALSE;
+ 
+     return ((INT_PTR)ShellExecuteW(parent, L"open", L"rundll32.exe", parameters, NULL, SW_SHOWNORMAL) > 32);
+ #else
