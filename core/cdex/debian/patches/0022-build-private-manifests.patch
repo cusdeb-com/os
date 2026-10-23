@@ -1,0 +1,32 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Allow CDEX to prepare private manifests before linking resources.
+ Load an optional packaging-owned CMake extension and schedule its resource
+ preparation after each Win32 module directory has finished configuration.
+ Leave ordinary ReactOS builds unchanged when the extension is not supplied.
+Last-Modified: Tue, 20 Oct 2026 16:35:00 +0300
+
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -314,6 +314,10 @@
+     # Generic macros
+     include(sdk/cmake/CMakeMacros.cmake)
+ 
++    if(CDEX_SXS_CMAKE)
++        include("${CDEX_SXS_CMAKE}")
++    endif()
++
+     # IDL macros for widl/midl
+     # We're using widl now for both MSVC and GCC builds
+     include(sdk/cmake/widl-support.cmake)
+--- a/src/sdk/cmake/CMakeMacros.cmake
++++ b/src/sdk/cmake/CMakeMacros.cmake
+@@ -716,6 +716,9 @@
+ 
+     # Do compiler specific stuff
+     set_module_type_toolchain(${MODULE} ${TYPE})
++    if(COMMAND cdex_schedule_sxs_resources)
++        cdex_schedule_sxs_resources(${MODULE} ${TYPE})
++    endif()
+ endfunction()
+ 
+ function(start_module_group __name)
