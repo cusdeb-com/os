@@ -1,0 +1,27 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Match Shell32 TypeLib registration to its compiled resource.
+ The IDL and compiled TypeLib expose version 1.0, while the RGS
+ registration declared 1.1; align both RGS version entries with the
+ actual library so SxS and COM registration resolve the same identity.
+Last-Modified: Mon, 26 Oct 2026 12:00:00 +0300
+
+--- a/src/dll/win32/shell32/res/rgs/shell.rgs
++++ b/src/dll/win32/shell32/res/rgs/shell.rgs
+@@ -10,7 +10,7 @@
+ 			}
+ 			ProgID = s 'Shell.Application.1'
+ 			TypeLib = s '{50a7e9b0-70ef-11d1-b75a-00a0c90564fe}'
+-			Version = s '1.1'
++			Version = s '1.0'
+ 			VersionIndependentProgID = s 'Shell.Application'
+ 		}
+ 	}
+@@ -19,7 +19,7 @@
+ 	{
+ 		ForceRemove {50A7E9B0-70EF-11D1-B75A-00A0C90564FE}
+ 		{
+-			'1.1' = s 'Shell Controls And Automation'
++			'1.0' = s 'Shell Controls And Automation'
+ 			{
+ 				'0' { win32 = s '%MODULE%' }
+ 				FLAGS = s '0'

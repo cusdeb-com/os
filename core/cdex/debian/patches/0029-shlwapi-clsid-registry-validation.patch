@@ -1,0 +1,52 @@
+Author: CusDeb OS Team
+Description: Validate registry data when pinning COM server DLLs.
+ Check registry access and the server path before attempting to load the DLL.
+ Return the relevant error when lookup, validation, or loading fails.
+Last-Modified: Thu, 12 Nov 2026 12:00:00 +0300
+
+--- a/src/dll/win32/shlwapi/ordinal.c
++++ b/src/dll/win32/shlwapi/ordinal.c
+@@ -2655,19 +2655,36 @@
+  */
+ HMODULE WINAPI SHPinDllOfCLSID(REFIID refiid)
+ {
+-    HKEY newkey;
+-    DWORD type, count;
++    HKEY key;
++    DWORD type, count, error;
+     CHAR value[MAX_PATH], string[MAX_PATH];
++    HMODULE module;
+ 
+     strcpy(string, "CLSID\\");
+     SHStringFromGUIDA(refiid, string + 6, sizeof(string)/sizeof(char) - 6);
+     strcat(string, "\\InProcServer32");
+ 
+-    count = MAX_PATH;
+-    RegOpenKeyExA(HKEY_CLASSES_ROOT, string, 0, 1, &newkey);
+-    RegQueryValueExA(newkey, 0, 0, &type, (PBYTE)value, &count);
+-    RegCloseKey(newkey);
+-    return LoadLibraryExA(value, 0, 0);
++    error = RegOpenKeyExA(HKEY_CLASSES_ROOT, string, 0, KEY_QUERY_VALUE, &key);
++    if (error != ERROR_SUCCESS)
++    {
++        SetLastError(error);
++        return NULL;
++    }
++
++    count = sizeof(value);
++    error = RegQueryValueExA(key, NULL, NULL, &type, (BYTE *)value, &count);
++    RegCloseKey(key);
++    if (error != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) ||
++        !count || count > sizeof(value) || value[count - 1] || memchr(value, 0, count - 1))
++    {
++        SetLastError(error == ERROR_SUCCESS ? ERROR_INVALID_DATA : error);
++        return NULL;
++    }
++
++    module = LoadLibraryExA(value, NULL, 0);
++    error = module ? ERROR_SUCCESS : GetLastError();
++    SetLastError(error);
++    return module;
+ }
+ 
+ /*************************************************************************
