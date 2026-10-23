@@ -1,3 +1,5 @@
+# CusDeb OS
+
 CusDeb OS is a **Win32/Linux** operating system—or, in other words, a Windows-like operating system with a **Win32** userland built on the solid foundation of the **Linux** kernel. It offers a *classic desktop experience* with the *ability to run Windows applications*, making it feel familiar to users whose computing habits were shaped in the **pre-Windows 11** era. But there are things CusDeb OS deliberately refuses to imitate, remaining *predictable*, *stable*, and *ad-free*.
 
 <p align="center">
