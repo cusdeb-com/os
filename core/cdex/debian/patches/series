@@ -18,3 +18,7 @@
 0019-search-folder-contextmenu-pidl.patch
 0020-appwiz-cpl-split.patch
 0021-appwiz-uninstaller-64bit.patch
+0022-private-shell-runtime.patch
+0023-build-private-manifests.patch
+0024-shell32-com-manifest-fallback.patch
+0025-private-shell-cpl-path.patch

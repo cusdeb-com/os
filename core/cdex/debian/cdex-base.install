@@ -1,6 +1,7 @@
 usr/share/cusdeb/cdex/explorer.exe
 usr/share/cusdeb/cdex/filebrowser.exe
 usr/share/cusdeb/cdex/control.exe
+usr/share/cusdeb/cdex/rundll32.exe
 usr/share/cusdeb/cdex/clipbrd.exe
 usr/share/cusdeb/cdex/eventvwr.exe
 usr/share/cusdeb/cdex/mshta.exe
@@ -13,6 +14,7 @@ usr/share/cusdeb/cdex/cdex-shortcut-helper
 usr/share/cusdeb/cdex/reactos-classes.reg
 usr/share/cusdeb/cdex/*.dll
 usr/share/cusdeb/cdex/*.cpl
+usr/share/cusdeb/cdex/CusDeb.ReactOSShell.manifest
 usr/share/cusdeb/cdex/mizu.msstyles
 usr/share/cusdeb/cdex/Web/Wallpaper
 usr/share/cusdeb/cdex/fonts
