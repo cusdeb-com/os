@@ -32,6 +32,8 @@ Components originally developed for CusDeb OS are licensed under the [Apache Lic
 
 Third-party components are debianized, and their licenses are meticulously documented in the `debian/copyright` files accompanying each package, following Debian packaging conventions. For example, see the copyright files for [CDEX](https://github.com/cusdeb-com/os/blob/main/core/cdex/debian/copyright) and [Wine](https://github.com/cusdeb-com/os/blob/main/core/wine/debian/copyright).
 
+The default desktop wallpaper is licensed under [Creative Commons Attribution-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-sa/4.0/) (CC BY-SA 4.0) and created by [Natalia Endaltseva](https://instagram.com/artbooknat).
+
 ## Donate
 
 The best way to support the project is by subscribing to the technical magazine [CDMAG](https://cusdeb.com/cdmag).
