@@ -20,3 +20,5 @@
 0021-build-private-manifests.patch
 0022-shell32-com-manifest-fallback.patch
 0023-private-shell-cpl-path.patch
+0024-shell32-typelib-version.patch
+0025-shell32-cpl-search-buffer.patch

@@ -35,7 +35,7 @@ DOC_DIR := $(DESTDIR)/usr/share/doc/cdex-base/ubuntu-font
 
 # Container build settings
 DOCKER ?= docker
-BUILD_IMAGE ?= cdex-buildenv:bookworm
+BUILD_IMAGE ?= cdex-buildenv:bookworm-i386
 # Set REAPPLY_PATCHES=1 to reapply the complete Quilt series before building.
 REAPPLY_PATCHES ?= 0
 
@@ -75,6 +75,8 @@ CDEX_TARGETS := \
 	access \
 	appwiz \
 	desk \
+	devmgr \
+	newdev \
 	hdwwiz \
 	inetcpl \
 	intl \
@@ -85,6 +87,7 @@ CDEX_TARGETS := \
 	odbccp32i \
 	openglcfg \
 	powercfg \
+	powrprof \
 	sysdm \
 	telephon \
 	timedate \
@@ -93,6 +96,7 @@ CDEX_TARGETS := \
 	cryptext \
 	ieframe \
 	msxml3 \
+	libxslt \
 	shimgvw \
 	themeui \
 	url \
@@ -126,6 +130,8 @@ CDEX_ARTIFACTS := \
 	access.cpl \
 	appwiz.cpl \
 	desk.cpl \
+	devmgr.dll \
+	newdev.dll \
 	hdwwiz.cpl \
 	inetcpl.cpl \
 	intl.cpl \
@@ -136,6 +142,7 @@ CDEX_ARTIFACTS := \
 	odbccp32i.cpl \
 	openglcfg.cpl \
 	powercfg.cpl \
+	powrprof.dll \
 	sysdm.cpl \
 	telephon.cpl \
 	timedate.cpl \
@@ -144,6 +151,7 @@ CDEX_ARTIFACTS := \
 	cryptext.dll \
 	ieframe.dll \
 	msxml3.dll \
+	libxslt.dll \
 	shimgvw.dll \
 	themeui.dll \
 	url.dll \
@@ -155,7 +163,7 @@ CDEX_ARTIFACTS := \
 # Public developer interface
 all: build
 
-build: ensure-image
+build: image
 	mkdir -p "$(PACKAGE_HOST_DIR)"
 	$(DOCKER) run --rm \
 		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
@@ -267,6 +275,9 @@ install-in-container:
 			shlwapi.dll)   candidate="$(OUT_DIR)/dll/win32/shlwapi/shlwapi.dll" ;; \
 			rshell.dll)    candidate="$(OUT_DIR)/base/shell/rshell/rshell.dll" ;; \
 			shdocvw.dll)   candidate="$(OUT_DIR)/dll/win32/shdocvw/shdocvw.dll" ;; \
+			devmgr.dll)    candidate="$(OUT_DIR)/dll/win32/devmgr/devmgr.dll" ;; \
+			newdev.dll)    candidate="$(OUT_DIR)/dll/win32/newdev/newdev.dll" ;; \
+			powrprof.dll)  candidate="$(OUT_DIR)/dll/win32/powrprof/powrprof.dll" ;; \
 			uxtheme.dll)   candidate="$(OUT_DIR)/dll/win32/uxtheme/uxtheme.dll" ;; \
 			version.dll)   candidate="$(OUT_DIR)/dll/win32/version/version.dll" ;; \
 			sendmail.dll)  candidate="$(OUT_DIR)/dll/shellext/sendmail/sendmail.dll" ;; \
@@ -274,6 +285,7 @@ install-in-container:
 			cryptext.dll)  candidate="$(OUT_DIR)/dll/shellext/cryptext/cryptext.dll" ;; \
 			ieframe.dll)   candidate="$(OUT_DIR)/dll/win32/ieframe/ieframe.dll" ;; \
 			msxml3.dll)    candidate="$(OUT_DIR)/dll/win32/msxml3/msxml3.dll" ;; \
+			libxslt.dll)   candidate="$(OUT_DIR)/dll/3rdparty/libxslt/libxslt.dll" ;; \
 			shimgvw.dll)   candidate="$(OUT_DIR)/dll/win32/shimgvw/shimgvw.dll" ;; \
 			themeui.dll)   candidate="$(OUT_DIR)/dll/win32/themeui/themeui.dll" ;; \
 			url.dll)       candidate="$(OUT_DIR)/dll/win32/url/url.dll" ;; \
