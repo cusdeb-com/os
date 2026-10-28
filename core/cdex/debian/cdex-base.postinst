@@ -1,13 +1,17 @@
 #!/bin/sh
 set -e
 
-# Remove stray session entries so LightDM only offers the Win32 Shell.
-rm -f /usr/share/xsessions/openbox.desktop
-rm -f /usr/share/xsessions/lightdm-xsession.desktop
+# Initialize greetd's configuration on a fresh installation. Keep the template
+# outside /etc to avoid a file ownership conflict with the greetd package, and
+# preserve the installed system's login settings on subsequent upgrades.
+if [ "$1" = configure ] && [ -z "${2:-}" ]; then
+    install -D -m 644 /usr/share/cusdeb/greetd/config.toml /etc/greetd/config.toml
+fi
 
 # Enable services required by the desktop environment.
 if [ -x /usr/bin/systemctl ]; then
-    systemctl enable lightdm.service || true
+    # Select greetd for the next boot without restarting a running session.
+    systemctl enable --force greetd.service || true
     systemctl enable systemd-networkd.service || true
     systemctl enable systemd-resolved.service || true
 fi

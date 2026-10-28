@@ -279,7 +279,8 @@ install-in-container:
 
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"
-	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-registry runtime/bin/cdex-taskbar-bridge \
+	install -m 755 runtime/bin/cdex-win32-session runtime/bin/cdex-wayland-session \
+		runtime/bin/cdex-registry runtime/bin/cdex-taskbar-bridge \
 		runtime/bin/cdex-shutdown-helper runtime/bin/cdex-wine-cleanup runtime/bin/poweroff runtime/bin/reboot \
 		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher \
 		"$(BIN_DIR)/"
@@ -287,9 +288,9 @@ install-in-container:
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
 	install -m 644 "$(CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
 	@echo "=== Installing session/config files ==="
-	install -D -m 644 runtime/xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
-	install -D -m 644 runtime/config/lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"
-	install -D -m 644 runtime/config/lightdm/50-cusdeb-gtk-greeter.conf "$(DESTDIR)/usr/share/lightdm/lightdm-gtk-greeter.conf.d/50-cusdeb.conf"
+	install -D -m 644 runtime/wayland-sessions/cusdeb.desktop "$(DESTDIR)/usr/share/wayland-sessions/cusdeb.desktop"
+	install -D -m 644 runtime/config/greetd/config.toml "$(DESTDIR)/usr/share/cusdeb/greetd/config.toml"
+	install -D -m 644 runtime/config/greetd/environments "$(DESTDIR)/etc/greetd/environments"
 	install -D -m 644 runtime/config/polkit/50-cusdeb-poweroff.rules "$(DESTDIR)/etc/polkit-1/rules.d/50-cusdeb-poweroff.rules"
 	install -D -m 644 runtime/config/systemd/20-wired.network "$(DESTDIR)/etc/systemd/network/20-wired.network"
 	install -D -m 644 runtime/config/openbox/rc.xml "$(DESTDIR)/etc/xdg/cusdeb/openbox/rc.xml"
