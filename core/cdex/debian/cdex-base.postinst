@@ -1,13 +1,10 @@
 #!/bin/sh
 set -e
 
-# Remove stray session entries so LightDM only offers the Win32 Shell.
-rm -f /usr/share/xsessions/openbox.desktop
-rm -f /usr/share/xsessions/lightdm-xsession.desktop
-
 # Enable services required by the desktop environment.
 if [ -x /usr/bin/systemctl ]; then
-    systemctl enable lightdm.service || true
+    # Select greetd for the next boot without restarting a running session.
+    systemctl enable --force greetd.service || true
     systemctl enable systemd-networkd.service || true
     systemctl enable systemd-resolved.service || true
 fi

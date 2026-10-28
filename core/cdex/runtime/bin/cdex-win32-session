@@ -1,9 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-export DESKTOP_SESSION=cusdeb-win32
-export XDG_SESSION_TYPE=x11
-export XDG_CURRENT_DESKTOP=CusDebWin32
+# Direct invocation starts the same Wayland session as greetd. The launcher
+# calls back into this script only after its rootful XWayland is ready.
+if [ "${CDEX_ROOTFUL_XWAYLAND:-}" != 1 ]; then
+  exec /usr/bin/cdex-wayland-session "$@"
+fi
+: "${WAYLAND_DISPLAY:?The CDEX shell requires Wayland}"
+: "${DISPLAY:?The CDEX shell requires rootful XWayland}"
+export DESKTOP_SESSION=cusdeb-wayland
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=CusDebWin32:Openbox
 export XDG_CONFIG_DIRS="/etc/xdg/cusdeb:/etc/xdg"
 export XCURSOR_THEME="Adwaita"
 export XCURSOR_SIZE=16
@@ -15,7 +22,7 @@ export WINEDEBUG="${WINEDEBUG:--all}"
 # desktop/driver host, and without it no Wine window can be created at all.
 # It is prevented from stealing the shell role by a Wine patch instead
 # (set_shell_window is only honoured for shell-enabled named desktops).
-export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d"
+export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d;winewayland.drv=d"
 
 REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
 REACTOS_PREFIX="$HOME/.wine"
@@ -128,23 +135,6 @@ ensure_wine_prefix() {
     log_stage "prefix-validation-failed"
     echo "ERROR: Wine prefix marker $marker is missing or empty" >&2
     exit 1
-  fi
-}
-
-# Re-apply the display resolution the user last chose (persisted by Explorer to
-# C:\cusdeb\resolution on WM_DISPLAYCHANGE). The X server always starts at its
-# own default mode, so without this the user's choice is lost on every login.
-# Runs early, before reactos-explorer starts, so the shell initializes at the
-# correct resolution and no resize is needed afterwards.
-restore_saved_resolution() {
-  local file="$REACTOS_PREFIX/drive_c/cusdeb/resolution"
-  local mode output
-  [ -f "$file" ] || return 0
-  mode="$(cat "$file")"
-  output="$(xrandr 2>/dev/null | awk '/ connected/{print $1; exit}')"
-  if [ -n "$mode" ] && [ -n "$output" ]; then
-    log_stage "resolution-restore-$mode"
-    xrandr --output "$output" --mode "$mode" >/dev/null 2>&1 || log_stage "resolution-restore-failed"
   fi
 }
 
@@ -293,10 +283,6 @@ xsetroot -solid '#9D9EA0' || true
 log_stage "x-root-ready"
 splash_update 5
 
-if command -v spice-vdagent >/dev/null 2>&1; then
-  spice-vdagent &
-fi
-
 openbox &
 wm_pid=$!
 sleep 1
@@ -368,7 +354,6 @@ splash_update 90
 # and UI font settings; restore them on every login. The desktop background
 # color is set once on prefix creation and left to the user afterwards.
 ensure_reactos_ui_settings || log_stage "ui-settings-failed"
-restore_saved_resolution
 log_stage "reactos-explorer-start"
 splash_update 95
 

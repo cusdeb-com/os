@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=CusDeb
+Comment=CDEX with Openbox on Wayland and XWayland
+Exec=/usr/bin/cdex-wayland-session
+TryExec=/usr/bin/cdex-wayland-session
+Type=Application
+DesktopNames=CusDebWin32;Openbox
