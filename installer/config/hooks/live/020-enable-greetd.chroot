@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# live-config creates this account before greetd starts at boot.
+# Configure it here without requiring the account to exist during the build.
+cat >>/etc/greetd/cusdeb.toml <<'EOF'
+
+[initial_session]
+command = "/usr/bin/cdex-wayland-session"
+user = "user"
+EOF
+systemctl enable --force greetd.service

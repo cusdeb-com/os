@@ -17,6 +17,20 @@ FORCE_CLEAN="${FORCE_CLEAN:-0}"
 
 mkdir -p "${OUT_DIR}"
 
+# Always build CDEX from this checkout. Published packages may still require
+# Xorg, so they must not determine the desktop stack of a new ISO.
+if ! docker image inspect cdex-buildenv:bookworm >/dev/null 2>&1; then
+    make -C "${PROJECT_ROOT}/core/cdex" image
+fi
+make -C "${PROJECT_ROOT}/core/cdex" build PACKAGE_DIR=out
+CDEX_VERSION=$(sed -n '1s/.*(\(.*\)).*/\1/p' "${PROJECT_ROOT}/core/cdex/debian/changelog")
+LOCAL_PACKAGES="${SCRIPT_DIR}/out/cdex-packages"
+mkdir -p "${LOCAL_PACKAGES}"
+rm -f "${LOCAL_PACKAGES}"/*.deb
+for package in cdex-base cdex-calc cdex-full mspaint spider winmine; do
+    cp "${PROJECT_ROOT}/core/cdex/out/${package}_${CDEX_VERSION}_amd64.deb" "${LOCAL_PACKAGES}/"
+done
+
 # Ensure a buildx builder with the insecure entitlement exists. Reusing the
 # default builder is fine if it already allows security.insecure; otherwise we
 # create and use a dedicated one.

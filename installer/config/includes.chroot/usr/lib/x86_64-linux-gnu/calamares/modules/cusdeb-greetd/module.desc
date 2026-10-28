@@ -1,0 +1,4 @@
+type: job
+name: cusdeb-greetd
+interface: python
+script: main.py

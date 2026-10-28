@@ -1,0 +1,6 @@
+**
+!installer/
+!installer/**
+installer/out/**
+!installer/out/cdex-packages/
+!installer/out/cdex-packages/*.deb

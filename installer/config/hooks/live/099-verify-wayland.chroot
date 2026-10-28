@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# Fail the build if a dependency accidentally reintroduces the Xorg server.
+# xserver-common, X11 clients/libraries and XWayland are deliberately allowed.
+installed=$(dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n')
+for package in $(printf '%s\n' "$installed" | awk '$2 == "installed" {print $1}'); do
+    case "${package%%:*}" in
+        xorg|xserver-xorg*|xinit|lightdm|lightdm-*)
+            echo "Forbidden Xorg stack package: $package" >&2
+            exit 1
+            ;;
+    esac
+done
+for package in weston wayland-utils xwayland xauth openbox greetd gtkgreet cage; do
+    dpkg-query -W -f='${db:Status-Status}' "$package" | grep -qx installed
+done
+test -x /usr/bin/cdex-wayland-session
+test -f /usr/share/wayland-sessions/cusdeb.desktop
+test ! -e /usr/share/xsessions/cusdeb-win32.desktop
+echo "[hook] Verified Wayland/XWayland/Openbox stack without Xorg."

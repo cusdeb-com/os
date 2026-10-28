@@ -32,6 +32,7 @@ WORKDIR /build
 # entirely inside the Dockerfile, matching the package build pattern.
 COPY installer/auto ./auto
 COPY installer/config ./config
+COPY installer/out/cdex-packages ./config/includes.chroot/usr/local/share/cusdeb/packages
 COPY installer/modules ./modules
 COPY installer/build-iso.sh ./build-iso.sh
 

@@ -24,18 +24,28 @@ Every build is currently a full clean rebuild and takes roughly 10–20 minutes 
 ## What the installer builds
 
 1. A Debian trixie live image configured by `live-build`.
-2. A minimal X11 environment (`openbox`, `lightdm`, selected drivers).
+2. A Wayland session: Weston drives the screen and input, fullscreen rootful
+   XWayland hosts the existing Openbox/CDEX desktop. Xorg is excluded.
 3. Calamares installer with CusDeb branding.
 4. The CusDeb OS layer: `cdex-full` (Wine, ReactOS Explorer shell, standard GTK theme, Linux-to-Win32 taskbar bridge).
 5. A hybrid ISO bootable on both BIOS and UEFI.
 
 ## Build overview
 
-`run-iso-build.sh` builds a Docker image and runs `build-iso.sh` inside it. `build-iso.sh` compiles the custom Calamares viewmodule, then runs `lb build`.
+`run-iso-build.sh` builds the local CDEX packages and stages the current version
+in `installer/out/cdex-packages`. It then builds a Docker image and runs
+`build-iso.sh` inside it. `build-iso.sh` compiles the custom Calamares viewmodule,
+then runs `lb build`. Published CDEX packages cannot override the local desktop
+stack.
 
 `auto/config` sets the main `live-build` options: Debian trixie, amd64, `iso-hybrid`, GRUB for BIOS/UEFI, no apt recommends, firmware controlled via `calamares.list.chroot`.
 
-`package-lists/calamares.list.chroot` installs Calamares, the live-boot stack, minimal X11, bootloader tools, networking, and firmware. `cdex-full` is installed separately by the `010-install-cdex.chroot` hook, which adds the CusDeb APT repository.
+`package-lists/calamares.list.chroot` installs Calamares, the live-boot stack,
+Weston, XWayland, Openbox, greetd/gtkgreet/Cage, bootloader tools, networking,
+Mesa and firmware. `010-install-cdex.chroot` installs the locally built CDEX
+packages and uses the CusDeb APT repository for Wine and other dependencies.
+The final verification hook rejects `xorg`, `xserver-xorg*`, `xinit` and LightDM;
+X11 client libraries and `xserver-common` remain available for XWayland.
 
 ## Live image architecture
 
@@ -52,13 +62,20 @@ Created by `live-config` at boot, not baked into the squashfs. This prevents har
 
 Hooks in `config/hooks/live/` run after packages are installed:
 
-- `010-install-cdex.chroot` — adds the CusDeb APT repository and installs `cdex-full`.
-- `enable-lightdm.chroot` — enables `lightdm.service`.
+- `010-install-cdex.chroot` — adds the CusDeb APT repository and installs local CDEX packages.
+- `020-enable-greetd.chroot` — enables greetd and live autologin into the Wayland session.
+- `099-verify-wayland.chroot` — fails the build if the Xorg server stack is present.
 - `fix-path-utilities.chroot` — symlinks utilities Calamares needs (`blkid`, `smartctl`, `ckbcomp`).
 
 ### Boot process
 
 The ISO is `iso-hybrid` with GRUB. `live-boot` mounts `/live/filesystem.squashfs` as the root filesystem via overlay/tmpfs.
+
+greetd starts `cdex-wayland-session` for the live user. On logout, the graphical
+gtkgreet screen runs under Cage. Installed systems use the same Wayland entry
+point. Openbox manages X11 applications inside rootful XWayland; native Wayland
+windows are outside its taskbar. The current session automatically sizes itself
+for one output.
 
 ## Calamares configuration
 
@@ -70,7 +87,8 @@ Key overrides:
 - `modules/users.conf` — default groups (`users`, `sudo`), locked root.
 - `modules/packages.conf` — live-only packages to remove from target.
 - `modules/optional-packages.conf` — catalog for the custom selection page.
-- `modules/displaymanager.conf` — LightDM autologin for the installed user.
+- `cusdeb-greetd` job — removes live autologin or replaces it with the installed
+  user's selected autologin account using `cdex-configure-login`.
 
 Sequence notes:
 
@@ -81,3 +99,4 @@ Sequence notes:
 
 - `optional-packages` (C++ / Qt6) — tree of optional package groups. Built in Docker and copied to `config/includes.chroot/usr/lib/x86_64-linux-gnu/calamares/modules/optional-packages/`.
 - `optional-packages-apply` (Python) — removes unselected packages from `/target`.
+- `cusdeb-greetd` (Python) — configures `/etc/greetd/cusdeb.toml` in the target.
