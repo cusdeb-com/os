@@ -24,7 +24,8 @@ Every build is currently a full clean rebuild and takes roughly 10–20 minutes 
 ## What the installer builds
 
 1. A Debian trixie live image configured by `live-build`.
-2. A minimal X11 environment (`openbox`, `lightdm`, selected drivers).
+2. A Wayland session: Weston drives the screen and input, fullscreen rootful
+   XWayland hosts the existing Openbox/CDEX desktop. Xorg is excluded.
 3. Calamares installer with CusDeb branding.
 4. The CusDeb OS layer: `cdex-full` (Wine, ReactOS Explorer shell, standard GTK theme, Linux-to-Win32 taskbar bridge).
 5. A hybrid ISO bootable on both BIOS and UEFI.
@@ -35,7 +36,13 @@ Every build is currently a full clean rebuild and takes roughly 10–20 minutes 
 
 `auto/config` sets the main `live-build` options: Debian trixie, amd64, `iso-hybrid`, GRUB for BIOS/UEFI, no apt recommends, firmware controlled via `calamares.list.chroot`.
 
-`package-lists/calamares.list.chroot` installs Calamares, the live-boot stack, minimal X11, bootloader tools, networking, and firmware. `cdex-full` is installed separately by the `010-install-cdex.chroot` hook, which adds the CusDeb APT repository.
+`package-lists/calamares.list.chroot` installs Calamares, the live-boot stack,
+Weston, XWayland, Openbox, greetd/gtkgreet/Cage, bootloader tools, networking,
+Mesa and firmware. `010-install-cdex.chroot` installs the published `cdex-full`
+package and its dependencies from the CusDeb APT repository on the `gh-pages`
+branch. Publish CDEX packages before building the ISO.
+The final verification hook rejects `xorg`, `xserver-xorg*`, `xinit` and LightDM;
+X11 client libraries and `xserver-common` remain available for XWayland.
 
 ## Live image architecture
 
@@ -52,13 +59,20 @@ Created by `live-config` at boot, not baked into the squashfs. This prevents har
 
 Hooks in `config/hooks/live/` run after packages are installed:
 
-- `010-install-cdex.chroot` — adds the CusDeb APT repository and installs `cdex-full`.
-- `enable-lightdm.chroot` — enables `lightdm.service`.
+- `010-install-cdex.chroot` — adds the CusDeb APT repository and installs the published `cdex-full` package.
+- `020-enable-greetd.chroot` — enables greetd and live autologin into the Wayland session.
+- `099-verify-wayland.chroot` — fails the build if the Xorg server stack is present.
 - `fix-path-utilities.chroot` — symlinks utilities Calamares needs (`blkid`, `smartctl`, `ckbcomp`).
 
 ### Boot process
 
 The ISO is `iso-hybrid` with GRUB. `live-boot` mounts `/live/filesystem.squashfs` as the root filesystem via overlay/tmpfs.
+
+greetd starts `cdex-wayland-session` for the live user. On logout, the graphical
+gtkgreet screen runs under Cage. Installed systems use the same Wayland entry
+point. Openbox manages X11 applications inside rootful XWayland; native Wayland
+windows are outside its taskbar. The current session automatically sizes itself
+for one output.
 
 ## Calamares configuration
 
@@ -70,7 +84,9 @@ Key overrides:
 - `modules/users.conf` — default groups (`users`, `sudo`), locked root.
 - `modules/packages.conf` — live-only packages to remove from target.
 - `modules/optional-packages.conf` — catalog for the custom selection page.
-- `modules/displaymanager.conf` — LightDM autologin for the installed user.
+- `modules/displaymanager.conf` — uses Calamares' greetd support to remove live
+  autologin or replace it with the installed user's selected autologin account
+  in `/etc/greetd/config.toml`.
 
 Sequence notes:
 
