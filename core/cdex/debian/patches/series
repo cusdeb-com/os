@@ -16,3 +16,9 @@
 0017-save-resolution-on-displaychange.patch
 0018-start-menu-global-unfocus.patch
 0019-search-folder-contextmenu-pidl.patch
+0020-private-shell-runtime.patch
+0021-build-private-manifests.patch
+0022-shell32-com-manifest-fallback.patch
+0023-private-shell-cpl-path.patch
+0024-shell32-typelib-version.patch
+0025-shell32-cpl-search-buffer.patch

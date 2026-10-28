@@ -1,0 +1,62 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Avoid overlapping buffers when resolving shell paths.
+ Use separate input and output buffers for CPL and Open With lookups.
+ Keep the original applet path when the search fails or does not fit.
+ Deactivate and release the applet context if loading fails.
+Last-Modified: Tue, 27 Oct 2026 13:23:30 +0300
+
+--- a/src/dll/win32/shell32/wine/control.c
++++ b/src/dll/win32/shell32/wine/control.c
+@@ -63,7 +63,7 @@
+ #ifdef __REACTOS__
+     ACTCTXW ActCtx = {sizeof(ACTCTX), ACTCTX_FLAG_RESOURCE_NAME_VALID};
+     ULONG_PTR cookie;
+-    BOOL bActivated;
++    BOOL bActivated = FALSE;
+     WCHAR fileBuffer[MAX_PATH];
+ #endif
+     CPlApplet*	applet;
+@@ -94,10 +94,13 @@
+     applet->hWnd = hWnd;
+ 
+ #ifdef __REACTOS__
+-    StringCchCopy(fileBuffer, MAX_PATH, applet->cmd);
+-    if (PathIsFileSpecW(fileBuffer))
+-        SearchPath(NULL, fileBuffer, NULL, MAX_PATH, fileBuffer, NULL);
+-    ActCtx.lpSource = fileBuffer;
++    ActCtx.lpSource = applet->cmd;
++    if (PathIsFileSpecW(applet->cmd))
++    {
++        DWORD pathLength = SearchPathW(NULL, applet->cmd, NULL, ARRAYSIZE(fileBuffer), fileBuffer, NULL);
++        if (pathLength && pathLength < ARRAYSIZE(fileBuffer))
++            ActCtx.lpSource = fileBuffer;
++    }
+     ActCtx.lpResourceName = (LPCWSTR)123;
+     applet->hActCtx = CreateActCtx(&ActCtx);
+     bActivated = (applet->hActCtx != INVALID_HANDLE_VALUE ? ActivateActCtx(applet->hActCtx, &cookie) : FALSE);
+@@ -207,6 +210,12 @@
+ 
+  theError:
+     FreeLibrary(applet->hModule);
++#ifdef __REACTOS__
++    if (bActivated)
++        DeactivateActCtx(0, cookie);
++    if (applet->hActCtx && applet->hActCtx != INVALID_HANDLE_VALUE)
++        ReleaseActCtx(applet->hActCtx);
++#endif
+     HeapFree(GetProcessHeap(), 0, applet->cmd);
+     HeapFree(GetProcessHeap(), 0, applet);
+     return NULL;
+--- a/src/dll/win32/shell32/COpenWithMenu.cpp
++++ b/src/dll/win32/shell32/COpenWithMenu.cpp
+@@ -520,8 +520,8 @@
+     ExpandEnvironmentStrings(wszBuf, pwszAppPath, MAX_PATH);
+     if (!PathFileExists(pwszAppPath))
+     {
+-        UINT cch = SearchPathW(NULL, pwszAppPath, NULL, MAX_PATH, pwszAppPath, NULL);
+-        if (!cch || cch >= MAX_PATH)
++        UINT cch = SearchPathW(NULL, pwszAppPath, NULL, _countof(wszBuf), wszBuf, NULL);
++        if (!cch || cch >= _countof(wszBuf) || FAILED(StringCchCopyW(pwszAppPath, MAX_PATH, wszBuf)))
+             return FALSE;
+     }
+     return TRUE;

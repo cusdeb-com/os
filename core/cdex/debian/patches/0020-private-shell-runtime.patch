@@ -1,0 +1,61 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Keep ReactOS shell hosts in the private shell assembly.
+ Resolve bare shell-host launches beside the loaded shell32 and remove
+ inactive COM registration resources from shell32.
+Last-Modified: Fri, 16 Oct 2026 15:00:00 +0300
+
+--- a/src/dll/win32/shell32/rgs_res.rc
++++ b/src/dll/win32/shell32/rgs_res.rc
+@@ -4,7 +4,6 @@
+ IDR_CONTROLPANEL REGISTRY "res/rgs/controlpanel.rgs"
+ IDR_DRAGDROPHELPER REGISTRY "res/rgs/dragdrophelper.rgs"
+ IDR_FOLDEROPTIONS REGISTRY "res/rgs/folderoptions.rgs"
+-IDR_FOLDERSHORTCUT REGISTRY "res/rgs/foldershortcut.rgs"
+ IDR_FONTSFOLDERSHORTCUT REGISTRY "res/rgs/fontsfoldershortcut.rgs"
+ IDR_MENUBAND REGISTRY "res/rgs/menuband.rgs"
+ IDR_MENUBANDSITE REGISTRY "res/rgs/menubandsite.rgs"
+@@ -25,7 +24,6 @@
+ IDR_DRVDEFEXT REGISTRY "res/rgs/shelldrvdefext.rgs"
+ IDR_EXEDROPHANDLER REGISTRY "res/rgs/exedrophandler.rgs"
+ IDR_MERGEDFOLDER REGISTRY "res/rgs/mergedfolder.rgs"
+-IDR_REBARBANDSITE REGISTRY "res/rgs/rebarbandsite.rgs"
+ IDR_USERNOTIFICATION REGISTRY "res/rgs/usernotification.rgs"
+ IDR_SHELL REGISTRY "res/rgs/shell.rgs"
+ IDR_ACTIVEDESKTOP REGISTRY "res/rgs/activedesktop.rgs"
+--- a/src/dll/win32/shell32/shlexec.cpp
++++ b/src/dll/win32/shell32/shlexec.cpp
+@@ -2725,6 +2725,8 @@
+     HRESULT hrCoInit;
+     DWORD dwError;
+     ULONG fOldMask;
++    LPCWSTR originalFile;
++    WCHAR privateHost[MAX_PATH];
+ 
+     if (sei->cbSize != sizeof(SHELLEXECUTEINFOW))
+     {
+@@ -2756,7 +2758,25 @@
+     if (!(fOldMask & SEE_MASK_NOASYNC) && SHELL_InRunDllProcess())
+         sei->fMask |= SEE_MASK_WAITFORINPUTIDLE | SEE_MASK_NOASYNC;
+ 
++    // Shell hosts must activate the same private assembly as this shell32.
++    // Do not alter ordinary application launches or explicit system paths.
++    originalFile = sei->lpFile;
++    if (!(sei->fMask & SEE_MASK_INVOKEIDLIST) && originalFile &&
++        (!lstrcmpiW(originalFile, L"explorer.exe") ||
++         !lstrcmpiW(originalFile, L"control.exe") ||
++         !lstrcmpiW(originalFile, L"rundll32.exe")))
++    {
++        DWORD length = GetModuleFileNameW(shell32_hInstance, privateHost, _countof(privateHost));
++        if (length && length < _countof(privateHost) &&
++            PathRemoveFileSpecW(privateHost) && PathAppendW(privateHost, originalFile) &&
++            PathFileExistsW(privateHost))
++        {
++            sei->lpFile = privateHost;
++        }
++    }
++
+     dwError = ShellExecute_Normal(sei);
++    sei->lpFile = originalFile;
+ 
+     if (dwError && dwError != ERROR_DLL_NOT_FOUND && dwError != ERROR_CANCELLED)
+         ShellExecute_ShowError(sei, NULL, dwError);

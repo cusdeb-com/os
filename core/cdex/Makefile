@@ -4,6 +4,9 @@
 REPO_DIR := $(CURDIR)
 UPSTREAM_SRC_DIR := $(REPO_DIR)/src
 
+# Build the ReactOS payload as 32-bit PE binaries for the existing CDEX shell.
+CDEX_ARCH := i386
+
 # Incremental build cache
 BUILD_CACHE_DIR := $(REPO_DIR)/.cdex-build
 BUILD_DIR := $(BUILD_CACHE_DIR)/cdex
@@ -16,6 +19,7 @@ CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
 
 # Build tools and generators
 CLASSES_REG_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
+SXS_MANIFEST_GENERATOR := $(REPO_DIR)/tools/prepare_sxs_manifests.py
 HIVEXREGEDIT := /usr/bin/hivexregedit
 
 # Debian package output
@@ -31,7 +35,7 @@ DOC_DIR := $(DESTDIR)/usr/share/doc/cdex-base/ubuntu-font
 
 # Container build settings
 DOCKER ?= docker
-BUILD_IMAGE ?= cdex-buildenv:bookworm
+BUILD_IMAGE ?= cdex-buildenv:bookworm-i386
 # Set REAPPLY_PATCHES=1 to reapply the complete Quilt series before building.
 REAPPLY_PATCHES ?= 0
 
@@ -47,6 +51,7 @@ CDEX_TARGETS := \
 	explorer \
 	filebrowser \
 	control \
+	rundll32 \
 	calc \
 	mspaint \
 	winmine \
@@ -70,6 +75,8 @@ CDEX_TARGETS := \
 	access \
 	appwiz \
 	desk \
+	devmgr \
+	newdev \
 	hdwwiz \
 	inetcpl \
 	intl \
@@ -80,6 +87,7 @@ CDEX_TARGETS := \
 	odbccp32i \
 	openglcfg \
 	powercfg \
+	powrprof \
 	sysdm \
 	telephon \
 	timedate \
@@ -88,6 +96,7 @@ CDEX_TARGETS := \
 	cryptext \
 	ieframe \
 	msxml3 \
+	libxslt \
 	shimgvw \
 	themeui \
 	url \
@@ -97,6 +106,7 @@ CDEX_ARTIFACTS := \
 	explorer.exe \
 	filebrowser.exe \
 	control.exe \
+	rundll32.exe \
 	calc.exe \
 	mspaint.exe \
 	winmine.exe \
@@ -120,6 +130,8 @@ CDEX_ARTIFACTS := \
 	access.cpl \
 	appwiz.cpl \
 	desk.cpl \
+	devmgr.dll \
+	newdev.dll \
 	hdwwiz.cpl \
 	inetcpl.cpl \
 	intl.cpl \
@@ -130,6 +142,7 @@ CDEX_ARTIFACTS := \
 	odbccp32i.cpl \
 	openglcfg.cpl \
 	powercfg.cpl \
+	powrprof.dll \
 	sysdm.cpl \
 	telephon.cpl \
 	timedate.cpl \
@@ -138,6 +151,7 @@ CDEX_ARTIFACTS := \
 	cryptext.dll \
 	ieframe.dll \
 	msxml3.dll \
+	libxslt.dll \
 	shimgvw.dll \
 	themeui.dll \
 	url.dll \
@@ -149,7 +163,7 @@ CDEX_ARTIFACTS := \
 # Public developer interface
 all: build
 
-build: ensure-image
+build: image
 	mkdir -p "$(PACKAGE_HOST_DIR)"
 	$(DOCKER) run --rm \
 		--mount "type=bind,src=$(REPO_DIR),dst=/workspace" \
@@ -198,7 +212,9 @@ cdex-build:
 		-DENABLE_CCACHE:BOOL=0 \
 		-DENABLE_ROSTESTS=0 \
 		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(UPSTREAM_SRC_DIR)/toolchain-gcc.cmake" \
-		-DARCH:STRING=i386 \
+		-DARCH:STRING=$(CDEX_ARCH) \
+		-DCDEX_SXS_CMAKE:FILEPATH="$(REPO_DIR)/tools/sxs_manifests.cmake" \
+		-DCDEX_SXS_TARGETS:STRING="$(CDEX_TARGETS)" \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building CDEX components ==="
 	ninja -C "$(OUT_DIR)" host-tools $(CDEX_TARGETS)
@@ -238,6 +254,7 @@ install-in-container:
 			explorer.exe)    candidate="$(OUT_DIR)/base/shell/explorer/explorer.exe" ;; \
 			filebrowser.exe) candidate="$(OUT_DIR)/base/shell/filebrowser/filebrowser.exe" ;; \
 			control.exe)     candidate="$(OUT_DIR)/base/applications/control/control.exe" ;; \
+			rundll32.exe)    candidate="$(OUT_DIR)/base/system/rundll32/rundll32.exe" ;; \
 			calc.exe)        candidate="$(OUT_DIR)/base/applications/calc/calc.exe" ;; \
 			mspaint.exe)     candidate="$(OUT_DIR)/base/applications/mspaint/mspaint.exe" ;; \
 			winmine.exe)     candidate="$(OUT_DIR)/base/applications/games/winmine/winmine.exe" ;; \
@@ -258,6 +275,9 @@ install-in-container:
 			shlwapi.dll)   candidate="$(OUT_DIR)/dll/win32/shlwapi/shlwapi.dll" ;; \
 			rshell.dll)    candidate="$(OUT_DIR)/base/shell/rshell/rshell.dll" ;; \
 			shdocvw.dll)   candidate="$(OUT_DIR)/dll/win32/shdocvw/shdocvw.dll" ;; \
+			devmgr.dll)    candidate="$(OUT_DIR)/dll/win32/devmgr/devmgr.dll" ;; \
+			newdev.dll)    candidate="$(OUT_DIR)/dll/win32/newdev/newdev.dll" ;; \
+			powrprof.dll)  candidate="$(OUT_DIR)/dll/win32/powrprof/powrprof.dll" ;; \
 			uxtheme.dll)   candidate="$(OUT_DIR)/dll/win32/uxtheme/uxtheme.dll" ;; \
 			version.dll)   candidate="$(OUT_DIR)/dll/win32/version/version.dll" ;; \
 			sendmail.dll)  candidate="$(OUT_DIR)/dll/shellext/sendmail/sendmail.dll" ;; \
@@ -265,6 +285,7 @@ install-in-container:
 			cryptext.dll)  candidate="$(OUT_DIR)/dll/shellext/cryptext/cryptext.dll" ;; \
 			ieframe.dll)   candidate="$(OUT_DIR)/dll/win32/ieframe/ieframe.dll" ;; \
 			msxml3.dll)    candidate="$(OUT_DIR)/dll/win32/msxml3/msxml3.dll" ;; \
+			libxslt.dll)   candidate="$(OUT_DIR)/dll/3rdparty/libxslt/libxslt.dll" ;; \
 			shimgvw.dll)   candidate="$(OUT_DIR)/dll/win32/shimgvw/shimgvw.dll" ;; \
 			themeui.dll)   candidate="$(OUT_DIR)/dll/win32/themeui/themeui.dll" ;; \
 			url.dll)       candidate="$(OUT_DIR)/dll/win32/url/url.dll" ;; \
@@ -276,6 +297,9 @@ install-in-container:
 		fi; \
 		install -m 755 "$$candidate" "$(CDEX_DIR)/$$artifact"; \
 	done
+	python3 "$(SXS_MANIFEST_GENERATOR)" assembly \
+		--payload "$(CDEX_DIR)" \
+		--resources "$(OUT_DIR)/cdex-sxs-resources"
 
 	@echo "=== Installing runtime scripts ==="
 	install -d "$(BIN_DIR)"
