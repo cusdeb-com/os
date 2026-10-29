@@ -1,0 +1,17 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Use the private ReactOS appwiz.cpl for Explorer Start Menu actions.
+ Keep Wine's system appwiz.cpl available for Control Panel and Wine clients.
+Last-Modified: Wed, 28 Oct 2026 17:00:30 +0300
+
+--- a/src/base/shell/explorer/startmnucust.cpp
++++ b/src/base/shell/explorer/startmnucust.cpp
+@@ -22,3 +22,3 @@
+     {
+-        WCHAR szCommand[MAX_PATH] = L"appwiz.cpl,NewLinkHere ";
++        WCHAR szCommand[MAX_PATH] = L"C:\\reactos\\appwiz.cpl,NewLinkHere ";
+         if (SUCCEEDED(StringCchCatW(szCommand, _countof(szCommand), szPath)))
+@@ -30,3 +30,3 @@
+ {
+-    ShellExecuteW(hDlg, L"open", L"rundll32.exe", L"appwiz.cpl,ConfigStartMenu", NULL, SW_SHOWNORMAL);
++    ShellExecuteW(hDlg, L"open", L"rundll32.exe", L"C:\\reactos\\appwiz.cpl,ConfigStartMenu", NULL, SW_SHOWNORMAL);
+ }
