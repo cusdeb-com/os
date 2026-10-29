@@ -1,0 +1,22 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Route Control Panel Add/Remove through Wine's 64-bit-aware uninstaller.
+ Keep this path until ReactOS Control Panel transitions to 64-bit.
+Last-Modified: Wed, 28 Oct 2026 21:14:24 +0300
+
+--- a/src/dll/win32/shell32/folders/CControlPanelFolder.cpp
++++ b/src/dll/win32/shell32/folders/CControlPanelFolder.cpp
+@@ -745,2 +745,14 @@
+     {
++        PCWSTR pszCplName = wcsrchr(pCPanel->szName, L'\\');
++        pszCplName = pszCplName ? pszCplName + 1 : pCPanel->szName;
++
++        if (!lstrcmpiW(pszCplName, L"appwiz.cpl"))
++        {
++            /* shortcut: Control Panel is 32-bit; remove after the 64-bit ReactOS transition. */
++            HINSTANCE hinst = ShellExecuteW(NULL, L"open", L"C:\\windows\\syswow64\\uninstaller.exe", NULL, NULL, SW_SHOWNORMAL);
++            if ((INT_PTR)hinst <= 32)
++                return hinst ? HRESULT_FROM_WIN32((DWORD)(INT_PTR)hinst) : E_FAIL;
++            return S_OK;
++        }
++
+         /* Hardcode the command here; Executing a cpl file would be fine but we also need to run things like console.dll */
