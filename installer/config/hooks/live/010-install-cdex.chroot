@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "[hook] Adding CusDeb apt repository and installing cdex-full..."
+echo "[hook] Installing the locally built Wayland CDEX packages..."
 
 dpkg --add-architecture i386
 update-ca-certificates --fresh
@@ -11,6 +11,12 @@ curl -fsSL -o /etc/apt/keyrings/cusdeb.gpg https://cusdeb-com.github.io/os/KEY.g
 chmod 644 /etc/apt/keyrings/cusdeb.gpg
 
 apt-get update
-apt-get install -y cdex-full
+set -- /usr/local/share/cusdeb/packages/*.deb
+if [ ! -f "$1" ]; then
+    echo "Missing local CDEX packages; build the ISO with installer/run-iso-build.sh" >&2
+    exit 1
+fi
+apt-get install -y --no-install-recommends "$@"
+rm -rf /usr/local/share/cusdeb/packages
 
 echo "[hook] cdex-full installed."

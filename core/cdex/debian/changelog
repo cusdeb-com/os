@@ -1,3 +1,12 @@
+cdex (0.0.16-1cd) trixie; urgency=medium
+
+  * Replace the Xorg/LightDM session with Weston, rootful XWayland and greetd.
+    Keep Openbox and the existing CDEX taskbar bridge.
+  * Add a Wayland session, graphical greeter and shared autologin configuration
+    for live media and installed systems. Reject the legacy Xorg server stack.
+
+ -- Dmitrii Ivanko <tmwsls12@gmail.com>  Wed, 28 Oct 2026 15:00:00 +0400
+
 cdex (0.0.15-1cd) trixie; urgency=medium
 
   * Makefile: use CDEX naming instead of ReactOS for the internal build

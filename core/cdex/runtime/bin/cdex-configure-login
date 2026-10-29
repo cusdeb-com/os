@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Set or remove greetd autologin without changing the graphical greeter."""
+
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
+import tomllib
+
+
+def configure_login(root, username):
+    path = root / "etc/greetd/cusdeb.toml"
+    content = path.read_text()
+    tomllib.loads(content)
+    # initial_session has only scalar entries. Preserve every other section,
+    # including local greeter configuration, while removing live autologin.
+    content = re.sub(r"(?ms)^\[initial_session\][^\n]*\n.*?(?=^\[|\Z)", "", content).rstrip() + "\n"
+    if username:
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]*\$?", username):
+            raise ValueError("Invalid autologin username")
+        accounts = (root / "etc/passwd").read_text().splitlines()
+        if not any(line.split(":", 1)[0] == username for line in accounts):
+            raise ValueError(f"Autologin user {username!r} does not exist in the target")
+        content += (
+            '\n[initial_session]\ncommand = "/usr/bin/cdex-wayland-session"\n'
+            f"user = {json.dumps(username)}\n"
+        )
+    tomllib.loads(content)
+    path.write_text(content)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path("/"))
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--autologin-user")
+    selection.add_argument("--disable-autologin", action="store_true")
+    args = parser.parse_args()
+    configure_login(args.root, args.autologin_user)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        print(f"cdex-configure-login: {error}", file=sys.stderr)
+        sys.exit(1)
