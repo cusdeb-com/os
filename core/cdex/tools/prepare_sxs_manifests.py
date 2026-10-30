@@ -7,7 +7,7 @@ The assembly command validates those dependencies and includes every packaged
 DLL/CPL, its COM registrations and embedded TypeLibs in the shared assembly.
 
 Code is grouped into RES records, registry scripts, manifest XML and the two
-build commands. Finished PE files are read only to check their architecture.
+build commands. Packaging also verifies SxS resources in the linked PE files.
 """
 
 from __future__ import annotations
@@ -64,6 +64,17 @@ RT_MANIFEST = 24
 # IMAGE_FILE_MACHINE_I386 in the PE COFF header; reject other payload architectures.
 PE_MACHINE_I386 = 0x014C
 
+# PE32 resource directory location and structures used to inspect final modules.
+PE_OPTIONAL_HEADER_PE32 = 0x010B
+PE_DATA_DIRECTORY_OFFSET = 96
+PE_RESOURCE_DIRECTORY_INDEX = 2
+PE_RESOURCE_DIRECTORY_HEADER = struct.Struct("<IIHHHH")
+PE_RESOURCE_DIRECTORY_ENTRY = struct.Struct("<II")
+PE_RESOURCE_DATA_ENTRY = struct.Struct("<IIII")
+PE_SECTION_HEADER = struct.Struct("<8sIIII")
+PE_RESOURCE_NAME_FLAG = 0x80000000
+PE_RESOURCE_OFFSET_MASK = 0x7FFFFFFF
+
 # RES identifier marker: the next WORD is an ordinal instead of UTF-16 text.
 RES_ORDINAL_MARKER = 0xFFFF
 
@@ -101,6 +112,9 @@ COM_REGISTRY_RESOURCE_TYPES = {"REGISTRY", "WINE_REGISTRY"}
 
 # Compiled type library resources use the Win32 TYPELIB resource type.
 TYPELIB_RESOURCE_TYPE = "TYPELIB"
+
+# These resources determine private assembly routing or its COM metadata.
+SXS_RESOURCE_TYPES = {RT_MANIFEST, TYPELIB_RESOURCE_TYPE, *COM_REGISTRY_RESOURCE_TYPES}
 
 # MSFT type library layout used by the ReactOS resource compiler.
 MSFT_TYPELIB_HEADER_SIZE = 84
@@ -210,6 +224,144 @@ def read_res(path: Path) -> list[Resource]:
 
         offset = (header_end + data_size + 3) & ~3  # Records are DWORD-aligned.
 
+    return resources
+
+
+def read_pe_resources(path: Path) -> list[Resource]:
+    """Read Win32 resources from a linked PE32 image.
+
+    The parser intentionally supports the x86 PE32 payload produced by this
+    build. It follows the PE resource directory and maps resource data RVAs
+    through the section table, so packaging validates what the linker emitted.
+    """
+    data = path.read_bytes()
+
+    def fail(message: str) -> ValueError:
+        return ValueError(f"Invalid PE resources in {path}: {message}")
+
+    def unpack(format_: struct.Struct, offset: int, limit: int | None = None) -> tuple:
+        end = offset + format_.size
+        if offset < 0 or end > len(data) or (limit is not None and end > limit):
+            raise fail("truncated structure")
+        return format_.unpack_from(data, offset)
+
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        raise fail("missing DOS header")
+
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe_offset:pe_offset + 4] != b"PE\0\0":
+        raise fail("missing PE signature")
+
+    coff_offset = pe_offset + 4
+    machine, section_count, _, _, _, optional_size, _ = unpack(
+        struct.Struct("<HHIIIHH"), coff_offset
+    )
+    if machine != PE_MACHINE_I386:
+        raise fail(f"expected i386 machine, found 0x{machine:04x}")
+
+    optional_offset = coff_offset + 20
+    optional_end = optional_offset + optional_size
+    if optional_end > len(data) or optional_size < PE_DATA_DIRECTORY_OFFSET + 8 * (PE_RESOURCE_DIRECTORY_INDEX + 1):
+        raise fail("truncated PE32 optional header")
+
+    magic, = unpack(struct.Struct("<H"), optional_offset, optional_end)
+    if magic != PE_OPTIONAL_HEADER_PE32:
+        raise fail(f"expected PE32 optional header, found 0x{magic:04x}")
+
+    directory_count, = unpack(struct.Struct("<I"), optional_offset + 92, optional_end)
+    if directory_count <= PE_RESOURCE_DIRECTORY_INDEX:
+        return []
+
+    resource_entry_offset = optional_offset + PE_DATA_DIRECTORY_OFFSET + 8 * PE_RESOURCE_DIRECTORY_INDEX
+    resource_rva, resource_size = unpack(struct.Struct("<II"), resource_entry_offset, optional_end)
+    if not resource_rva and not resource_size:
+        return []
+    if not resource_rva or not resource_size:
+        raise fail("incomplete resource data directory")
+
+    section_table = optional_end
+    sections = []
+    for index in range(section_count):
+        section_offset = section_table + index * 40
+        _, _, virtual_address, raw_size, raw_offset = unpack(PE_SECTION_HEADER, section_offset)
+        sections.append((virtual_address, raw_size, raw_offset))
+
+    def rva_to_offset(rva: int, size: int, label: str) -> int:
+        for virtual_address, raw_size, raw_offset in sections:
+            delta = rva - virtual_address
+            if delta >= 0 and delta + size <= raw_size:
+                file_offset = raw_offset + delta
+                if file_offset + size <= len(data):
+                    return file_offset
+        raise fail(f"{label} RVA 0x{rva:x} is outside section data")
+
+    resource_offset = rva_to_offset(resource_rva, resource_size, "resource directory")
+
+    def resource_slice(offset: int, size: int, label: str) -> bytes:
+        if offset < 0 or size < 0 or offset + size > resource_size:
+            raise fail(f"{label} is outside the resource directory")
+        start = resource_offset + offset
+        if start + size > len(data):
+            raise fail(f"truncated {label}")
+        return data[start:start + size]
+
+    def resource_name(value: int) -> int | str:
+        if value & PE_RESOURCE_NAME_FLAG:
+            offset = value & PE_RESOURCE_OFFSET_MASK
+            length, = struct.unpack("<H", resource_slice(offset, 2, "resource name"))
+            encoded = resource_slice(offset + 2, length * 2, "resource name")
+            try:
+                return encoded.decode("utf-16le")
+            except UnicodeDecodeError as error:
+                raise fail("invalid UTF-16 resource name") from error
+
+        if value > 0xFFFF:
+            raise fail(f"invalid resource identifier 0x{value:x}")
+        return value
+
+    resources = []
+    seen = set()
+
+    def walk(directory_offset: int, parents: tuple[int | str, ...]) -> None:
+        header = PE_RESOURCE_DIRECTORY_HEADER.unpack(
+            resource_slice(directory_offset, PE_RESOURCE_DIRECTORY_HEADER.size, "resource directory header")
+        )
+        entry_count = header[4] + header[5]
+        entries_offset = directory_offset + PE_RESOURCE_DIRECTORY_HEADER.size
+        entries_size = entry_count * PE_RESOURCE_DIRECTORY_ENTRY.size
+        entries = resource_slice(entries_offset, entries_size, "resource directory entries")
+
+        for index in range(entry_count):
+            name_value, target = PE_RESOURCE_DIRECTORY_ENTRY.unpack_from(
+                entries, index * PE_RESOURCE_DIRECTORY_ENTRY.size
+            )
+            identifier = resource_name(name_value)
+            identity = (*parents, identifier)
+
+            if target & PE_RESOURCE_NAME_FLAG:
+                if len(identity) >= 3:
+                    raise fail("resource directory is deeper than type/name/language")
+                walk(target & PE_RESOURCE_OFFSET_MASK, identity)
+                continue
+
+            if len(identity) != 3 or not isinstance(identity[2], int):
+                raise fail("resource leaf lacks type/name/language identifiers")
+
+            entry_offset = target & PE_RESOURCE_OFFSET_MASK
+            data_rva, size, _, _ = PE_RESOURCE_DATA_ENTRY.unpack(
+                resource_slice(entry_offset, PE_RESOURCE_DATA_ENTRY.size, "resource data entry")
+            )
+            data_offset = rva_to_offset(data_rva, size, "resource data") if size else 0
+            payload = data[data_offset:data_offset + size] if size else b""
+            resource = Resource(
+                identity[0], identity[1], RES_METADATA.pack(0, 0, identity[2], 0, 0), payload,
+            )
+            if resource.key in seen:
+                raise fail(f"duplicate resource {resource.key}")
+            seen.add(resource.key)
+            resources.append(resource)
+
+    walk(0, ())
     return resources
 
 
@@ -611,6 +763,36 @@ def require_private_dependencies(module: Path, resources: list[Resource]) -> Non
             raise ValueError(f"Private dependency missing: {module.name}")
 
 
+def require_linked_sxs_resources(
+    module: Path,
+    compiled_resources: list[Resource],
+    linked_resources: list[Resource],
+) -> None:
+    """Require linked PE SxS resources to match the resources passed to linker."""
+    def relevant(resources: list[Resource]) -> dict[tuple[int | str, int | str, int], bytes]:
+        return {
+            resource.key: resource.data
+            for resource in resources
+            if resource.type in SXS_RESOURCE_TYPES
+        }
+
+    expected = relevant(compiled_resources)
+    actual = relevant(linked_resources)
+    if expected == actual:
+        return
+
+    missing = sorted(expected.keys() - actual.keys(), key=repr)
+    unexpected = sorted(actual.keys() - expected.keys(), key=repr)
+    changed = sorted(
+        (key for key in expected.keys() & actual.keys() if expected[key] != actual[key]),
+        key=repr,
+    )
+    raise ValueError(
+        f"SxS resources differ between RES and linked PE for {module.name}: "
+        f"missing={missing}, unexpected={unexpected}, changed={changed}"
+    )
+
+
 def write_xml(root: ET.Element, path: Path) -> None:
     """Write a UTF-8 manifest with an XML declaration."""
     ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
@@ -683,8 +865,9 @@ def prepare_resources(args: argparse.Namespace) -> None:
 def load_module_resources(payload: Path, resource_directory: Path) -> dict[str, list[Resource]]:
     """Load and validate the resource catalog for every packaged EXE, DLL and CPL.
 
-    PE headers must identify i386 modules. Each build-generated .res-path
-    index points to the compiled RES file whose private dependencies are checked.
+    Final PE resources must match the manifest, registry scripts and TypeLibs
+    passed to the linker. The linked resources then become the source catalog
+    for the shared assembly manifest.
     """
     modules = sorted(
         path for path in payload.iterdir() if path.suffix.lower() in {".exe", ".dll", ".cpl"}
@@ -692,19 +875,73 @@ def load_module_resources(payload: Path, resource_directory: Path) -> dict[str, 
     catalogs = {}
 
     for module in modules:
-        data = module.read_bytes()
-        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]  # DOS header e_lfanew.
-        signature = data[pe_offset:pe_offset + 4]
-        machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
-        if signature != b"PE\0\0" or machine != PE_MACHINE_I386:
-            raise ValueError(f"Expected an i386 PE module: {module}")
-
         index = resource_directory / f"{module.name}.res-path"
-        resources = read_res(Path(index.read_text()))
-        require_private_dependencies(module, resources)
-        catalogs[module.name] = resources
+        compiled_resources = read_res(Path(index.read_text()))
+        linked_resources = read_pe_resources(module)
+        require_linked_sxs_resources(module, compiled_resources, linked_resources)
+        require_private_dependencies(module, linked_resources)
+        catalogs[module.name] = linked_resources
 
     return catalogs
+
+
+def validate_assembly_manifest(
+    path: Path,
+    expected_providers: set[str],
+    class_owners: dict[str, tuple[str, dict[str, str]]],
+    typelib_owners: dict[tuple[str, int, int], tuple[str, bytes]],
+) -> None:
+    """Check the written assembly identity, payload list and COM metadata."""
+    root = ET.parse(path).getroot()
+    identities = root.findall("asm:assemblyIdentity", XML_NAMESPACES)
+    if root.tag != xml_tag("assembly") or len(identities) != 1:
+        raise ValueError("Invalid private assembly manifest root")
+    if identities[0].attrib != PRIVATE_IDENTITY:
+        raise ValueError("Private assembly identity does not match payload dependencies")
+
+    files = root.findall("asm:file", XML_NAMESPACES)
+    names = [entry.get("name", "") for entry in files]
+    folded_names = [name.casefold() for name in names]
+    expected_names = {name.casefold() for name in expected_providers}
+    if len(folded_names) != len(set(folded_names)) or set(folded_names) != expected_names:
+        raise ValueError("Private assembly file list does not match packaged DLL/CPL files")
+
+    actual_classes = {}
+    actual_typelibs = {}
+    for entry in files:
+        provider = entry.get("name", "").casefold()
+        for declaration in entry.findall("asm:comClass", XML_NAMESPACES):
+            clsid = declaration.get("clsid", "").casefold()
+            if not clsid or clsid in actual_classes:
+                raise ValueError(f"Duplicate or missing COM class in private manifest: {clsid}")
+            actual_classes[clsid] = (
+                provider,
+                {key: value for key, value in declaration.attrib.items() if key != "clsid"},
+            )
+
+        for declaration in entry.findall("asm:typelib", XML_NAMESPACES):
+            tlbid = declaration.get("tlbid", "").casefold()
+            version = declaration.get("version", "")
+            key = (tlbid, version)
+            if not tlbid or key in actual_typelibs:
+                raise ValueError(f"Duplicate or missing TypeLib in private manifest: {key}")
+            actual_typelibs[key] = provider
+
+    expected_classes = {
+        clsid.casefold(): (
+            provider.casefold(),
+            {key: value for key, value in attributes.items() if key != "clsid"},
+        )
+        for clsid, (provider, attributes) in class_owners.items()
+    }
+    expected_typelibs = {
+        (tlbid.casefold(), f"{major}.{minor}"): provider.casefold()
+        for (tlbid, major, minor), (provider, _) in typelib_owners.items()
+    }
+    if actual_classes != expected_classes:
+        raise ValueError("Private manifest COM classes do not match linked PE registrations")
+    if actual_typelibs != expected_typelibs:
+        raise ValueError("Private manifest TypeLibs do not match linked PE resources")
 
 
 def prepare_assembly(args: argparse.Namespace) -> None:
@@ -742,7 +979,9 @@ def prepare_assembly(args: argparse.Namespace) -> None:
 
         print(f"Private provider: {provider}, COM classes: {len(classes)}", flush=True)
 
-    write_xml(assembly, args.payload / f"{ASSEMBLY_NAME}.manifest")
+    manifest = args.payload / f"{ASSEMBLY_NAME}.manifest"
+    write_xml(assembly, manifest)
+    validate_assembly_manifest(manifest, provider_set, owners, typelib_owners)
 
 
 def main() -> None:
