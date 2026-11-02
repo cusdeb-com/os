@@ -31,7 +31,7 @@ Every build is currently a full clean rebuild and takes roughly 10–20 minutes 
 
 ## Build overview
 
-`run-iso-build.sh` builds a Docker image and runs `build-iso.sh` inside it. `build-iso.sh` compiles the custom Calamares viewmodule, then runs `lb build`.
+`run-iso-build.sh` builds a Docker image and runs `build-iso.sh` inside it. `build-iso.sh` compiles the custom Calamares viewmodule, runs the `live-build` stages, removes the build DNS copied into `/run`, and restores the `systemd-resolved` symlink after chroot cleanup.
 
 `auto/config` sets the main `live-build` options: Debian trixie, amd64, `iso-hybrid`, GRUB for BIOS/UEFI, no apt recommends, firmware controlled via `calamares.list.chroot`.
 

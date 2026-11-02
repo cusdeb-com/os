@@ -67,7 +67,20 @@ echo "Custom viewmodule installed to: ${MODULE_INSTALL_DIR}"
 cd "${BUILD_DIR}"
 
 echo "[2/4] Building live image (full clean build, ~10-20 minutes)..."
-lb build
+lb bootstrap
+lb chroot
+
+# Debian live-build restores its scrubbed debootstrap resolv.conf here. Set
+# the resolver link after that cleanup, before the chroot is copied into ISO.
+if [ -e "${BUILD_DIR}/chroot/usr/lib/systemd/system/systemd-resolved.service" ]; then
+    # systemd-resolved copied live-build's temporary resolver into this /run file.
+    rm -f "${BUILD_DIR}/chroot/run/systemd/resolve/stub-resolv.conf"
+    ln -snf ../run/systemd/resolve/stub-resolv.conf "${BUILD_DIR}/chroot/etc/resolv.conf"
+fi
+
+lb installer
+lb binary
+lb source
 
 echo "[3/4] Collecting output..."
 mkdir -p "${OUT_DIR}"
