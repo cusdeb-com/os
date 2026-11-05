@@ -24,3 +24,4 @@
 0025-private-shell-cpl-path.patch
 0026-shell32-typelib-version.patch
 0027-shell32-cpl-search-buffer.patch
+0028-shlwapi-sxs-aware-pin-dll-of-clsid.patch
