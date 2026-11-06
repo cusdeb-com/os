@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -112,9 +113,6 @@ COM_REGISTRY_RESOURCE_TYPES = {"REGISTRY", "WINE_REGISTRY"}
 
 # Compiled type library resources use the Win32 TYPELIB resource type.
 TYPELIB_RESOURCE_TYPE = "TYPELIB"
-
-# These resources determine private assembly routing or its COM metadata.
-SXS_RESOURCE_TYPES = {RT_MANIFEST, TYPELIB_RESOURCE_TYPE, *COM_REGISTRY_RESOURCE_TYPES}
 
 # MSFT type library layout used by the ReactOS resource compiler.
 MSFT_TYPELIB_HEADER_SIZE = 84
@@ -763,33 +761,36 @@ def require_private_dependencies(module: Path, resources: list[Resource]) -> Non
             raise ValueError(f"Private dependency missing: {module.name}")
 
 
-def require_linked_sxs_resources(
+def require_linked_resources(
     module: Path,
     compiled_resources: list[Resource],
     linked_resources: list[Resource],
 ) -> None:
-    """Require linked PE SxS resources to match the resources passed to linker."""
-    def relevant(resources: list[Resource]) -> dict[tuple[int | str, int | str, int], bytes]:
-        return {
-            resource.key: resource.data
-            for resource in resources
-            if resource.type in SXS_RESOURCE_TYPES
-        }
-
-    expected = relevant(compiled_resources)
-    actual = relevant(linked_resources)
+    """Require every linked PE resource to match the RES records passed to the linker."""
+    expected = Counter((resource.key, resource.data) for resource in compiled_resources)
+    actual = Counter((resource.key, resource.data) for resource in linked_resources)
     if expected == actual:
         return
 
-    missing = sorted(expected.keys() - actual.keys(), key=repr)
-    unexpected = sorted(actual.keys() - expected.keys(), key=repr)
-    changed = sorted(
-        (key for key in expected.keys() & actual.keys() if expected[key] != actual[key]),
-        key=repr,
-    )
+    missing_records = expected - actual
+    unexpected_records = actual - expected
+
+    def key_counts(records: Counter) -> Counter:
+        counts = Counter()
+        for (key, _), count in records.items():
+            counts[key] += count
+        return counts
+
+    missing = key_counts(missing_records)
+    unexpected = key_counts(unexpected_records)
+    changed = sorted(missing.keys() & unexpected.keys(), key=repr)
+    missing_only = sorted(missing.keys() - unexpected.keys(), key=repr)
+    unexpected_only = sorted(unexpected.keys() - missing.keys(), key=repr)
     raise ValueError(
-        f"SxS resources differ between RES and linked PE for {module.name}: "
-        f"missing={missing}, unexpected={unexpected}, changed={changed}"
+        f"PE resources differ between RES and linked PE for {module.name}: "
+        f"missing={[(key, missing[key]) for key in missing_only]}, "
+        f"unexpected={[(key, unexpected[key]) for key in unexpected_only]}, "
+        f"changed={[(key, missing[key], unexpected[key]) for key in changed]}"
     )
 
 
@@ -878,7 +879,7 @@ def load_module_resources(payload: Path, resource_directory: Path) -> dict[str, 
         index = resource_directory / f"{module.name}.res-path"
         compiled_resources = read_res(Path(index.read_text()))
         linked_resources = read_pe_resources(module)
-        require_linked_sxs_resources(module, compiled_resources, linked_resources)
+        require_linked_resources(module, compiled_resources, linked_resources)
         require_private_dependencies(module, linked_resources)
         catalogs[module.name] = linked_resources
 

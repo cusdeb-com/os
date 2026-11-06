@@ -1,7 +1,9 @@
 #define COBJMACROS
 #include <windows.h>
 #include <objbase.h>
+#include <oleauto.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <tlhelp32.h>
 #include <urlmon.h>
 #include <stdio.h>
@@ -10,6 +12,7 @@
 static const GUID clsid_aclistisf = {0x03c036f1, 0xa186, 0x11d0, {0x82, 0x4a, 0x00, 0xaa, 0x00, 0x5b, 0x43, 0x83}};
 static const GUID clsid_autocomplete = {0x00bb2763, 0x6a77, 0x11d0, {0xa5, 0x35, 0x00, 0xc0, 0x4f, 0xd7, 0xd0, 0x62}};
 static const GUID clsid_shelllink = {0x00021401, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const GUID clsid_shell = {0x13709620, 0xc279, 0x11ce, {0xa4, 0x9e, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00}};
 static const GUID clsid_internet_security_manager = {0x7b8a2d94, 0x0ac9, 0x11d1, {0x89, 0x6c, 0x00, 0xc0, 0x4f, 0xb6, 0xbf, 0xc4}};
 static const GUID clsid_missing_server = {0xdeadbeef, 0x1234, 0x5678, {0x90, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67}};
 static const GUID clsid_unknown = {0xdeadbeef, 0x1234, 0x5678, {0x90, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x68}};
@@ -59,6 +62,12 @@ static BOOL set_private_dir(HMODULE shlwapi)
     return TRUE;
 }
 
+static void record_result(const char *scenario, BOOL passed, int *failures)
+{
+    printf("CASE %s: %s\n", scenario, passed ? "PASS" : "FAIL");
+    if (!passed) ++*failures;
+}
+
 static shpin_dll_of_clsid_fn get_shpin(HMODULE shlwapi)
 {
     union { FARPROC generic; shpin_dll_of_clsid_fn typed; } symbol;
@@ -86,12 +95,26 @@ static BOOL report_com(const char *label, REFCLSID clsid, LPCWSTR expected)
             printf("COM provider %s -> ", label); print_wide(path);
             printf(" (%s)\n", private_provider ? "CDEX" : "Wine/system");
             if (expected && (!private_provider || !has_basename(path, expected)))
+            {
+                printf("FAIL: COM provider mismatch for %s; expected ", label);
+                print_wide(expected);
+                printf(", got "); print_wide(path); printf("\n");
                 result = FALSE;
+            }
         }
-        else result = FALSE;
+        else
+        {
+            printf("FAIL: could not map %s interface vtable to a loaded module (error=%lu)\n",
+                   label, GetLastError());
+            result = FALSE;
+        }
         IUnknown_Release(object);
     }
-    if (!result) printf("FAIL: COM provider mismatch for %s\n", label);
+    else if (expected)
+    {
+        printf("FAIL: COM activation for %s returned no object; expected provider ", label);
+        print_wide(expected); printf("\n");
+    }
     return result;
 }
 
@@ -113,7 +136,10 @@ static HMODULE report_module(const char *label, shpin_dll_of_clsid_fn pin, REFII
         printf(" (%s)\n", private_provider ? "CDEX" : "Wine/system");
         if (private_provider != private_expected || (expected && !has_basename(path, expected)))
         {
-            printf("FAIL: unexpected provider for %s\n", label);
+            printf("FAIL: %s expected %s provider ", label,
+                   private_expected ? "CDEX" : "Wine/system");
+            if (expected) print_wide(expected); else printf("<any>");
+            printf(", got "); print_wide(path); printf("\n");
             FreeLibrary(module);
             return NULL;
         }
@@ -121,6 +147,11 @@ static HMODULE report_module(const char *label, shpin_dll_of_clsid_fn pin, REFII
     }
 
     printf(" -> NULL, error=%lu\n", GetLastError());
+    if (private_expected && expected)
+    {
+        printf("FAIL: %s expected private provider ", label);
+        print_wide(expected); printf("\n");
+    }
     if (module) FreeLibrary(module);
     return NULL;
 }
@@ -202,6 +233,7 @@ static BOOL test_sh_auto_complete(HMODULE shlwapi)
 
     hr = auto_complete(edit, 0x0f); /* SHACF_FILESYSTEM | SHACF_URLALL | SHACF_USETAB */
     printf("SHAutoComplete -> 0x%08lx\n", (unsigned long)hr);
+    if (FAILED(hr)) printf("FAIL: SHAutoComplete returned HRESULT 0x%08lx\n", (unsigned long)hr);
     if (SUCCEEDED(hr))
     {
         SetFocus(edit);
@@ -238,7 +270,11 @@ static BOOL test_nested_actctx(shpin_dll_of_clsid_fn pin)
     HMODULE module;
     BOOL result;
 
-    if (!sibling_path(L"runtime.manifest", manifest, ARRAYSIZE(manifest))) return FALSE;
+    if (!sibling_path(L"nested.manifest", manifest, ARRAYSIZE(manifest))) return FALSE;
+    module = report_module("outer provider before nested context", pin, &clsid_aclistisf,
+                           L"browseui.dll", TRUE);
+    result = module != NULL;
+    if (module) FreeLibrary(module);
     memset(&actctx, 0, sizeof(actctx));
     actctx.cbSize = sizeof(actctx);
     actctx.lpSource = manifest;
@@ -254,9 +290,8 @@ static BOOL test_nested_actctx(shpin_dll_of_clsid_fn pin)
         ReleaseActCtx(handle);
         return FALSE;
     }
-    module = report_module("nested activation context", pin, &clsid_aclistisf,
-                           L"browseui.dll", TRUE);
-    result = module != NULL;
+    module = report_module("nested provider", pin, &clsid_aclistisf, L"shell32.dll", TRUE);
+    result = result && module != NULL;
     if (module) FreeLibrary(module);
     if (!DeactivateActCtx(0, cookie))
     {
@@ -264,9 +299,57 @@ static BOOL test_nested_actctx(shpin_dll_of_clsid_fn pin)
         result = FALSE;
     }
     ReleaseActCtx(handle);
-    printf("Nested activation context: %s\n", result ? "PASS" : "FAIL");
+    module = report_module("outer provider after nested context", pin, &clsid_aclistisf,
+                           L"browseui.dll", TRUE);
+    result = result && module != NULL;
+    if (module) FreeLibrary(module);
+    printf("Nested provider transition A->B->A: %s\n", result ? "PASS" : "FAIL");
     return result;
 }
+
+static BOOL test_shell_application(void)
+{
+    IDispatch *shell = NULL;
+    VARIANT argument, result;
+    DISPPARAMS parameters = {&argument, NULL, 1, 0};
+    LPOLESTR name = L"NameSpace";
+    DISPID dispid;
+    HRESULT hr;
+    HMODULE provider;
+    WCHAR path[MAX_PATH];
+    BOOL ok = FALSE;
+
+    hr = CoCreateInstance(&clsid_shell, NULL, CLSCTX_INPROC_SERVER, &IID_IDispatch,
+                          (void **)&shell);
+    printf("CoCreateInstance Shell.Application -> 0x%08lx\n", (unsigned long)hr);
+    if (FAILED(hr) || !shell) return FALSE;
+
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCWSTR)(ULONG_PTR)shell->lpVtbl, &provider) &&
+        GetModuleFileNameW(provider, path, ARRAYSIZE(path)))
+    {
+        printf("COM provider Shell.Application -> "); print_wide(path); printf("\n");
+        ok = is_private_path(path) && has_basename(path, L"shell32.dll");
+    }
+
+    VariantInit(&argument);
+    V_VT(&argument) = VT_I4;
+    V_I4(&argument) = CSIDL_DESKTOP;
+    VariantInit(&result);
+    hr = IDispatch_GetIDsOfNames(shell, &IID_NULL, &name, 1, LOCALE_USER_DEFAULT, &dispid);
+    if (SUCCEEDED(hr))
+        hr = IDispatch_Invoke(shell, dispid, &IID_NULL, LOCALE_USER_DEFAULT,
+                              DISPATCH_METHOD, &parameters, &result, NULL, NULL);
+    printf("Shell.Application.NameSpace(CSIDL_DESKTOP) -> 0x%08lx\n", (unsigned long)hr);
+    ok = ok && SUCCEEDED(hr) && result.vt == VT_DISPATCH && result.pdispVal != NULL;
+    VariantClear(&result);
+    IDispatch_Release(shell);
+    printf("Shell.Application interface call: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+static BOOL is_wine_system_path(const char *path);
 
 static BOOL verify_child_log(LPCWSTR filename)
 {
@@ -275,7 +358,12 @@ static BOOL verify_child_log(LPCWSTR filename)
     SIZE_T root_length;
     BOOL result;
 
-    if (!file) return FALSE;
+    if (!file)
+    {
+        printf("Could not open child DLL map: "); print_wide(filename);
+        printf(" (error=%lu)\n", GetLastError());
+        return FALSE;
+    }
     {
         size_t length = fread(contents, 1, sizeof(contents) - 1, file);
         contents[length] = 0;
@@ -296,11 +384,46 @@ static BOOL verify_child_log(LPCWSTR filename)
     if (!root_length) return FALSE;
     CharLowerBuffA(contents, lstrlenA(contents));
     CharLowerBuffA(private_path, (DWORD)root_length);
-    result = strstr(contents, "shell32.dll ->") && strstr(contents, "shlwapi.dll ->") &&
+    result = strstr(contents, "CDEX private COM context: absent") &&
+             strstr(contents, "shell32.dll ->") && strstr(contents, "shlwapi.dll ->") &&
              strstr(contents, "browseui.dll ->") && !strstr(contents, private_path);
+    if (!result) printf("FAIL: child retained a private context or its DLL map is incomplete/private\n");
+    {
+        const char *modules[] = {"shell32.dll", "shlwapi.dll", "browseui.dll"};
+        unsigned int index;
+
+        for (index = 0; index < ARRAYSIZE(modules) && result; ++index)
+        {
+            char needle[80], provider[MAX_PATH * 4];
+            const char *line, *path, *line_end;
+            SIZE_T path_length;
+
+            snprintf(needle, sizeof(needle), "%s -> ", modules[index]);
+            line = strstr(contents, needle);
+            if (!line) { result = FALSE; break; }
+            path = line + strlen(needle);
+            line_end = strchr(path, '\n');
+            path_length = line_end ? (SIZE_T)(line_end - path) : strlen(path);
+            if (path_length >= sizeof(provider)) { result = FALSE; break; }
+            memcpy(provider, path, path_length);
+            provider[path_length] = 0;
+            result = is_wine_system_path(provider);
+        }
+    }
     printf("x86 child DLL map:\n%s", contents);
-    printf("x86 child Wine DLL map: %s\n", result ? "PASS" : "FAIL");
+    printf("x86 child context and Wine DLL map: %s\n", result ? "PASS" : "FAIL");
     return result;
+}
+
+static BOOL is_wine_system_path(const char *path)
+{
+    static const char system32[] = "c:\\windows\\system32\\";
+    static const char syswow64[] = "c:\\windows\\syswow64\\";
+
+    return !strncmp(path, system32, sizeof(system32) - 1) ||
+           !strncmp(path, syswow64, sizeof(syswow64) - 1) ||
+           strstr(path, "\\usr\\lib\\wine\\") != NULL ||
+           strstr(path, "/usr/lib/wine/") != NULL;
 }
 
 static BOOL test_zonechk(HMODULE shlwapi)
@@ -323,6 +446,8 @@ static BOOL test_zonechk(HMODULE shlwapi)
     hr = zone_check(L"file:///C:/reactos/explorer.exe", NULL, 0, NULL, 0,
                     URLACTION_SHELL_EXECUTE_HIGHRISK, 0, NULL, NULL);
     printf("ZoneCheckUrlExCacheW(Internet Security Manager) -> 0x%08lx\n", (unsigned long)hr);
+    printf("ZoneCheckUrlExCacheW call HRESULT: %s\n", SUCCEEDED(hr) ? "success" : "failure");
+    printf("ZoneCheckUrlExCacheW HRESULT status: %s\n", SUCCEEDED(hr) ? "success" : "failure");
     snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
     if (snapshot == INVALID_HANDLE_VALUE)
     {
@@ -358,15 +483,26 @@ static BOOL test_pin_performance(shpin_dll_of_clsid_fn pin)
     unsigned int i;
     double resolver_ms, direct_ms;
 
-    if (!QueryPerformanceFrequency(&frequency) ||
-        !sibling_path(L"browseui.dll", direct_path, ARRAYSIZE(direct_path)))
+    if (!QueryPerformanceFrequency(&frequency))
+    {
+        printf("QueryPerformanceFrequency failed: %lu\n", GetLastError());
         return FALSE;
+    }
+    if (!sibling_path(L"browseui.dll", direct_path, ARRAYSIZE(direct_path)))
+    {
+        printf("Could not form the private browseui.dll path for the timing comparison\n");
+        return FALSE;
+    }
 
     QueryPerformanceCounter(&before);
     for (i = 0; i < 500; ++i)
     {
         HMODULE module = pin(&clsid_aclistisf);
-        if (!module) return FALSE;
+        if (!module)
+        {
+            printf("SHPinDllOfCLSID failed during timing probe at iteration %u: %lu\n", i, GetLastError());
+            return FALSE;
+        }
         FreeLibrary(module);
     }
     QueryPerformanceCounter(&after);
@@ -376,7 +512,11 @@ static BOOL test_pin_performance(shpin_dll_of_clsid_fn pin)
     for (i = 0; i < 500; ++i)
     {
         HMODULE module = LoadLibraryExW(direct_path, NULL, 0);
-        if (!module) return FALSE;
+        if (!module)
+        {
+            printf("LoadLibraryExW failed during timing baseline at iteration %u: %lu\n", i, GetLastError());
+            return FALSE;
+        }
         FreeLibrary(module);
     }
     QueryPerformanceCounter(&after);
@@ -430,8 +570,11 @@ int main(void)
     shpin_dll_of_clsid_fn pin;
     unsigned int i;
     int failures = 0;
-    WCHAR child[MAX_PATH], child_source[MAX_PATH], child_log[MAX_PATH], child_args[MAX_PATH + 4];
+    BOOL passed;
+    WCHAR child[MAX_PATH], child_temp[MAX_PATH], child_source[MAX_PATH];
+    WCHAR child_log[MAX_PATH], temp_path[MAX_PATH], child_args[MAX_PATH + 4];
     DWORD temp_length;
+    BOOL child_temp_created = FALSE, child_created = FALSE, child_log_created = FALSE;
 
     CoInitialize(NULL);
     shlwapi = LoadLibraryW(L"shlwapi.dll");
@@ -462,116 +605,170 @@ int main(void)
     }
 
     remove_test_registry_keys();
-    if (!test_sh_auto_complete(shlwapi)) ++failures;
+    passed = test_sh_auto_complete(shlwapi);
+    record_result("SHAutoComplete call", passed, &failures);
 
-    failures += !report_com("ACListISF", &clsid_aclistisf, L"browseui.dll");
+    passed = report_com("ACListISF", &clsid_aclistisf, L"browseui.dll");
+    record_result("COM activation ACListISF", passed, &failures);
     module = report_module("ACListISF", pin, &clsid_aclistisf, L"browseui.dll", TRUE);
-    if (!module) ++failures;
+    record_result("SHPin provider ACListISF", module != NULL, &failures);
     if (module) FreeLibrary(module);
-    failures += !report_com("AutoComplete", &clsid_autocomplete, L"browseui.dll");
+    passed = report_com("AutoComplete", &clsid_autocomplete, L"browseui.dll");
+    record_result("COM activation AutoComplete", passed, &failures);
     module = report_module("AutoComplete", pin, &clsid_autocomplete, L"browseui.dll", TRUE);
-    if (!module) ++failures;
+    record_result("SHPin provider AutoComplete", module != NULL, &failures);
     if (module) FreeLibrary(module);
-    failures += !report_com("ShellLink", &clsid_shelllink, L"shell32.dll");
+    passed = report_com("ShellLink", &clsid_shelllink, L"shell32.dll");
+    record_result("COM activation ShellLink", passed, &failures);
     module = report_module("ShellLink", pin, &clsid_shelllink, L"shell32.dll", TRUE);
-    if (!module) ++failures;
+    record_result("SHPin provider ShellLink", module != NULL, &failures);
     if (module) FreeLibrary(module);
+    record_result("Shell.Application interface call", test_shell_application(), &failures);
 
     module = report_module("InternetSecurityManager registry fallback", pin,
                            &clsid_internet_security_manager, L"urlmon.dll", FALSE);
+    passed = module != NULL;
+    record_result("Wine registry fallback urlmon", passed, &failures);
     if (module) FreeLibrary(module);
-    else ++failures;
 
     module = report_module("unknown CLSID", pin, &clsid_unknown, NULL, FALSE);
+    passed = module == NULL;
     if (module)
     {
         printf("FAIL: unknown CLSID unexpectedly resolved\n");
         FreeLibrary(module);
-        ++failures;
     }
+    record_result("Unknown CLSID rejected", passed, &failures);
 
-    if (!register_invalid_registry_fallback())
+    passed = register_invalid_registry_fallback();
+    if (!passed)
     {
         printf("FAIL: could not register malformed test-only value, error=%lu\n", GetLastError());
-        ++failures;
     }
     else if ((module = report_module("malformed registry string", pin,
                                     &clsid_invalid_registry, NULL, FALSE)) != NULL)
     {
         printf("FAIL: malformed registry string loaded a DLL\n");
         FreeLibrary(module);
-        ++failures;
+        passed = FALSE;
     }
     else if (GetLastError() != ERROR_INVALID_DATA)
     {
         printf("FAIL: malformed registry string returned error=%lu, expected %lu\n",
                GetLastError(), ERROR_INVALID_DATA);
-        ++failures;
+        passed = FALSE;
     }
     else
         printf("PASS: malformed registry string failed with ERROR_INVALID_DATA\n");
+    record_result("Malformed registry value rejected", passed, &failures);
 
-    if (!register_missing_server_fallback())
+    passed = register_missing_server_fallback();
+    if (!passed)
     {
         printf("FAIL: could not register test-only fallback key, error=%lu\n", GetLastError());
-        ++failures;
     }
     else if ((module = report_module("SxS class with missing provider", pin,
                                     &clsid_missing_server, NULL, FALSE)) != NULL)
     {
         printf("FAIL: missing SxS provider fell back to the registry\n");
         FreeLibrary(module);
-        ++failures;
+        passed = FALSE;
     }
     else
         printf("PASS: missing SxS provider failed closed despite registry fallback\n");
+    record_result("Missing SxS provider fails closed", passed, &failures);
 
-    if (!register_missing_system_server_fallback())
+    passed = register_missing_system_server_fallback();
+    if (!passed)
     {
         printf("FAIL: could not register same-name Wine DLL fallback, error=%lu\n", GetLastError());
-        ++failures;
     }
     else if ((module = report_module("missing private urlmon with Wine fallback", pin,
                                     &clsid_missing_system_server, L"urlmon.dll", FALSE)) != NULL)
     {
         printf("FAIL: missing private provider loaded the existing Wine urlmon.dll\n");
         FreeLibrary(module);
-        ++failures;
+        passed = FALSE;
     }
     else
         printf("PASS: missing private urlmon did not fall back to the existing Wine DLL\n");
+    record_result("Missing private provider does not load Wine DLL", passed, &failures);
 
-    if (!test_nested_actctx(pin)) ++failures;
-    if (!test_zonechk(shlwapi)) ++failures;
+    record_result("Nested activation-context transition", test_nested_actctx(pin), &failures);
+    record_result("ZoneCheck COM provider resolution", test_zonechk(shlwapi), &failures);
 
     if (!sibling_path(L"shpin-child.exe", child_source, ARRAYSIZE(child_source)) ||
-        !(temp_length = GetTempPathW(ARRAYSIZE(child), child)) ||
-        temp_length + (DWORD)lstrlenW(L"shpin-child.exe") >= ARRAYSIZE(child) ||
-        !(temp_length = GetTempPathW(ARRAYSIZE(child_log), child_log)) ||
-        temp_length + (DWORD)lstrlenW(L"shpin-child.log") >= ARRAYSIZE(child_log))
+        !(temp_length = GetTempPathW(ARRAYSIZE(temp_path), temp_path)) ||
+        temp_length >= ARRAYSIZE(temp_path) ||
+        !GetTempFileNameW(temp_path, L"shp", 0, child_temp))
     {
         printf("Could not locate child test files\n");
         ++failures;
     }
     else
     {
-        lstrcatW(child, L"shpin-child.exe");
-        lstrcatW(child_log, L"shpin-child.log");
-        child_args[0] = L'"';
-        lstrcpynW(child_args + 1, child_log, ARRAYSIZE(child_args) - 2);
-        lstrcatW(child_args, L"\"");
-        if (!CopyFileW(child_source, child, FALSE) ||
-            !launch_probe(child, child_args, FALSE) || !verify_child_log(child_log)) ++failures;
-        DeleteFileW(child);
-        DeleteFileW(child_log);
+        WCHAR *extension;
+        child_temp_created = TRUE;
+        lstrcpynW(child, child_temp, ARRAYSIZE(child));
+        extension = wcsrchr(child, L'.');
+        if (!extension || lstrcmpiW(extension, L".tmp"))
+        {
+            printf("GetTempFileNameW returned an unexpected path\n");
+            ++failures;
+        }
+        else
+        {
+            lstrcpyW(extension, L".exe");
+            if (!MoveFileW(child_temp, child))
+            {
+                printf("Could not reserve unique child path: %lu\n", GetLastError());
+                ++failures;
+            }
+            else
+            {
+                child_temp_created = FALSE;
+                child_created = TRUE;
+                if (!GetTempFileNameW(temp_path, L"shl", 0, child_log))
+                {
+                    printf("Could not reserve unique child log path: %lu\n", GetLastError());
+                    ++failures;
+                }
+                else
+                {
+                    child_log_created = TRUE;
+                    child_args[0] = L'"';
+                    lstrcpynW(child_args + 1, child_log, ARRAYSIZE(child_args) - 2);
+                    lstrcatW(child_args, L"\"");
+                    if (!CopyFileW(child_source, child, FALSE))
+                    {
+                        printf("CopyFileW child image failed: %lu\n", GetLastError());
+                        ++failures;
+                    }
+                    else
+                    {
+                        passed = launch_probe(child, child_args, FALSE);
+                        record_result("x86 child launched via ShellExecuteEx", passed, &failures);
+                        if (passed)
+                            record_result("x86 child has no CDEX context and uses Wine DLLs",
+                                          verify_child_log(child_log), &failures);
+                        else
+                            printf("CASE x86 child DLL map: SKIP (child did not exit cleanly)\n");
+                    }
+                }
+            }
+        }
+        if (child_temp_created) DeleteFileW(child_temp);
+        if (child_created) DeleteFileW(child);
+        if (child_log_created) DeleteFileW(child_log);
     }
-    if (!launch_probe(L"C:\\windows\\sysnative\\notepad.exe", NULL, TRUE)) ++failures;
+    record_result("x64 Wine process launched via ShellExecuteEx",
+                  launch_probe(L"C:\\windows\\sysnative\\notepad.exe", NULL, TRUE), &failures);
 
     module = pin(&clsid_aclistisf);
+    passed = module != NULL;
     if (!module)
     {
         printf("FAIL: initial repeat-test pin failed, error=%lu\n", GetLastError());
-        ++failures;
     }
     else
     {
@@ -582,7 +779,7 @@ int main(void)
             if (!module || module != expected)
             {
                 printf("FAIL: repeat %u returned %p, expected %p, error=%lu\n", i, module, expected, GetLastError());
-                ++failures;
+                passed = FALSE;
                 if (module) FreeLibrary(module);
                 break;
             }
@@ -591,8 +788,9 @@ int main(void)
         FreeLibrary(expected);
         if (i == 32) printf("PASS: 32 repeated pin/free calls returned the same module\n");
     }
+    record_result("Repeated pin/free stability", passed, &failures);
 
-    if (!test_pin_performance(pin)) ++failures;
+    record_result("Resolver timing probe", test_pin_performance(pin), &failures);
 
     remove_test_registry_keys();
     FreeLibrary(shlwapi);

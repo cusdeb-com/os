@@ -22,16 +22,47 @@ from prepare_sxs_manifests import (
     new_manifest,
     parse_type_library,
     read_pe_resources,
-    require_linked_sxs_resources,
+    require_linked_resources,
     require_private_dependencies,
     validate_assembly_manifest,
     xml_tag,
 )
 
 
-def pe_with_manifest(manifest: bytes) -> bytes:
-    """Build a minimal x86 PE with one neutral-language RT_MANIFEST resource."""
-    resource_size = 96 + len(manifest)
+def pe_with_resources(resources: list[tuple[int, int, int, bytes]]) -> bytes:
+    """Build a minimal x86 PE with ordinal type/name/language resources."""
+    types = sorted({resource[0] for resource in resources})
+    grouped = {}
+    for resource in resources:
+        grouped.setdefault(resource[:2], []).append(resource)
+    names_by_type = {
+        resource_type: sorted(name for kind, name in grouped if kind == resource_type)
+        for resource_type in types
+    }
+    offset = 16 + 8 * len(types)
+    type_offsets = {}
+    for resource_type in types:
+        type_offsets[resource_type] = offset
+        offset += 16 + 8 * len(names_by_type[resource_type])
+
+    language_offsets = {}
+    for resource_type in types:
+        for name in names_by_type[resource_type]:
+            language_offsets[(resource_type, name)] = offset
+            offset += 16 + 8 * len(grouped[(resource_type, name)])
+
+    data_entry_offsets = {}
+    for resource_type, name, language, _ in resources:
+        data_entry_offsets[(resource_type, name, language)] = offset
+        offset += PE_RESOURCE_DATA_ENTRY.size
+
+    payload_offsets = {}
+    for resource_type, name, language, payload in resources:
+        offset = (offset + 3) & ~3
+        payload_offsets[(resource_type, name, language)] = offset
+        offset += len(payload)
+
+    resource_size = offset
     section_size = (resource_size + 0x1FF) & ~0x1FF
     image = bytearray(0x200 + section_size)
     image[:2] = b"MZ"
@@ -52,19 +83,41 @@ def pe_with_manifest(manifest: bytes) -> bytes:
         b".rsrc\0\0\0", resource_size, 0x1000, section_size, 0x200,
     )
 
-    resources = memoryview(image)[0x200:0x200 + resource_size]
-    resources[:PE_RESOURCE_DIRECTORY_HEADER.size] = PE_RESOURCE_DIRECTORY_HEADER.pack(
-        0, 0, 0, 0, 0, 1,
-    )
-    resources[16:24] = PE_RESOURCE_DIRECTORY_ENTRY.pack(
-        RT_MANIFEST, 0x80000018,
-    )
-    resources[24:40] = PE_RESOURCE_DIRECTORY_HEADER.pack(0, 0, 0, 0, 0, 1)
-    resources[40:48] = PE_RESOURCE_DIRECTORY_ENTRY.pack(1, 0x80000030)
-    resources[48:64] = PE_RESOURCE_DIRECTORY_HEADER.pack(0, 0, 0, 0, 0, 1)
-    resources[64:72] = PE_RESOURCE_DIRECTORY_ENTRY.pack(0, 80)
-    resources[80:96] = PE_RESOURCE_DATA_ENTRY.pack(0x1060, len(manifest), 0, 0)
-    resources[96:96 + len(manifest)] = manifest
+    resource_data = memoryview(image)[0x200:0x200 + resource_size]
+    resource_data[:16] = PE_RESOURCE_DIRECTORY_HEADER.pack(0, 0, 0, 0, 0, len(types))
+    for index, resource_type in enumerate(types):
+        resource_data[16 + index * 8:24 + index * 8] = PE_RESOURCE_DIRECTORY_ENTRY.pack(
+            resource_type, 0x80000000 | type_offsets[resource_type],
+        )
+        type_offset = type_offsets[resource_type]
+        names = names_by_type[resource_type]
+        resource_data[type_offset:type_offset + 16] = PE_RESOURCE_DIRECTORY_HEADER.pack(
+            0, 0, 0, 0, 0, len(names),
+        )
+        for name_index, name in enumerate(names):
+            entry_offset = type_offset + 16 + name_index * 8
+            resource_data[entry_offset:entry_offset + 8] = PE_RESOURCE_DIRECTORY_ENTRY.pack(
+                name, 0x80000000 | language_offsets[(resource_type, name)],
+            )
+
+    for (resource_type, name), matching in grouped.items():
+        directory_offset = language_offsets[(resource_type, name)]
+        resource_data[directory_offset:directory_offset + 16] = PE_RESOURCE_DIRECTORY_HEADER.pack(
+            0, 0, 0, 0, 0, len(matching),
+        )
+        for index, (_, _, language, payload) in enumerate(matching):
+            entry_offset = directory_offset + 16 + index * 8
+            data_entry_offset = data_entry_offsets[(resource_type, name, language)]
+            resource_data[entry_offset:entry_offset + 8] = PE_RESOURCE_DIRECTORY_ENTRY.pack(
+                language, data_entry_offset,
+            )
+            resource_data[data_entry_offset:data_entry_offset + PE_RESOURCE_DATA_ENTRY.size] = (
+                PE_RESOURCE_DATA_ENTRY.pack(
+                    0x1000 + payload_offsets[(resource_type, name, language)], len(payload), 0, 0,
+                )
+            )
+            payload_offset = payload_offsets[(resource_type, name, language)]
+            resource_data[payload_offset:payload_offset + len(payload)] = payload
     return bytes(image)
 
 
@@ -109,29 +162,38 @@ class TypeLibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_type_library(b"MSFT")
 
-    def test_linked_pe_contains_matching_private_manifest(self):
+    def test_linked_pe_preserves_all_resources_and_private_manifest(self):
         manifest = new_manifest({**PRIVATE_IDENTITY, "name": "CusDeb.ReactOS.test.exe"})
         add_private_dependency(manifest)
         manifest_data = ET.tostring(manifest, encoding="utf-8", xml_declaration=True)
+        source_resources = [
+            (RT_MANIFEST, 1, 0, manifest_data),
+            (3, 101, 0, b"icon resource"),
+            (16, 1, 0, b"version resource"),
+        ]
 
         with tempfile.TemporaryDirectory() as directory:
             module = Path(directory) / "test.exe"
-            module.write_bytes(pe_with_manifest(manifest_data))
+            module.write_bytes(pe_with_resources(source_resources))
 
             linked = read_pe_resources(module)
-            compiled = [Resource(
-                RT_MANIFEST, 1, RES_METADATA.pack(0, 0, 0, 0, 0), manifest_data,
-            )]
-            self.assertEqual([(item.type, item.name, item.language, item.data) for item in linked], [
-                (RT_MANIFEST, 1, 0, manifest_data),
-            ])
-            require_linked_sxs_resources(module, compiled, linked)
+            compiled = [
+                Resource(kind, name, RES_METADATA.pack(0, 0, language, 0, 0), payload)
+                for kind, name, language, payload in source_resources
+            ]
+            self.assertCountEqual(
+                [(item.type, item.name, item.language, item.data) for item in linked],
+                source_resources,
+            )
+            require_linked_resources(module, compiled, linked)
             require_private_dependencies(module, linked)
             corrupted = [Resource(
                 RT_MANIFEST, 1, RES_METADATA.pack(0, 0, 0, 0, 0), b"corrupted",
             )]
-            with self.assertRaisesRegex(ValueError, "SxS resources differ"):
-                require_linked_sxs_resources(module, corrupted, linked)
+            with self.assertRaisesRegex(ValueError, "PE resources differ"):
+                require_linked_resources(module, corrupted, linked)
+            with self.assertRaisesRegex(ValueError, "PE resources differ"):
+                require_linked_resources(module, compiled, linked[:-1])
 
     def test_assembly_rejects_com_metadata_not_in_linked_resources(self):
         clsid = "{00021401-0000-0000-C000-000000000046}"

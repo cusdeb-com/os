@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="SxsPinNestedContext" version="1.0.0.0" processorArchitecture="x86" />
+  <file name="shell32.dll">
+    <comClass clsid="{03c036f1-a186-11d0-824a-00aa005b4383}" threadingModel="Apartment" />
+  </file>
+</assembly>
