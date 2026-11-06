@@ -1,3 +1,24 @@
+cdex (0.0.16-3cd) trixie; urgency=medium
+
+  * tools/prepare_sxs_manifests.py: verify every final PE resource;
+    tools/tests/shpin/: run Shell.Application, nested-provider and
+    child-isolation checks from all.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Fri, 06 Nov 2026 01:31:34 +0300
+
+cdex (0.0.16-2cd) trixie; urgency=medium
+
+  * debian/patches/0028-shlwapi-sxs-aware-pin-dll-of-clsid.patch: resolve
+    private SHPinDllOfCLSID providers from the active SxS context,
+    validate Wine's COM-redirection record, and fail closed on malformed
+    or missing providers while retaining registry fallback for unlisted
+    CLSIDs.
+  * tools/tests/shpin/: add ABI, parser, and Wine runtime regression tests
+    for private COM resolution, registry fallback, fail-closed loading,
+    and child-process isolation.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 05 Nov 2026 16:18:07 +0300
+
 cdex (0.0.16-1cd) trixie; urgency=medium
 
   * debian/patches/0020-appwiz-cpl-split.patch, runtime/bin/cdex-win32-
@@ -8,6 +29,16 @@ cdex (0.0.16-1cd) trixie; urgency=medium
     64-bit.
   * debian/patches/0021-appwiz-uninstaller-64bit.patch: propagate
     ShellExecuteW launch failures.
+  * debian/patches/0022-private-shell-runtime.patch and 0023-build-
+    private-manifests.patch: keep the ReactOS x86 shell payload private
+    and embed its SxS manifests before linking.
+  * debian/patches/0024-shell32-com-manifest-fallback.patch through
+    0027-shell32-cpl-search-buffer.patch: add COM fallback, private CPL
+    routing, TypeLib version correction, and safe SearchPath buffers.
+  * tools/prepare_sxs_manifests.py: discover packaged DLL/CPL COM and
+    TypeLib metadata and validate the final linked PE resources.
+  * runtime/bin/cdex-registry: restore Search Results shell metadata
+    without adding global COM registrations.
 
  -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 29 Oct 2026 13:16:36 +0300
 

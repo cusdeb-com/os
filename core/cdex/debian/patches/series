@@ -18,3 +18,10 @@
 0019-search-folder-contextmenu-pidl.patch
 0020-appwiz-cpl-split.patch
 0021-appwiz-uninstaller-64bit.patch
+0022-private-shell-runtime.patch
+0023-build-private-manifests.patch
+0024-shell32-com-manifest-fallback.patch
+0025-private-shell-cpl-path.patch
+0026-shell32-typelib-version.patch
+0027-shell32-cpl-search-buffer.patch
+0028-shlwapi-sxs-aware-pin-dll-of-clsid.patch

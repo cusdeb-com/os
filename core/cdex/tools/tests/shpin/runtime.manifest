@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="SxsPinHarness" version="1.0.0.0" processorArchitecture="x86" />
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="CusDeb.ReactOSShell" version="1.0.0.0" processorArchitecture="x86" />
+    </dependentAssembly>
+  </dependency>
+  <file name="missing-pin-server.dll">
+    <comClass clsid="{deadbeef-1234-5678-90ab-cdef01234567}" threadingModel="Both" />
+  </file>
+  <file name="urlmon.dll">
+    <comClass clsid="{deadbeef-1234-5678-90ab-cdef0123456b}" threadingModel="Both" />
+  </file>
+</assembly>
