@@ -1,11 +1,9 @@
 #!/bin/bash
-# Launch Calamares with elevated privileges in the live X11 session.
+# Launch Calamares through the live session's authenticated XWayland.
 # pkexec strips the environment, so pass DISPLAY and XAUTHORITY explicitly.
 set -euo pipefail
 
-export DISPLAY="${DISPLAY:-:0}"
-if [ -z "${XAUTHORITY:-}" ]; then
-    XAUTHORITY="$HOME/.Xauthority"
-fi
+: "${DISPLAY:?Run Calamares from the CDEX Wayland session}"
+: "${XAUTHORITY:?The session XWayland authority is required}"
 
-exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" calamares "$@"
+exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" QT_QPA_PLATFORM=xcb calamares "$@"

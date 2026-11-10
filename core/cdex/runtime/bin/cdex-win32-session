@@ -1,9 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-export DESKTOP_SESSION=cusdeb-win32
-export XDG_SESSION_TYPE=x11
-export XDG_CURRENT_DESKTOP=CusDebWin32
+# Direct invocation starts the same Wayland session as greetd. The launcher
+# calls back into this script only after its rootful XWayland is ready.
+if [ "${CDEX_ROOTFUL_XWAYLAND:-}" != 1 ]; then
+  exec /usr/bin/cdex-wayland-session "$@"
+fi
+: "${WAYLAND_DISPLAY:?The CDEX shell requires Wayland}"
+: "${DISPLAY:?The CDEX shell requires rootful XWayland}"
+export DESKTOP_SESSION=cusdeb-wayland
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=CusDebWin32:Openbox
 export XDG_CONFIG_DIRS="/etc/xdg/cusdeb:/etc/xdg"
 export XCURSOR_THEME="Adwaita"
 export XCURSOR_SIZE=16
@@ -15,7 +22,7 @@ export WINEDEBUG="${WINEDEBUG:--all}"
 # desktop/driver host, and without it no Wine window can be created at all.
 # It is prevented from stealing the shell role by a Wine patch instead
 # (set_shell_window is only honoured for shell-enabled named desktops).
-export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d"
+export WINEDLLOVERRIDES="mscoree=d;winemenubuilder.exe=d;winewayland.drv=d"
 
 REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
 REACTOS_PREFIX="$HOME/.wine"
@@ -296,10 +303,6 @@ fi
 xsetroot -solid '#9D9EA0' || true
 log_stage "x-root-ready"
 splash_update 5
-
-if command -v spice-vdagent >/dev/null 2>&1; then
-  spice-vdagent &
-fi
 
 openbox &
 wm_pid=$!

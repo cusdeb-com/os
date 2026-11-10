@@ -1,0 +1,4 @@
+**
+!installer/
+!installer/**
+installer/out/**

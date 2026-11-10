@@ -24,27 +24,37 @@ Standards-Version: 4.7.4
 Package: cdex-base
 Architecture: amd64
 Depends: binfmt-support,
-         dbus-x11,
+         cage,
+         dbus-user-session,
          fontconfig,
+         greetd,
          gtk2-engines-pixbuf,
+         gtkgreet,
          libnss-myhostname,
          libnss-resolve,
-         lightdm,
-         lightdm-gtk-greeter,
          openbox,
          polkitd,
          python3,
-         spice-vdagent,
          systemd-resolved,
+         wayland-utils,
+         weston,
          wine (>= 11.15.0-1cd),
          wmctrl,
          x11-utils,
          x11-xserver-utils,
+         xauth,
          xdotool,
-         xorg,
          xterm,
+         xwayland,
          yad,
          ${misc:Depends}
+Conflicts: lightdm,
+           lightdm-gtk-greeter,
+           xinit,
+           xorg,
+           xserver-xorg,
+           xserver-xorg-core,
+           xserver-xorg-legacy
 Description: CDEX, a Windows-like desktop environment (base)
  CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
  experience. It is built on Win32 and uses the PE binary format, but is
