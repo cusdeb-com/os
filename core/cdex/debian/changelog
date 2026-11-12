@@ -1,3 +1,10 @@
+cdex (0.0.17-1cd) trixie; urgency=medium
+
+  * debian/patches/0022-shell32-cpl-actctx-cleanup.patch: release CPL
+    activation contexts when applet loading fails.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Thu, 12 Nov 2026 20:44:18 +0300
+
 cdex (0.0.16-1cd) trixie; urgency=medium
 
   * debian/patches/0020-appwiz-cpl-split.patch, runtime/bin/cdex-win32-
