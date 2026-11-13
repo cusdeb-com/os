@@ -21,3 +21,5 @@
 0021-edit-caret-dpi.patch
 0022-comdlg32-fontdlg-dpi.patch
 0023-riched20-default-font-dpi.patch
+0024-winex11-title-icon-size.patch
+0025-winex11-cursor-dpi.patch

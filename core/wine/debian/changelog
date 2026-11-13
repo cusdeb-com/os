@@ -35,6 +35,11 @@ wine (11.19.0-2cd) trixie; urgency=medium
     dialog images by the same whole factor and scale its colour swatch.
   * debian/patches/0023-riched20-default-font-dpi.patch: keep the point
     size of the rich edit default font at any DPI.
+  * debian/patches/0024-winex11-title-icon-size.patch: add the X11
+    Driver option TitleIconSize, which exports a window icon of the size
+    the window manager draws in the title bar.
+  * debian/patches/0025-winex11-cursor-dpi.patch: enlarge application
+    cursors by a whole factor, to match the Xcursor theme cursors.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 

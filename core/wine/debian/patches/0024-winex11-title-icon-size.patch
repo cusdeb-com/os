@@ -1,0 +1,152 @@
+Author: CusDeb OS Team
+Description: winex11: Export a window icon of the size the window manager draws.
+ _NET_WM_ICON carries the big and small window icons (64 and 32 pixels at
+ 192 DPI). Openbox draws the title bar icon at the height of its title
+ font, 40 pixels there, and scales the 64 pixel icon down, which blurs
+ it. The new X11 Driver registry option TitleIconSize names that size;
+ an icon of that size is loaded from the icon's resource and exported
+ too, so the window manager does not scale. A resource without an entry
+ of that size gives its next larger entry scaled by user32. Without the
+ option nothing changes.
+ .
+ Icons that do not come from a resource are left to the window manager.
+ CopyImage can only stretch them without a filter, and the result is
+ worse than the window manager's scaling (seen at 192 DPI with a 64 pixel
+ folder icon reduced to 40).
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/dlls/winex11.drv/window.c
++++ b/src/dlls/winex11.drv/window.c
+@@ -849,33 +849,36 @@
+  *              set_window_icon_data
+  */
+ static void set_window_icon_data( struct x11drv_win_data *data, HICON icon, const ICONINFO *ii,
+-                                  HICON icon_small, const ICONINFO *ii_small )
++                                  HICON icon_small, const ICONINFO *ii_small, const ICONINFO *ii_title )
+ {
++    const ICONINFO *extra[] = { icon_small ? ii_small : NULL, ii_title };
+     HDC hDC;
+-    unsigned int size;
++    unsigned int size, i;
+     unsigned long *bits;
+     Pixmap icon_pixmap, mask_pixmap;
+ 
+     hDC = NtGdiCreateCompatibleDC(0);
+     bits = get_bitmap_argb( hDC, ii->hbmColor, ii->hbmMask, &size );
+-    if (bits && icon_small)
++    for (i = 0; i < ARRAY_SIZE(extra); i++)
+     {
+-        unsigned int size_small;
+-        unsigned long *bits_small, *new;
++        unsigned int size_extra;
++        unsigned long *bits_extra, *new;
+ 
+-        if ((bits_small = get_bitmap_argb( hDC, ii_small->hbmColor, ii_small->hbmMask, &size_small )) &&
+-            (bits_small[0] != bits[0] || bits_small[1] != bits[1]))  /* size must be different */
++        if (!extra[i]) continue;
++        if (bits && (bits_extra = get_bitmap_argb( hDC, extra[i]->hbmColor, extra[i]->hbmMask, &size_extra )))
+         {
+-            if ((new = realloc( bits, (size + size_small) * sizeof(unsigned long) )))
++            /* size must be different */
++            if ((bits_extra[0] != bits[0] || bits_extra[1] != bits[1]) &&
++                (new = realloc( bits, (size + size_extra) * sizeof(unsigned long) )))
+             {
+                 bits = new;
+-                memcpy( bits + size, bits_small, size_small * sizeof(unsigned long) );
+-                size += size_small;
++                memcpy( bits + size, bits_extra, size_extra * sizeof(unsigned long) );
++                size += size_extra;
+             }
++            free( bits_extra );
+         }
+-        free( bits_small );
+-        NtGdiDeleteObjectApp( ii_small->hbmColor );
+-        NtGdiDeleteObjectApp( ii_small->hbmMask );
++        NtGdiDeleteObjectApp( extra[i]->hbmColor );
++        NtGdiDeleteObjectApp( extra[i]->hbmMask );
+     }
+ 
+     if (!create_icon_pixmaps( hDC, ii, &icon_pixmap, &mask_pixmap )) icon_pixmap = mask_pixmap = 0;
+@@ -3437,15 +3440,47 @@
+ void X11DRV_SetWindowIcons( HWND hwnd, HICON icon, const ICONINFO *ii, HICON icon_small, const ICONINFO *ii_small )
+ {
+     struct x11drv_win_data *data;
++    HICON icon_title = 0;
++    ICONINFO ii_title;
+ 
+     TRACE( "hwnd %p, icon %p, ii %p, icon_small %p, ii_small %p\n", hwnd, icon, ii, icon_small, ii_small );
+ 
+-    if (!(data = get_win_data( hwnd ))) return;
+-    set_window_icon_data( data, icon, ii, icon_small, ii_small );
+-    set_wm_hints( data );
++    /* The window manager scales an icon to the size it draws in the title bar.
++     * Export one of that size too, loaded from the icon's resource. An icon
++     * without a resource could only be stretched, which the window manager
++     * does better. */
++    if (title_icon_size > 0)
++    {
++        WCHAR module_buffer[MAX_PATH];
++        UNICODE_STRING module = { 0, sizeof(module_buffer), module_buffer };
++
++        if (NtUserGetIconInfo( icon, &ii_title, &module, NULL, NULL, 0 ))
++        {
++            NtGdiDeleteObjectApp( ii_title.hbmColor );
++            NtGdiDeleteObjectApp( ii_title.hbmMask );
++        }
++        if (module.Length)
++            icon_title = CopyImage( icon, IMAGE_ICON, title_icon_size, title_icon_size, LR_COPYFROMRESOURCE );
++        if (icon_title && !NtUserGetIconInfo( icon_title, &ii_title, NULL, NULL, NULL, 0 ))
++        {
++            NtUserDestroyCursor( icon_title, 0 );
++            icon_title = 0;
++        }
++    }
+ 
+-    XFlush( data->display );
+-    release_win_data( data );
++    if ((data = get_win_data( hwnd )))
++    {
++        set_window_icon_data( data, icon, ii, icon_small, ii_small, icon_title ? &ii_title : NULL );
++        set_wm_hints( data );
++        XFlush( data->display );
++        release_win_data( data );
++    }
++    else if (icon_title)
++    {
++        NtGdiDeleteObjectApp( ii_title.hbmColor );
++        NtGdiDeleteObjectApp( ii_title.hbmMask );
++    }
++    if (icon_title) NtUserDestroyCursor( icon_title, 0 );
+ }
+ 
+ 
+--- a/src/dlls/winex11.drv/x11drv.h
++++ b/src/dlls/winex11.drv/x11drv.h
+@@ -483,6 +483,7 @@
+ extern BOOL usexvidmode;
+ extern BOOL use_egl;
+ extern BOOL use_take_focus;
++extern int title_icon_size;
+ extern BOOL use_primary_selection;
+ extern BOOL use_system_cursors;
+ extern BOOL grab_fullscreen;
+--- a/src/dlls/winex11.drv/x11drv_main.c
++++ b/src/dlls/winex11.drv/x11drv_main.c
+@@ -69,6 +69,7 @@
+ BOOL usexcomposite = TRUE;
+ BOOL use_egl = TRUE;
+ BOOL use_take_focus = TRUE;
++int title_icon_size = 0;
+ BOOL use_primary_selection = FALSE;
+ BOOL use_system_cursors = TRUE;
+ BOOL grab_fullscreen = FALSE;
+@@ -465,6 +466,9 @@
+     if (!get_config_key( hkey, appkey, "UseTakeFocus", buffer, sizeof(buffer) ))
+         use_take_focus = IS_OPTION_TRUE( buffer[0] );
+ 
++    if (!get_config_key( hkey, appkey, "TitleIconSize", buffer, sizeof(buffer) ))
++        title_icon_size = wcstol( buffer, NULL, 0 );
++
+     if (!get_config_key( hkey, appkey, "UsePrimarySelection", buffer, sizeof(buffer) ))
+         use_primary_selection = IS_OPTION_TRUE( buffer[0] );
+ 

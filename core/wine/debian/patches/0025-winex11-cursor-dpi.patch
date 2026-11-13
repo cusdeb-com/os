@@ -1,0 +1,120 @@
+Author: CusDeb OS Team
+Description: winex11: Enlarge application cursors for the DPI.
+ System cursors come from the Xcursor theme at the size set in
+ Xcursor.size. Cursors that an application loads from its own resources
+ were passed to the X server at their bitmap size, a third or a half of
+ the theme cursors at 144 and 192 DPI. Enlarge them by a whole factor
+ with pixel replication.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/winex11.drv/mouse.c
++++ b/src/dlls/winex11.drv/mouse.c
+@@ -1059,12 +1059,12 @@
+  *
+  * Create a monochrome X cursor from a Windows one.
+  */
+-static Cursor create_xlib_monochrome_cursor( HDC hdc, const ICONINFOEXW *icon, int width, int height )
++static Cursor create_xlib_monochrome_cursor( HDC hdc, const ICONINFOEXW *icon, int width, int height, int scale )
+ {
+     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+     BITMAPINFO *info = (BITMAPINFO *)buffer;
+     const int and_y = 0;
+-    const int xor_y = height;
++    const int xor_y = height * scale;
+     unsigned int width_bytes = (width + 31) / 32 * 4;
+     unsigned char *mask_bits = NULL;
+     GC gc;
+@@ -1090,6 +1090,25 @@
+     if (!NtGdiGetDIBitsInternal( hdc, icon->hbmMask, 0, height * 2, mask_bits, info,
+                                  DIB_RGB_COLORS, 0, 0 )) goto done;
+ 
++    if (scale > 1)
++    {
++        unsigned int x, y, scaled_bytes = (width * scale + 31) / 32 * 4;
++        unsigned char *scaled_bits;
++
++        if (!(scaled_bits = calloc( scaled_bytes, height * 2 * scale ))) goto done;
++        for (y = 0; y < height * 2 * scale; y++)
++            for (x = 0; x < width * scale; x++)
++                if (mask_bits[y / scale * width_bytes + x / scale / 8] & (0x80 >> (x / scale % 8)))
++                    scaled_bits[y * scaled_bytes + x / 8] |= 0x80 >> (x % 8);
++        free( mask_bits );
++        mask_bits = scaled_bits;
++        width *= scale;
++        height *= scale;
++        info->bmiHeader.biWidth = width;
++        info->bmiHeader.biHeight = -height * 2;
++        info->bmiHeader.biSizeImage = scaled_bytes * height * 2;
++    }
++
+     vis.depth = 1;
+     bits.ptr = mask_bits;
+     bits.free = NULL;
+@@ -1130,14 +1149,14 @@
+     XSetFunction( gdi_display, gc, GXand );
+     XCopyArea( gdi_display, src_pixmap, src_pixmap,  gc, 0, xor_y, width, height, 0, and_y );
+     XSetFunction( gdi_display, gc, GXor );
+-    XCopyArea( gdi_display, src_pixmap, mask_pixmap, gc, 0, and_y, width, height, 1, 1 );
+-    XCopyArea( gdi_display, src_pixmap, bits_pixmap, gc, 0, and_y, width, height, 1, 1 );
++    XCopyArea( gdi_display, src_pixmap, mask_pixmap, gc, 0, and_y, width, height, scale, scale );
++    XCopyArea( gdi_display, src_pixmap, bits_pixmap, gc, 0, and_y, width, height, scale, scale );
+     XFreeGC( gdi_display, gc );
+ 
+     fg.red = fg.green = fg.blue = 0xffff;
+     bg.red = bg.green = bg.blue = 0;
+     cursor = XCreatePixmapCursor( gdi_display, bits_pixmap, mask_pixmap,
+-                                  &fg, &bg, icon->xHotspot, icon->yHotspot );
++                                  &fg, &bg, icon->xHotspot * scale, icon->yHotspot * scale );
+     XFreePixmap( gdi_display, src_pixmap );
+     XFreePixmap( gdi_display, bits_pixmap );
+     XFreePixmap( gdi_display, mask_pixmap );
+@@ -1195,7 +1214,7 @@
+                 info.xHotspot = bm.bmWidth / 2;
+                 info.yHotspot = bm.bmHeight / 2;
+             }
+-            cursor = create_xlib_monochrome_cursor( hdc, &info, bm.bmWidth, bm.bmHeight );
++            cursor = create_xlib_monochrome_cursor( hdc, &info, bm.bmWidth, bm.bmHeight, 1 );
+         }
+         else NtGdiDeleteObjectApp( info.hbmColor );
+         NtGdiDeleteObjectApp( info.hbmMask );
+@@ -1349,6 +1368,7 @@
+     ICONINFOEXW info;
+     BITMAP bm;
+     HDC hdc;
++    int scale;
+ 
+     if (!handle) return get_empty_cursor();
+ 
+@@ -1371,13 +1391,22 @@
+         info.yHotspot = bm.bmHeight / 2;
+     }
+ 
++    /* Theme cursors have the size set for Xcursor. Enlarge the application's
++     * own cursors by a whole factor for the DPI, replicating their pixels. */
++    scale = max( 1, (NtUserGetSystemDpiForProcess( NULL ) + USER_DEFAULT_SCREEN_DPI / 2) / USER_DEFAULT_SCREEN_DPI );
+     hdc = NtGdiCreateCompatibleDC( 0 );
+ 
+     if (info.hbmColor)
+     {
+ #ifdef SONAME_LIBXCURSOR
+         if (pXcursorImagesLoadCursor)
+-            cursor = create_xcursor_cursor( hdc, &info, handle, bm.bmWidth, bm.bmHeight );
++        {
++            ICONINFOEXW scaled = info;
++
++            scaled.xHotspot *= scale;
++            scaled.yHotspot *= scale;
++            cursor = create_xcursor_cursor( hdc, &scaled, handle, bm.bmWidth * scale, bm.bmHeight * scale );
++        }
+ #endif
+         if (!cursor) cursor = create_xlib_load_mono_cursor( hdc, handle, bm.bmWidth, bm.bmHeight );
+         if (!cursor) cursor = create_xlib_color_cursor( hdc, &info, bm.bmWidth, bm.bmHeight );
+@@ -1385,7 +1414,7 @@
+     }
+     else
+     {
+-        cursor = create_xlib_monochrome_cursor( hdc, &info, bm.bmWidth, bm.bmHeight );
++        cursor = create_xlib_monochrome_cursor( hdc, &info, bm.bmWidth, bm.bmHeight, scale );
+     }
+ 
+     NtGdiDeleteObjectApp( info.hbmMask );
