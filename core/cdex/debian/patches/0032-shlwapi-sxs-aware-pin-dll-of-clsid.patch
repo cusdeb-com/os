@@ -1,0 +1,322 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Resolve SHPinDllOfCLSID providers from the active SxS context.
+ Use Wine's current COM-redirection record with bounds checks, then resolve
+ the DLL through its owning activation context. Keep registry fallback only
+ for CLSIDs absent from SxS.
+Last-Modified: Thu, 05 Nov 2026 16:14:36 +0300
+
+--- a/src/dll/win32/shlwapi/ordinal.c
++++ b/src/dll/win32/shlwapi/ordinal.c
+@@ -47,6 +47,7 @@
+ #include "commdlg.h"
+ #include "mlang.h"
+ #include "mshtmhst.h"
++#include "sxsactctx.h"
+ #ifdef __REACTOS__
+     #include <shlwapi_undoc.h>
+ #endif
+@@ -2641,6 +2642,123 @@
+   return hProp;
+ }
+ 
++enum shpin_sxs_result
++{
++    SHPIN_SXS_ERROR,
++    SHPIN_SXS_NOT_FOUND,
++    SHPIN_SXS_FOUND
++};
++
++/* Resolve using Wine 11.19's private COM-redirection data. On success, the
++ * caller owns the returned path and must free it with HeapFree. Only a missing
++ * class permits registry fallback; other failures leave an error in LastError. */
++static enum shpin_sxs_result SHResolveActCtxComServer(REFIID clsid, WCHAR **resolved_dll_path)
++{
++    ACTCTX_SECTION_KEYED_DATA com_data;
++    ACTCTX_SECTION_KEYED_DATA dll_data;
++    PACTIVATION_CONTEXT_DATA_DLL_REDIRECTION dll_redirect;
++    LPCWSTR module_name;
++    WCHAR resolved_path[MAX_PATH];
++    ULONG_PTR cookie;
++    DWORD error, path_len;
++    enum shpin_sxs_result result = SHPIN_SXS_ERROR;
++    BOOL actctx_active = FALSE;
++
++    *resolved_dll_path = NULL;
++    memset(&com_data, 0, sizeof(com_data));
++    memset(&dll_data, 0, sizeof(dll_data));
++    com_data.cbSize = sizeof(com_data);
++    dll_data.cbSize = sizeof(dll_data);
++
++    if (!FindActCtxSectionGuid(FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, NULL,
++                               ACTIVATION_CONTEXT_SECTION_COM_SERVER_REDIRECTION,
++                               clsid, &com_data))
++    {
++        error = GetLastError();
++        if (error == ERROR_SXS_KEY_NOT_FOUND)
++            return SHPIN_SXS_NOT_FOUND;
++        SetLastError(error);
++        return SHPIN_SXS_ERROR;
++    }
++
++    if (!com_data.hActCtx)
++    {
++        error = ERROR_INVALID_DATA;
++        goto done;
++    }
++    error = SHPinParseActCtxComServer(&com_data, clsid, &module_name);
++    if (error != ERROR_SUCCESS)
++        goto done;
++
++    if (!ActivateActCtx(com_data.hActCtx, &cookie))
++    {
++        error = GetLastError();
++        goto done;
++    }
++    actctx_active = TRUE;
++
++    if (!FindActCtxSectionString(FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, NULL,
++                                 ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION,
++                                 module_name, &dll_data))
++    {
++        error = GetLastError();
++        goto done;
++    }
++    if (!dll_data.hActCtx || dll_data.ulDataFormatVersion != 1 ||
++        dll_data.ulLength < sizeof(*dll_redirect) ||
++        (ULONG_PTR)dll_data.lpData % sizeof(ULONG) ||
++        !SHPinActCtxRangeValid(dll_data.lpSectionBase, dll_data.ulSectionTotalLength,
++                               dll_data.lpData, dll_data.ulLength) ||
++        dll_data.ulAssemblyRosterIndex != com_data.ulAssemblyRosterIndex)
++    {
++        error = ERROR_INVALID_DATA;
++        goto done;
++    }
++    dll_redirect = dll_data.lpData;
++    if (dll_redirect->Size < sizeof(*dll_redirect) || dll_redirect->Size > dll_data.ulLength)
++    {
++        error = ERROR_INVALID_DATA;
++        goto done;
++    }
++
++    /* SearchPathW resolves the name through the activated DLL-redirection section. */
++    path_len = SearchPathW(NULL, module_name, L".dll", ARRAY_SIZE(resolved_path),
++                           resolved_path, NULL);
++    if (!path_len || path_len >= ARRAY_SIZE(resolved_path))
++    {
++        error = path_len ? ERROR_INSUFFICIENT_BUFFER : GetLastError();
++        goto done;
++    }
++
++    *resolved_dll_path = HeapAlloc(GetProcessHeap(), 0, ((SIZE_T)path_len + 1) * sizeof(WCHAR));
++    if (!*resolved_dll_path)
++    {
++        error = ERROR_NOT_ENOUGH_MEMORY;
++        goto done;
++    }
++    CopyMemory(*resolved_dll_path, resolved_path, ((SIZE_T)path_len + 1) * sizeof(WCHAR));
++    result = SHPIN_SXS_FOUND;
++
++done:
++    if (actctx_active && !DeactivateActCtx(0, cookie))
++    {
++        error = GetLastError();
++        result = SHPIN_SXS_ERROR;
++    }
++    if (dll_data.hActCtx)
++        ReleaseActCtx(dll_data.hActCtx);
++    if (com_data.hActCtx)
++        ReleaseActCtx(com_data.hActCtx);
++    if (result == SHPIN_SXS_ERROR)
++    {
++        if (*resolved_dll_path)
++            HeapFree(GetProcessHeap(), 0, *resolved_dll_path);
++        *resolved_dll_path = NULL;
++        SetLastError(error);
++    }
++    return result;
++}
++
+ /*************************************************************************
+  *      @	[SHLWAPI.236]
+  *
+@@ -2658,7 +2776,45 @@
+     HKEY key;
+     DWORD type, count, error;
+     CHAR value[MAX_PATH], string[MAX_PATH];
++    WCHAR *path = NULL, *loaded_path = NULL;
++    SIZE_T path_chars;
+     HMODULE module;
++    enum shpin_sxs_result sxs_result;
++
++    sxs_result = SHResolveActCtxComServer(refiid, &path);
++    if (sxs_result == SHPIN_SXS_ERROR)
++        return NULL;
++
++    if (sxs_result == SHPIN_SXS_FOUND)
++    {
++        path_chars = wcslen(path);
++        loaded_path = HeapAlloc(GetProcessHeap(), 0, (path_chars + 1) * sizeof(WCHAR));
++        if (!loaded_path)
++        {
++            HeapFree(GetProcessHeap(), 0, path);
++            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
++            return NULL;
++        }
++
++        module = LoadLibraryExW(path, NULL, 0);
++        error = module ? ERROR_SUCCESS : GetLastError();
++        /* Make sure the loader returned the SxS-selected DLL. */
++        if (module)
++        {
++            DWORD loaded_len = GetModuleFileNameW(module, loaded_path, (DWORD)(path_chars + 1));
++            if (!loaded_len || loaded_len > path_chars || lstrcmpiW(path, loaded_path))
++            {
++                FreeLibrary(module);
++                module = NULL;
++                error = ERROR_MOD_NOT_FOUND;
++            }
++        }
++
++        HeapFree(GetProcessHeap(), 0, loaded_path);
++        HeapFree(GetProcessHeap(), 0, path);
++        SetLastError(error);
++        return module;
++    }
+ 
+     strcpy(string, "CLSID\\");
+     SHStringFromGUIDA(refiid, string + 6, sizeof(string)/sizeof(char) - 6);
+--- /dev/null
++++ b/src/dll/win32/shlwapi/sxsactctx.h
+@@ -0,0 +1,132 @@
++/*
++ * Copyright 2026 CusDeb OS Team
++ *
++ * SxS COM-redirection data shared with the SHPinDllOfCLSID tests.
++ * The private record layout mirrors Wine's comclassredirect_data in
++ * dlls/ntdll/actctx.c. Keep tools/tests/test_shpin_actctx_abi.py in sync.
++ */
++
++#ifndef __SHLWAPI_SXSACTCTX_H
++#define __SHLWAPI_SXSACTCTX_H
++
++#include <string.h>
++
++struct shpin_comclassredirect_data
++{
++    ULONG size;
++    ULONG flags;
++    DWORD model;
++    GUID clsid;
++    GUID alias;
++    GUID clsid2;
++    GUID tlbid;
++    ULONG name_len;
++    ULONG name_offset;
++    ULONG progid_len;
++    ULONG progid_offset;
++    ULONG clrdata_len;
++    ULONG clrdata_offset;
++    DWORD miscstatus;
++    DWORD miscstatuscontent;
++    DWORD miscstatusthumbnail;
++    DWORD miscstatusicon;
++    DWORD miscstatusdocprint;
++};
++
++typedef char shpin_comclassredirect_data_size_check[
++    sizeof(struct shpin_comclassredirect_data) == 120 ? 1 : -1];
++typedef char shpin_comclassredirect_data_name_offset_check[
++    FIELD_OFFSET(struct shpin_comclassredirect_data, name_offset) == 80 ? 1 : -1];
++
++static __inline BOOL SHPinActCtxRangeValid(const void *base, SIZE_T size,
++                                           const void *ptr, SIZE_T length)
++{
++    ULONG_PTR start = (ULONG_PTR)base, address = (ULONG_PTR)ptr;
++
++    if (!base || !ptr || address < start || size > (SIZE_T)-1 - start)
++        return FALSE;
++    if (address - start > size || length > size - (address - start))
++        return FALSE;
++    return TRUE;
++}
++
++static __inline BOOL SHPinActCtxStringValid(const void *base, SIZE_T size,
++                                            LPCWSTR string, ULONG length)
++{
++    ULONG i, chars;
++
++    if (!length || length % sizeof(WCHAR) || (ULONG_PTR)string % sizeof(WCHAR) ||
++        (SIZE_T)length > (SIZE_T)-1 - sizeof(WCHAR) || !string ||
++        !SHPinActCtxRangeValid(base, size, string, (SIZE_T)length + sizeof(WCHAR)))
++        return FALSE;
++
++    chars = length / sizeof(WCHAR);
++    if (string[chars])
++        return FALSE;
++
++    for (i = 0; i < chars; ++i)
++    {
++        if (!string[i])
++            return FALSE;
++        if (string[i] >= 0xd800 && string[i] <= 0xdbff)
++        {
++            if (++i >= chars || string[i] < 0xdc00 || string[i] > 0xdfff)
++                return FALSE;
++        }
++        else if (string[i] >= 0xdc00 && string[i] <= 0xdfff)
++            return FALSE;
++    }
++    return TRUE;
++}
++
++static __inline DWORD SHPinParseActCtxComServer(const ACTCTX_SECTION_KEYED_DATA *data,
++                                                 LPCGUID clsid, LPCWSTR *module_name)
++{
++    const struct shpin_comclassredirect_data *redirect;
++    SIZE_T total;
++
++    if (!module_name)
++        return ERROR_INVALID_PARAMETER;
++    *module_name = NULL;
++
++    if (!data || !clsid ||
++        data->cbSize < FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
++        return ERROR_INVALID_PARAMETER;
++
++    if (data->ulDataFormatVersion != 1)
++        return ERROR_REVISION_MISMATCH;
++    if (!data->ulAssemblyRosterIndex || data->ulLength < sizeof(*redirect) ||
++        (ULONG_PTR)data->lpData % sizeof(ULONG) ||
++        !SHPinActCtxRangeValid(data->lpSectionBase, data->ulSectionTotalLength,
++                               data->lpData, data->ulLength))
++        return ERROR_INVALID_DATA;
++
++    redirect = data->lpData;
++    if (redirect->size < sizeof(*redirect) || redirect->size > data->ulLength)
++        return ERROR_INVALID_DATA;
++
++    /* Check the provider name bounds before reading it from the section. */
++    if (redirect->name_offset > data->ulSectionTotalLength ||
++        redirect->name_len > data->ulSectionTotalLength - redirect->name_offset ||
++        sizeof(WCHAR) > data->ulSectionTotalLength - redirect->name_offset - redirect->name_len ||
++        redirect->name_offset % sizeof(WCHAR))
++        return ERROR_INVALID_DATA;
++
++    if (memcmp(&redirect->clsid, clsid, sizeof(*clsid)) &&
++        memcmp(&redirect->alias, clsid, sizeof(*clsid)))
++        return ERROR_INVALID_DATA;
++
++    if (redirect->clrdata_len)
++        return ERROR_NOT_SUPPORTED;
++
++    total = data->ulSectionTotalLength;
++    *module_name = (LPCWSTR)((const BYTE *)data->lpSectionBase + redirect->name_offset);
++    if (!SHPinActCtxStringValid(data->lpSectionBase, total, *module_name, redirect->name_len))
++    {
++        *module_name = NULL;
++        return ERROR_INVALID_DATA;
++    }
++    return ERROR_SUCCESS;
++}
++
++#endif /* __SHLWAPI_SXSACTCTX_H */

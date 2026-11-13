@@ -1,3 +1,39 @@
+cdex (0.0.17-1cd) trixie; urgency=medium
+
+  * debian/patches/0022-private-shell-runtime.patch: route shell hosts to
+    the private runtime.
+  * debian/patches/0023-build-private-manifests.patch: connect SxS resource
+    preparation to ReactOS CMake targets.
+  * debian/patches/0024-shell32-com-manifest-fallback.patch: allow SxS COM
+    activation when the InprocServer32 registry key cannot be opened.
+  * debian/patches/0025-private-shell-cpl-path.patch: resolve CPL applets
+    beside the loaded ReactOS shell32 and check command buffer bounds.
+  * debian/patches/0026-shell32-typelib-version.patch: align the Shell32
+    TypeLib registration with its compiled version.
+  * debian/patches/0027-shell32-cpl-search-buffer.patch: avoid overlapping
+    path buffers in CPL lookups.
+  * debian/patches/0028-shell32-openwith-search-buffer.patch: avoid
+    overlapping path buffers in Open With lookups.
+  * debian/patches/0029-shlwapi-clsid-registry-validation.patch: validate
+    COM server registry entries and handle lookup and loading errors.
+  * debian/patches/0030-shell32-invalid-com-registrations.patch: exclude
+    COM registrations for classes not provided by Shell32.
+  * debian/patches/0031-shell32-cpl-actctx-cleanup.patch: deactivate and
+    release the CPL activation context when an applet fails to load.
+  * debian/patches/0032-shlwapi-sxs-aware-pin-dll-of-clsid.patch: resolve
+    pinned COM DLLs from the active SxS context, validate provider records,
+    and retain registry fallback for unlisted CLSIDs.
+  * Makefile, tools/sxs_manifests.cmake and tools/sxs/: build the private
+    payload, generate manifests before linking, collect COM and TypeLib
+    metadata, and validate linked PE resources.
+  * runtime/bin/cdex-registry, cdex-win32-session and
+    cdex-display-properties: configure the private runtime, shell metadata
+    and CPL registration without replacing Wine system DLLs.
+  * debian/cdex-base.install and debian/control: package the private runtime
+    and require CMake 3.19 or newer.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Tue, 10 Nov 2026 17:08:33 +0300
+
 cdex (0.0.16-1cd) trixie; urgency=medium
 
   * debian/patches/0020-appwiz-cpl-split.patch, runtime/bin/cdex-win32-

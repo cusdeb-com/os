@@ -4,8 +4,7 @@ set -euo pipefail
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 export WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all}"
-export WINEDLLOVERRIDES="desk.cpl=n;shell32=n,b;shlwapi=n,b;browseui=n,b;rshell=n,b;shdocvw=n,b;version=n,b;comctl32=b;uxtheme=b"
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}comctl32=b;uxtheme=b"
 
-# desk.cpl is 32-bit; run the 32-bit control.exe by its explicit path instead
-# of relying on CreateProcess checking the current directory first.
-exec wine 'C:\windows\syswow64\control.exe' desk.cpl
+# The launcher's embedded manifest selects the private ReactOS assembly.
+exec wine 'C:\reactos\control.exe' 'C:\reactos\desk.cpl'
