@@ -1,0 +1,57 @@
+Author: CusDeb OS Team
+Description: browseui: Above 96 DPI give folder windows an icon loaded from its resource.
+ A folder window takes its icon from the system image list, which has no
+ reference to a resource. Wine's X11 driver option TitleIconSize (wine
+ patch winex11-title-icon-size, set by cdex-registry above 96 DPI) exports
+ an icon at the size Openbox draws in the title bar only for icons with a
+ resource; other icons are scaled by Openbox and look soft. Load the
+ folder's icon from the module that holds it when that module is loaded.
+ Without TitleIconSize the patch has no visible effect; 96 DPI takes the
+ image list icon as before.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/win32/browseui/shellbrowser.cpp
++++ b/src/dll/win32/browseui/shellbrowser.cpp
+@@ -1022,6 +1022,31 @@
+         fCurrentShellView->SaveViewState();
+ }
+ 
++/* Load the large icon of a shell item from the resources of a loaded module.
++   Unlike an icon made from the system image list, it keeps a reference to its
++   resource, so Wine can export it to the window manager at other sizes, which
++   the session asks for above 96 DPI. */
++static HICON LoadItemResourceIcon(IShellFolder *psf, LPCITEMIDLIST pidl)
++{
++    CComPtr<IExtractIconW> pei;
++    WCHAR szFile[MAX_PATH];
++    int index;
++    UINT flags;
++
++    if (FAILED(psf->GetUIObjectOf(NULL, 1, &pidl, IID_NULL_PPV_ARG(IExtractIconW, &pei))) ||
++        pei->GetIconLocation(GIL_FORSHELL | GIL_OPENICON, szFile, _countof(szFile), &index, &flags) != S_OK ||
++        (flags & GIL_NOTFILENAME) || index >= 0)
++    {
++        return NULL;
++    }
++
++    HMODULE hMod = GetModuleHandleW(PathFindFileNameW(szFile));
++    if (!hMod)
++        return NULL;
++    return (HICON)LoadImageW(hMod, MAKEINTRESOURCEW(-index), IMAGE_ICON,
++                             GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);
++}
++
+ HRESULT CShellBrowser::BrowseToPath(IShellFolder *newShellFolder,
+     LPCITEMIDLIST absolutePIDL, FOLDERSETTINGS *folderSettings, long flags)
+ {
+@@ -1190,7 +1215,9 @@
+         Shell_GetImageLists(&himlLarge, &himlSmall);
+ 
+         HICON icSmall = ImageList_GetIcon(himlSmall, indexOpen, 0);
+-        HICON icLarge = ImageList_GetIcon(himlLarge, indexOpen, 0);
++        HICON icLarge = GetScreenDpi() > USER_DEFAULT_SCREEN_DPI ? LoadItemResourceIcon(sf, pidlChild) : NULL;
++        if (!icLarge)
++            icLarge = ImageList_GetIcon(himlLarge, indexOpen, 0);
+ 
+         /* Hack to make it possible to release the old icons */
+         /* Something seems to go wrong with WM_SETICON */

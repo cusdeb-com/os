@@ -58,6 +58,13 @@ cdex (0.0.17-1cd) trixie; urgency=medium
   * debian/patches/0027-explorer-taskbar-size-dpi.patch: store the DPI
     with the saved taskbar size and use the default size after a DPI
     change.
+  * debian/patches/0028-browseui-dpi.patch: enlarge the file browser
+    toolbar, Go button, explorer bar close button and Favorites band
+    images and scale the explorer bar, search pane, address band and
+    autocomplete list sizes to the DPI.
+  * debian/patches/0029-browseui-folder-window-resource-icon.patch:
+    above 96 DPI give folder windows an icon loaded from its resource,
+    which Wine can export at the title bar size.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.
