@@ -15,3 +15,7 @@
 0015-win32u-menu-arrow-dpi.patch
 0016-win32u-minimized-width-dpi.patch
 0017-user32-icon-scaling.patch
+0018-comctl32-toolbar-metrics-dpi.patch
+0019-comctl32-toolbar-std-bitmaps-dpi.patch
+0020-comctl32-controls-dpi.patch
+0021-edit-caret-dpi.patch

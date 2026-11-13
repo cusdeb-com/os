@@ -1,0 +1,598 @@
+Author: CusDeb OS Team
+Description: comctl32: Scale fixed pixel sizes of the common controls to the DPI.
+ Up-down control width, date and time picker button and check box, header
+ divider hit area, pager buttons, rebar gripper and chevron, tab item
+ padding, tooltip margins, balloon geometry and the offset below the
+ cursor, track bar channel and ticks, and the minimum tree view indent
+ were fixed pixel values. Scale them to the DPI of the control's window;
+ 96 DPI is unchanged.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/comctl32/datetime.c
++++ b/src/dlls/comctl32/datetime.c
+@@ -752,7 +752,8 @@
+         GetTextExtentPoint32W (hdc, txt, lstrlenW(txt), &size);
+         rcDraw->bottom = size.cy + 2;
+ 
+-        prevright = infoPtr->checkbox.right = ((infoPtr->dwStyle & DTS_SHOWNONE) ? 18 : 2);
++        prevright = infoPtr->checkbox.right = ((infoPtr->dwStyle & DTS_SHOWNONE) ?
++                MulDiv(18, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI) : 2);
+ 
+         for (i = 0; i < infoPtr->nrFields; i++) {
+             DATETIME_ReturnTxt (infoPtr, i, txt, ARRAY_SIZE(txt));
+@@ -1408,6 +1409,9 @@
+ static LRESULT
+ DATETIME_Size (DATETIME_INFO *infoPtr, INT width, INT height)
+ {
++    UINT dpi = GetDpiForWindow(infoPtr->hwndSelf);
++    /* width of the up-down control or drop-down button */
++    INT button_width = MulDiv(15, dpi, USER_DEFAULT_SCREEN_DPI);
+     /* set size */
+     infoPtr->rcClient.bottom = height;
+     infoPtr->rcClient.right = width;
+@@ -1418,8 +1422,8 @@
+     
+     if (infoPtr->dwStyle & DTS_UPDOWN) {
+         SetWindowPos(infoPtr->hUpdown, NULL,
+-            infoPtr->rcClient.right-14, 0,
+-            15, infoPtr->rcClient.bottom - infoPtr->rcClient.top,
++            infoPtr->rcClient.right - button_width + 1, 0,
++            button_width, infoPtr->rcClient.bottom - infoPtr->rcClient.top,
+             SWP_NOACTIVATE | SWP_NOZORDER);
+     }
+     else {
+@@ -1427,7 +1431,7 @@
+         /* FIXME: account for style that allows button on left side */
+         infoPtr->calbutton.top   = infoPtr->rcDraw.top;
+         infoPtr->calbutton.bottom= infoPtr->rcDraw.bottom;
+-        infoPtr->calbutton.left  = infoPtr->rcDraw.right-15;
++        infoPtr->calbutton.left  = infoPtr->rcDraw.right - button_width;
+         infoPtr->calbutton.right = infoPtr->rcDraw.right;
+     }
+ 
+@@ -1436,7 +1440,7 @@
+     infoPtr->checkbox.top = infoPtr->rcDraw.top;
+     infoPtr->checkbox.bottom = infoPtr->rcDraw.bottom;
+     infoPtr->checkbox.left = infoPtr->rcDraw.left;
+-    infoPtr->checkbox.right = infoPtr->rcDraw.left + 10;
++    infoPtr->checkbox.right = infoPtr->rcDraw.left + MulDiv(10, dpi, USER_DEFAULT_SCREEN_DPI);
+ 
+     InvalidateRect(infoPtr->hwndSelf, NULL, FALSE);
+ 
+@@ -1471,7 +1475,9 @@
+ 
+     if ( !(lpss->styleOld & DTS_SHOWNONE) && (lpss->styleNew & DTS_SHOWNONE) ) {
+         infoPtr->hwndCheckbut = CreateWindowExW (0, WC_BUTTONW, 0, WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+-         					 2, 2, 13, 13, infoPtr->hwndSelf, 0, 
++						 2, 2, MulDiv(13, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI),
++						 MulDiv(13, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI),
++						 infoPtr->hwndSelf, 0,
+ 						(HINSTANCE)GetWindowLongPtrW (infoPtr->hwndSelf, GWLP_HINSTANCE), 0);
+         SendMessageW (infoPtr->hwndCheckbut, BM_SETCHECK, infoPtr->dateValid ? 1 : 0, 0);
+     }
+--- a/src/dlls/comctl32/header.c
++++ b/src/dlls/comctl32/header.c
+@@ -89,6 +89,12 @@
+     BOOL	bRectsValid;	/* validity flag for bounding rectangles */
+ } HEADER_INFO;
+ 
++/* Scale a size given in pixels at 96 DPI to the DPI of the window. */
++static int get_scaled_metric(const HEADER_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI);
++}
++
+ 
+ #define VERT_BORDER     4
+ #define DIVIDER_WIDTH  10
+@@ -742,7 +748,7 @@
+ 		    continue;
+ 		}
+ 		if (PtInRect (&rect, *lpPt)) {
+-		    if (width <= 2 * DIVIDER_WIDTH) {
++		    if (width <= 2 * get_scaled_metric(infoPtr, DIVIDER_WIDTH)) {
+ 			*pFlags |= HHT_ONHEADER;
+ 			*pItem = iCount;
+ 			TRACE("ON HEADER %d\n", iCount);
+@@ -750,7 +756,7 @@
+ 		    }
+                     if (HEADER_IndexToOrder(infoPtr, iCount) > 0) {
+ 			rcTest = rect;
+-			rcTest.right = rcTest.left + DIVIDER_WIDTH;
++			rcTest.right = rcTest.left + get_scaled_metric(infoPtr, DIVIDER_WIDTH);
+ 			if (PtInRect (&rcTest, *lpPt)) {
+ 			    if (HEADER_IsItemFixed(infoPtr, HEADER_PrevItem(infoPtr, iCount)))
+ 			    {
+@@ -774,7 +780,7 @@
+ 			}
+ 		    }
+ 		    rcTest = rect;
+-		    rcTest.left = rcTest.right - DIVIDER_WIDTH;
++		    rcTest.left = rcTest.right - get_scaled_metric(infoPtr, DIVIDER_WIDTH);
+ 		    if (!HEADER_IsItemFixed(infoPtr, iCount) && PtInRect (&rcTest, *lpPt))
+ 		    {
+ 			*pFlags |= HHT_ONDIVIDER;
+@@ -795,7 +801,7 @@
+ 	    {
+ 		rect = infoPtr->items[infoPtr->uNumItem-1].rect;
+ 		rect.left = rect.right;
+-		rect.right += DIVIDER_WIDTH;
++		rect.right += get_scaled_metric(infoPtr, DIVIDER_WIDTH);
+ 		if (PtInRect (&rect, *lpPt)) {
+ 		    if (bNoWidth) {
+ 			*pFlags |= HHT_ONDIVOPEN;
+--- a/src/dlls/comctl32/pager.c
++++ b/src/dlls/comctl32/pager.c
+@@ -572,7 +572,7 @@
+     infoPtr->dwStyle = lpcs->style;
+     infoPtr->clrBk = GetSysColor(COLOR_BTNFACE);
+     infoPtr->nBorder = 0;
+-    infoPtr->nButtonSize = 12;
++    infoPtr->nButtonSize = MulDiv(12, GetDpiForWindow(hwnd), USER_DEFAULT_SCREEN_DPI);
+     infoPtr->nPos = 0;
+     infoPtr->nWidth = 0;
+     infoPtr->nHeight = 0;
+--- a/src/dlls/comctl32/rebar.c
++++ b/src/dlls/comctl32/rebar.c
+@@ -186,6 +186,12 @@
+     HDPA     bands;       /* pointer to the array of rebar bands */
+ } REBAR_INFO;
+ 
++/* Scale a size given in pixels at 96 DPI to the DPI of the window. */
++static int get_scaled_metric(const REBAR_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI);
++}
++
+ /* fStatus flags */
+ #define BEGIN_DRAG_ISSUED   0x00000001
+ #define SELF_RESIZE         0x00000002
+@@ -766,7 +772,7 @@
+       if ( lpBand->fStatus & HAS_GRIPPER) {
+ 	  lpBand->fDraw |= DRAW_GRIPPER;
+ 	  lpBand->rcGripper.left   += REBAR_PRE_GRIPPER;
+-	  lpBand->rcGripper.right  = lpBand->rcGripper.left + GRIPPER_WIDTH;
++	  lpBand->rcGripper.right  = lpBand->rcGripper.left + get_scaled_metric(infoPtr, GRIPPER_WIDTH);
+           InflateRect(&lpBand->rcGripper, 0, -2);
+ 
+ 	  SetRect (&lpBand->rcCapImage,
+@@ -828,9 +834,9 @@
+ 
+ 	  if ((lpBand->fStyle & RBBS_USECHEVRON) && (lpBand->rcChild.right - lpBand->rcChild.left < lpBand->cxIdeal))
+ 	  {
+-	      lpBand->rcChild.right -= CHEVRON_WIDTH;
++	      lpBand->rcChild.right -= get_scaled_metric(infoPtr, CHEVRON_WIDTH);
+ 	      SetRect(&lpBand->rcChevron, lpBand->rcChild.right,
+-	              lpBand->rcChild.top, lpBand->rcChild.right + CHEVRON_WIDTH,
++	              lpBand->rcChild.top, lpBand->rcChild.right + get_scaled_metric(infoPtr, CHEVRON_WIDTH),
+ 	              lpBand->rcChild.bottom);
+ 	  }
+ 	  else
+@@ -885,9 +891,9 @@
+ 	    if (infoPtr->dwStyle & RBS_VERTICALGRIPPER) {
+ 		/*  vertical gripper  */
+ 		lpBand->rcGripper.left   += 3;
+-		lpBand->rcGripper.right  = lpBand->rcGripper.left + GRIPPER_WIDTH;
++		lpBand->rcGripper.right  = lpBand->rcGripper.left + get_scaled_metric(infoPtr, GRIPPER_WIDTH);
+ 		lpBand->rcGripper.top    += REBAR_PRE_GRIPPER;
+-		lpBand->rcGripper.bottom = lpBand->rcGripper.top + GRIPPER_HEIGHT;
++		lpBand->rcGripper.bottom = lpBand->rcGripper.top + get_scaled_metric(infoPtr, GRIPPER_HEIGHT);
+ 
+ 		/* initialize Caption image rectangle  */
+ 		SetRect (&lpBand->rcCapImage, rcBand.left,
+@@ -899,7 +905,7 @@
+ 		/*  horizontal gripper  */
+                 InflateRect(&lpBand->rcGripper, -2, 0);
+ 		lpBand->rcGripper.top    += REBAR_PRE_GRIPPER;
+-		lpBand->rcGripper.bottom  = lpBand->rcGripper.top + GRIPPER_WIDTH;
++		lpBand->rcGripper.bottom  = lpBand->rcGripper.top + get_scaled_metric(infoPtr, GRIPPER_WIDTH);
+ 
+ 		/* initialize Caption image rectangle  */
+ 		SetRect (&lpBand->rcCapImage, rcBand.left,
+@@ -1672,11 +1678,11 @@
+ 	lpBand->fStatus |= HAS_GRIPPER;
+         if (infoPtr->dwStyle & CCS_VERT)
+ 	    if (infoPtr->dwStyle & RBS_VERTICALGRIPPER)
+-                header += (GRIPPER_HEIGHT + REBAR_PRE_GRIPPER);
++                header += (get_scaled_metric(infoPtr, GRIPPER_HEIGHT) + REBAR_PRE_GRIPPER);
+             else
+-	        header += (GRIPPER_WIDTH + REBAR_PRE_GRIPPER);
++	        header += (get_scaled_metric(infoPtr, GRIPPER_WIDTH) + REBAR_PRE_GRIPPER);
+         else
+-            header += (REBAR_PRE_GRIPPER + GRIPPER_WIDTH);
++            header += (REBAR_PRE_GRIPPER + get_scaled_metric(infoPtr, GRIPPER_WIDTH));
+         /* Always have 4 pixels before anything else */
+         header += REBAR_ALWAYS_SPACE;
+     }
+@@ -1727,7 +1733,7 @@
+ 
+     lpBand->cxMinBand = lpBand->cxMinChild + lpBand->cxHeader + REBAR_POST_CHILD;
+     if (lpBand->fStyle & RBBS_USECHEVRON && lpBand->cxMinChild < lpBand->cxIdeal)
+-        lpBand->cxMinBand += CHEVRON_WIDTH;
++        lpBand->cxMinBand += get_scaled_metric(infoPtr, CHEVRON_WIDTH);
+ }
+ 
+ static UINT
+--- a/src/dlls/comctl32/tab.c
++++ b/src/dlls/comctl32/tab.c
+@@ -3016,10 +3016,10 @@
+   infoPtr->hwndNotify      = ((LPCREATESTRUCTW)lParam)->hwndParent;
+   infoPtr->uNumItem        = 0;
+   infoPtr->uNumRows        = 0;
+-  infoPtr->uHItemPadding   = 6;
+-  infoPtr->uVItemPadding   = 3;
+-  infoPtr->uHItemPadding_s = 6;
+-  infoPtr->uVItemPadding_s = 3;
++  infoPtr->uHItemPadding   = MulDiv(6, GetDpiForWindow(hwnd), USER_DEFAULT_SCREEN_DPI);
++  infoPtr->uVItemPadding   = MulDiv(3, GetDpiForWindow(hwnd), USER_DEFAULT_SCREEN_DPI);
++  infoPtr->uHItemPadding_s = infoPtr->uHItemPadding;
++  infoPtr->uVItemPadding_s = infoPtr->uVItemPadding;
+   infoPtr->hFont           = 0;
+   infoPtr->items           = DPA_Create(8);
+   infoPtr->hcurArrow       = LoadCursorW (0, (LPWSTR)IDC_ARROW);
+--- a/src/dlls/comctl32/tooltips.c
++++ b/src/dlls/comctl32/tooltips.c
+@@ -152,6 +152,12 @@
+     TTTOOL_INFO *tools;
+ } TOOLTIPS_INFO;
+ 
++/* Scale a size given in pixels at 96 DPI to the DPI of the window. */
++static int get_scaled_metric(const TOOLTIPS_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI);
++}
++
+ #define ID_TIMERSHOW   1    /* show delay timer */
+ #define ID_TIMERPOP    2    /* auto pop timer */
+ #define ID_TIMERLEAVE  3    /* tool leave timer */
+@@ -296,11 +302,11 @@
+     if ((dwStyle & TTS_BALLOON) || infoPtr->pszTitle)
+     {
+         /* calculate text rectangle */
+-        rc.left   += (BALLOON_TEXT_MARGIN + infoPtr->rcMargin.left);
+-        rc.top    += (BALLOON_TEXT_MARGIN + infoPtr->rcMargin.top);
+-        rc.right  -= (BALLOON_TEXT_MARGIN + infoPtr->rcMargin.right);
+-        rc.bottom -= (BALLOON_TEXT_MARGIN + infoPtr->rcMargin.bottom);
+-        if(infoPtr->bToolBelow) rc.top += BALLOON_STEMHEIGHT;
++        rc.left   += (get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) + infoPtr->rcMargin.left);
++        rc.top    += (get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) + infoPtr->rcMargin.top);
++        rc.right  -= (get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) + infoPtr->rcMargin.right);
++        rc.bottom -= (get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) + infoPtr->rcMargin.bottom);
++        if(infoPtr->bToolBelow) rc.top += get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT);
+ 
+         if (infoPtr->pszTitle)
+         {
+@@ -314,7 +320,7 @@
+                 DrawIconEx(hdc, rc.left, rc.top, infoPtr->hTitleIcon,
+                            infoPtr->iconWidth, infoPtr->iconHeight, 0, NULL, DI_NORMAL);
+             if (icon_present)
+-                rcTitle.left += infoPtr->iconWidth + BALLOON_ICON_TITLE_SPACING;
++                rcTitle.left += infoPtr->iconWidth + get_scaled_metric(infoPtr, BALLOON_ICON_TITLE_SPACING);
+ 
+             rcTitle.bottom = rc.top + infoPtr->iconHeight;
+ 
+@@ -322,16 +328,16 @@
+             prevFont = SelectObject (hdc, infoPtr->hTitleFont);
+             height = DrawTextW(hdc, infoPtr->pszTitle, -1, &rcTitle, DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+             SelectObject (hdc, prevFont);
+-            rc.top += height + BALLOON_TITLE_TEXT_SPACING;
++            rc.top += height + get_scaled_metric(infoPtr, BALLOON_TITLE_TEXT_SPACING);
+         }
+     }
+     else
+     {
+         /* calculate text rectangle */
+-        rc.left   += (NORMAL_TEXT_MARGIN + infoPtr->rcMargin.left);
+-        rc.top    += (NORMAL_TEXT_MARGIN + infoPtr->rcMargin.top);
+-        rc.right  -= (NORMAL_TEXT_MARGIN + infoPtr->rcMargin.right);
+-        rc.bottom -= (NORMAL_TEXT_MARGIN + infoPtr->rcMargin.bottom);
++        rc.left   += (get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) + infoPtr->rcMargin.left);
++        rc.top    += (get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) + infoPtr->rcMargin.top);
++        rc.right  -= (get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) + infoPtr->rcMargin.right);
++        rc.bottom -= (get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) + infoPtr->rcMargin.bottom);
+     }
+ 
+     /* draw text */
+@@ -540,11 +546,11 @@
+             title.cx = infoPtr->iconWidth;
+             title.cy = infoPtr->iconHeight;
+         }
+-        if (title.cx != 0) title.cx += BALLOON_ICON_TITLE_SPACING;
++        if (title.cx != 0) title.cx += get_scaled_metric(infoPtr, BALLOON_ICON_TITLE_SPACING);
+         hOldFont = SelectObject (hdc, infoPtr->hTitleFont);
+         DrawTextW(hdc, infoPtr->pszTitle, -1, &rcTitle, DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT);
+         SelectObject (hdc, hOldFont);
+-        title.cy = max(title.cy, rcTitle.bottom - rcTitle.top) + BALLOON_TITLE_TEXT_SPACING;
++        title.cy = max(title.cy, rcTitle.bottom - rcTitle.top) + get_scaled_metric(infoPtr, BALLOON_TITLE_TEXT_SPACING);
+         title.cx += (rcTitle.right - rcTitle.left);
+     }
+     hOldFont = SelectObject (hdc, infoPtr->hFont);
+@@ -554,17 +560,17 @@
+ 
+     if ((style & TTS_BALLOON) || infoPtr->pszTitle)
+     {
+-        lpSize->cx = max(rc.right - rc.left, title.cx) + 2*BALLOON_TEXT_MARGIN +
++        lpSize->cx = max(rc.right - rc.left, title.cx) + 2*get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) +
+                        infoPtr->rcMargin.left + infoPtr->rcMargin.right;
+-        lpSize->cy = title.cy + rc.bottom - rc.top + 2*BALLOON_TEXT_MARGIN +
++        lpSize->cy = title.cy + rc.bottom - rc.top + 2*get_scaled_metric(infoPtr, BALLOON_TEXT_MARGIN) +
+                        infoPtr->rcMargin.bottom + infoPtr->rcMargin.top +
+-                       BALLOON_STEMHEIGHT;
++                       get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT);
+     }
+     else
+     {
+-        lpSize->cx = rc.right - rc.left + 2*NORMAL_TEXT_MARGIN +
++        lpSize->cx = rc.right - rc.left + 2*get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) +
+                        infoPtr->rcMargin.left + infoPtr->rcMargin.right;
+-        lpSize->cy = rc.bottom - rc.top + 2*NORMAL_TEXT_MARGIN +
++        lpSize->cy = rc.bottom - rc.top + 2*get_scaled_metric(infoPtr, NORMAL_TEXT_MARGIN) +
+                        infoPtr->rcMargin.bottom + infoPtr->rcMargin.top;
+     }
+ }
+@@ -640,7 +646,7 @@
+         if (!(toolPtr->uFlags & TTF_ABSOLUTE))
+         {
+             if (style & TTS_BALLOON)
+-                rect.left -= BALLOON_STEMINDENT;
++                rect.left -= get_scaled_metric(infoPtr, BALLOON_STEMINDENT);
+             else
+             {
+                 RECT rcTool;
+@@ -689,7 +695,7 @@
+                     infoPtr->bToolBelow = TRUE;
+                     rect.top = rc.bottom;
+                 }
+-                rect.left = max(0, rect.left - BALLOON_STEMINDENT);
++                rect.left = max(0, rect.left - get_scaled_metric(infoPtr, BALLOON_STEMINDENT));
+             }
+             else
+             {
+@@ -711,13 +717,13 @@
+                 else
+                 {
+                     infoPtr->bToolBelow = TRUE;
+-                    rect.top += 20;
++                    rect.top += get_scaled_metric(infoPtr, 20);
+                 }
+-                rect.left = max(0, rect.left - BALLOON_STEMINDENT);
++                rect.left = max(0, rect.left - get_scaled_metric(infoPtr, BALLOON_STEMINDENT));
+             }
+             else
+             {
+-		    rect.top += 20;
++		    rect.top += get_scaled_metric(infoPtr, 20);
+ 		    infoPtr->bToolBelow = TRUE;
+             }
+         }
+@@ -768,38 +774,38 @@
+         {
+           pts[0].x = ptfx;
+           pts[0].y = 0;
+-          pts[1].x = max(BALLOON_STEMINDENT, ptfx - (BALLOON_STEMWIDTH / 2));
+-          pts[1].y = BALLOON_STEMHEIGHT;
+-          pts[2].x = pts[1].x + BALLOON_STEMWIDTH;
++          pts[1].x = max(get_scaled_metric(infoPtr, BALLOON_STEMINDENT), ptfx - (get_scaled_metric(infoPtr, BALLOON_STEMWIDTH) / 2));
++          pts[1].y = get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT);
++          pts[2].x = pts[1].x + get_scaled_metric(infoPtr, BALLOON_STEMWIDTH);
+           pts[2].y = pts[1].y;
+-          if(pts[2].x > (rect.right - rect.left) - BALLOON_STEMINDENT)
++          if(pts[2].x > (rect.right - rect.left) - get_scaled_metric(infoPtr, BALLOON_STEMINDENT))
+           {
+-            pts[2].x = (rect.right - rect.left) - BALLOON_STEMINDENT;
+-            pts[1].x = pts[2].x - BALLOON_STEMWIDTH;
++            pts[2].x = (rect.right - rect.left) - get_scaled_metric(infoPtr, BALLOON_STEMINDENT);
++            pts[1].x = pts[2].x - get_scaled_metric(infoPtr, BALLOON_STEMWIDTH);
+           }
+         }
+         else
+         {
+-          pts[0].x = max(BALLOON_STEMINDENT, ptfx - (BALLOON_STEMWIDTH / 2));
+-          pts[0].y = (rect.bottom - rect.top) - BALLOON_STEMHEIGHT;
+-          pts[1].x = pts[0].x + BALLOON_STEMWIDTH;
++          pts[0].x = max(get_scaled_metric(infoPtr, BALLOON_STEMINDENT), ptfx - (get_scaled_metric(infoPtr, BALLOON_STEMWIDTH) / 2));
++          pts[0].y = (rect.bottom - rect.top) - get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT);
++          pts[1].x = pts[0].x + get_scaled_metric(infoPtr, BALLOON_STEMWIDTH);
+           pts[1].y = pts[0].y;
+           pts[2].x = ptfx;
+           pts[2].y = (rect.bottom - rect.top);
+-          if(pts[1].x > (rect.right - rect.left) - BALLOON_STEMINDENT)
++          if(pts[1].x > (rect.right - rect.left) - get_scaled_metric(infoPtr, BALLOON_STEMINDENT))
+           {
+-            pts[1].x = (rect.right - rect.left) - BALLOON_STEMINDENT;
+-            pts[0].x = pts[1].x - BALLOON_STEMWIDTH;
++            pts[1].x = (rect.right - rect.left) - get_scaled_metric(infoPtr, BALLOON_STEMINDENT);
++            pts[0].x = pts[1].x - get_scaled_metric(infoPtr, BALLOON_STEMWIDTH);
+           }
+         }
+ 
+         hrStem = CreatePolygonRgn(pts, ARRAY_SIZE(pts), ALTERNATE);
+         
+         hRgn = CreateRoundRectRgn(0,
+-                                  (infoPtr->bToolBelow ? BALLOON_STEMHEIGHT : 0),
++                                  (infoPtr->bToolBelow ? get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT) : 0),
+                                   rect.right - rect.left,
+-                                  (infoPtr->bToolBelow ? rect.bottom - rect.top : rect.bottom - rect.top - BALLOON_STEMHEIGHT),
+-                                  BALLOON_ROUNDEDNESS, BALLOON_ROUNDEDNESS);
++                                  (infoPtr->bToolBelow ? rect.bottom - rect.top : rect.bottom - rect.top - get_scaled_metric(infoPtr, BALLOON_STEMHEIGHT)),
++                                  get_scaled_metric(infoPtr, BALLOON_ROUNDEDNESS), get_scaled_metric(infoPtr, BALLOON_ROUNDEDNESS));
+ 
+         CombineRgn(hRgn, hRgn, hrStem, RGN_OR);
+         DeleteObject(hrStem);
+--- a/src/dlls/comctl32/trackbar.c
++++ b/src/dlls/comctl32/trackbar.c
+@@ -269,6 +269,11 @@
+     notify_with_scroll (infoPtr, TB_LINEDOWN);
+ }
+ 
++static int get_scaled_metric(const TRACKBAR_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), 96);
++}
++
+ static void
+ TRACKBAR_CalcChannel (TRACKBAR_INFO *infoPtr)
+ {
+@@ -279,14 +284,14 @@
+ 
+     offsetthumb = infoPtr->uThumbLen / 4;
+     offsetedge  = offsetthumb + 3;
+-    cyChannel   = (infoPtr->dwStyle & TBS_ENABLESELRANGE) ? offsetthumb*3 : 4;
++    cyChannel   = (infoPtr->dwStyle & TBS_ENABLESELRANGE) ? offsetthumb*3 : get_scaled_metric(infoPtr, 4);
+     if (infoPtr->dwStyle & TBS_VERT) {
+         channel->top    = lpRect.top + offsetedge;
+         channel->bottom = lpRect.bottom - offsetedge;
+         if (infoPtr->dwStyle & TBS_ENABLESELRANGE)
+             channel->left = lpRect.left + ((infoPtr->uThumbLen - cyChannel + 2) / 2);
+         else
+-            channel->left = lpRect.left + (infoPtr->uThumbLen / 2) - 1;
++            channel->left = lpRect.left + (infoPtr->uThumbLen / 2) - cyChannel / 2 + 1;
+         if (infoPtr->dwStyle & TBS_BOTH) {
+             if (infoPtr->dwStyle & TBS_NOTICKS)
+                 channel->left += 1;
+@@ -306,7 +311,7 @@
+         if (infoPtr->dwStyle & TBS_ENABLESELRANGE)
+             channel->top = lpRect.top + ((infoPtr->uThumbLen - cyChannel + 2) / 2);
+         else
+-            channel->top = lpRect.top + (infoPtr->uThumbLen / 2) - 1;
++            channel->top = lpRect.top + (infoPtr->uThumbLen / 2) - cyChannel / 2 + 1;
+         if (infoPtr->dwStyle & TBS_BOTH) {
+             if (infoPtr->dwStyle & TBS_NOTICKS)
+                 channel->top += 1;
+@@ -484,7 +489,7 @@
+ static void
+ TRACKBAR_DrawOneTic (const TRACKBAR_INFO *infoPtr, HDC hdc, LONG ticPos, int flags)
+ {
+-    int x, y, ox, oy, range, side, indent = 0, len = 3;
++    int x, y, ox, oy, range, side, indent = 0, len = get_scaled_metric(infoPtr, 3);
+     int offsetthumb;
+     RECT rcTics;
+ 
+@@ -515,7 +520,7 @@
+     if (flags & TIC_SELECTIONMARK) {
+   	indent = (flags & TIC_SELECTIONMARKMIN) ? -1 : 1;
+     } else if (flags & TIC_EDGE) {
+-	len++;
++	len += get_scaled_metric(infoPtr, 1);
+     }
+ 
+     if (flags & TBS_VERT) {
+@@ -1484,11 +1489,6 @@
+     return bTemp;
+ }
+ 
+-static int get_scaled_metric(const TRACKBAR_INFO *infoPtr, int value)
+-{
+-    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), 96);
+-}
+-
+ static LRESULT
+ TRACKBAR_InitializeThumb (TRACKBAR_INFO *infoPtr)
+ {
+--- a/src/dlls/comctl32/treeview.c
++++ b/src/dlls/comctl32/treeview.c
+@@ -128,6 +128,12 @@
+   WCHAR szSearchParam[ MAX_PATH ];
+ } TREEVIEW_INFO;
+ 
++/* Scale a size given in pixels at 96 DPI to the DPI of the window. */
++static int get_scaled_metric(const TREEVIEW_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwnd), USER_DEFAULT_SCREEN_DPI);
++}
++
+ typedef struct _TREEITEM    /* HTREEITEM is a _TREEINFO *. */
+ {
+   HTREEITEM parent;         /* handle to parent or 0 if at root */
+@@ -1696,8 +1702,8 @@
+ {
+     TRACE("\n");
+ 
+-    if (newIndent < MINIMUM_INDENT)
+-	newIndent = MINIMUM_INDENT;
++    if (newIndent < get_scaled_metric(infoPtr, MINIMUM_INDENT))
++	newIndent = get_scaled_metric(infoPtr, MINIMUM_INDENT);
+ 
+     if (infoPtr->uIndent != newIndent)
+     {
+@@ -1870,7 +1876,7 @@
+             bRecalcVisible = TRUE;
+         }
+ 
+-        if (infoPtr->normalImageWidth > MINIMUM_INDENT &&
++        if (infoPtr->normalImageWidth > get_scaled_metric(infoPtr, MINIMUM_INDENT) &&
+             infoPtr->normalImageWidth != infoPtr->uIndent)
+         {
+             infoPtr->uIndent = infoPtr->normalImageWidth;
+@@ -5260,7 +5266,7 @@
+     infoPtr->treeWidth = 0;
+     infoPtr->treeHeight = 0;
+ 
+-    infoPtr->uIndent = MINIMUM_INDENT;
++    infoPtr->uIndent = get_scaled_metric(infoPtr, MINIMUM_INDENT);
+     infoPtr->selectedItem = NULL;
+     infoPtr->focusedItem = NULL;
+     infoPtr->hotItem = NULL;
+--- a/src/dlls/comctl32/updown.c
++++ b/src/dlls/comctl32/updown.c
+@@ -59,7 +59,7 @@
+ #define AUTOPRESS_DELAY	250    /* time to keep arrow pressed on KEY_DOWN */
+ #define REPEAT_DELAY	50     /* delay between auto-increments */
+ 
+-#define DEFAULT_WIDTH	    16 /* default width of the ctrl */
++#define DEFAULT_WIDTH	    16 /* default width of the ctrl at 96 DPI */
+ #define DEFAULT_XSEP         0 /* default separation between buddy and ctrl */
+ #define DEFAULT_ADDTOP       0 /* amount to extend above the buddy window */
+ #define DEFAULT_ADDBOT       0 /* amount to extend below the buddy window */
+@@ -159,6 +159,11 @@
+ 	      UPDOWN_IsBuddyEdit(infoPtr) );
+ }
+ 
++static int UPDOWN_GetDefaultWidth(HWND hwnd)
++{
++    return MulDiv(DEFAULT_WIDTH, GetDpiForWindow(hwnd), USER_DEFAULT_SCREEN_DPI);
++}
++
+ static int UPDOWN_GetBuddyBorderSize(HWND hwnd)
+ {
+ #if __WINE_COMCTL32_VERSION == 6
+@@ -749,9 +754,9 @@
+         /* now do the positioning */
+         if  (infoPtr->dwStyle & UDS_ALIGNLEFT) {
+             x  = budRect.left;
+-            budRect.left += DEFAULT_WIDTH + DEFAULT_XSEP;
++            budRect.left += UPDOWN_GetDefaultWidth(infoPtr->Self) + DEFAULT_XSEP;
+         } else if (infoPtr->dwStyle & UDS_ALIGNRIGHT) {
+-            budRect.right -= DEFAULT_WIDTH + DEFAULT_XSEP;
++            budRect.right -= UPDOWN_GetDefaultWidth(infoPtr->Self) + DEFAULT_XSEP;
+             x  = budRect.right+DEFAULT_XSEP;
+         } else {
+             /* nothing to do */
+@@ -766,7 +771,7 @@
+         /* now position the up/down */
+         /* Since the UDS_ALIGN* flags were used, */
+         /* we will pick the position and size of the window. */
+-        width = DEFAULT_WIDTH;
++        width = UPDOWN_GetDefaultWidth(infoPtr->Self);
+ 
+         /*
+          * If the updown has a buddy border, it has to overlap with the buddy
+@@ -788,7 +793,8 @@
+         RECT rect;
+         GetWindowRect(infoPtr->Self, &rect);
+         MapWindowPoints(HWND_DESKTOP, GetParent(infoPtr->Self), (POINT *)&rect, 2);
+-        SetWindowPos(infoPtr->Self, 0, rect.left, rect.top, DEFAULT_WIDTH, rect.bottom - rect.top,
++        SetWindowPos(infoPtr->Self, 0, rect.left, rect.top, UPDOWN_GetDefaultWidth(infoPtr->Self),
++                     rect.bottom - rect.top,
+                      SWP_NOACTIVATE|SWP_FRAMECHANGED|SWP_NOZORDER);
+     }
+ 
+@@ -1019,7 +1025,7 @@
+ 
+             SetWindowLongW (hwnd, GWL_STYLE, infoPtr->dwStyle & ~WS_BORDER);
+ 	    if (!(infoPtr->dwStyle & UDS_HORZ))
+-	        SetWindowPos (hwnd, NULL, 0, 0, DEFAULT_WIDTH, pcs->cy,
++	        SetWindowPos (hwnd, NULL, 0, 0, UPDOWN_GetDefaultWidth(hwnd), pcs->cy,
+ 	                      SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOMOVE);
+ 
+             /* Do we pick the buddy win ourselves? */

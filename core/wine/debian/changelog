@@ -17,6 +17,20 @@ wine (11.19.0-2cd) trixie; urgency=medium
   * debian/patches/0017-user32-icon-scaling.patch: above 96 DPI, when an
     icon has no entry of the requested size, prefer a larger one and
     scale it with filtering.
+  * debian/patches/0018-comctl32-toolbar-metrics-dpi.patch: scale the
+    toolbar separator width, default padding, list button padding and
+    drop-down arrow to the DPI.
+  * debian/patches/0019-comctl32-toolbar-std-bitmaps-dpi.patch: enlarge
+    the standard toolbar bitmaps by a whole factor (1 at 120 DPI, 2 at
+    144 and 192 DPI), fit application images in the same toolbar into
+    the larger cells, take TB_SETBITMAPSIZE with their 16 or 24 pixel
+    size as a request for the enlarged size, and report TBBF_LARGE from
+    TB_GETBITMAPFLAGS, which asked a NULL DC and never did.
+  * debian/patches/0020-comctl32-controls-dpi.patch: scale fixed pixel
+    sizes of the up-down, date and time picker, header, pager, rebar,
+    tab, tooltip, track bar and tree view controls to the DPI.
+  * debian/patches/0021-edit-caret-dpi.patch: scale the caret width of
+    the comctl32 and user32 edit controls to the DPI.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 

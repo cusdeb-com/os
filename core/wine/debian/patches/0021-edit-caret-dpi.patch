@@ -1,0 +1,49 @@
+Author: CusDeb OS Team
+Description: comctl32, user32: Scale the edit control caret width to the DPI.
+ The caret was one pixel wide at any DPI and hard to see at 192 DPI. Make
+ it one pixel per whole multiple of 96 DPI.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/comctl32_v6/edit.c
++++ b/src/dlls/comctl32_v6/edit.c
+@@ -3699,7 +3699,7 @@
+     if (!(es->style & ES_NOHIDESEL))
+         EDIT_InvalidateText(es, es->selection_start, es->selection_end);
+ 
+-    CreateCaret(es->hwndSelf, 0, 1, es->line_height);
++    CreateCaret(es->hwndSelf, 0, GetDpiForWindow(es->hwndSelf) / USER_DEFAULT_SCREEN_DPI, es->line_height);
+     EDIT_SetCaretPos(es, es->selection_end, es->flags & EF_AFTER_WRAP);
+     ShowCaret(es->hwndSelf);
+     if (!notify_parent(es, EN_SETFOCUS)) return;
+@@ -3789,7 +3789,8 @@
+ 		EDIT_UpdateText(es, NULL, TRUE);
+ 	if (es->flags & EF_FOCUSED) {
+ 		DestroyCaret();
+-		CreateCaret(es->hwndSelf, 0, 1, es->line_height);
++		CreateCaret(es->hwndSelf, 0, GetDpiForWindow(es->hwndSelf) / USER_DEFAULT_SCREEN_DPI,
++			    es->line_height);
+ 		EDIT_SetCaretPos(es, es->selection_end,
+ 				 es->flags & EF_AFTER_WRAP);
+ 		ShowCaret(es->hwndSelf);
+--- a/src/dlls/user32/edit.c
++++ b/src/dlls/user32/edit.c
+@@ -3822,7 +3822,8 @@
+             NtUserReleaseDC( es->hwndSelf, hdc );
+         }
+ 
+-        NtUserCreateCaret( es->hwndSelf, 0, 1, es->line_height );
++        NtUserCreateCaret( es->hwndSelf, 0, GetDpiForWindow( es->hwndSelf ) / USER_DEFAULT_SCREEN_DPI,
++                           es->line_height );
+ 	EDIT_SetCaretPos(es, es->selection_end,
+ 			 es->flags & EF_AFTER_WRAP);
+         NtUserShowCaret( es->hwndSelf );
+@@ -3914,7 +3915,8 @@
+ 		EDIT_UpdateText(es, NULL, TRUE);
+ 	if (es->flags & EF_FOCUSED) {
+ 		NtUserDestroyCaret();
+-		NtUserCreateCaret( es->hwndSelf, 0, 1, es->line_height );
++		NtUserCreateCaret( es->hwndSelf, 0, GetDpiForWindow( es->hwndSelf ) / USER_DEFAULT_SCREEN_DPI,
++				   es->line_height );
+ 		EDIT_SetCaretPos(es, es->selection_end,
+ 				 es->flags & EF_AFTER_WRAP);
+ 		NtUserShowCaret( es->hwndSelf );

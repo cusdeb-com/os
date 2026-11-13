@@ -1,0 +1,205 @@
+Author: CusDeb OS Team
+Description: comctl32: Scale the fixed toolbar metrics to the DPI.
+ The separator width, the default button padding, the vertical padding of
+ list-style buttons and the drop-down arrow with its area were fixed pixel
+ values. At 192 DPI the rows of the CDEX Start menu submenus, which are
+ list toolbars, were cramped next to their 32 pixel icons, and the
+ drop-down arrow of the file browser's Back, Forward and Views buttons was
+ a dot. Scale them to the DPI of the toolbar window; 96 DPI is unchanged.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/dlls/comctl32/toolbar.c
++++ b/src/dlls/comctl32/toolbar.c
+@@ -174,6 +174,12 @@
+ #endif
+ } TOOLBAR_INFO, *PTOOLBAR_INFO;
+ 
++/* Scale a size given in pixels at 96 DPI to the DPI of the window. */
++static int get_scaled_metric(const TOOLBAR_INFO *infoPtr, int value)
++{
++    return MulDiv(value, GetDpiForWindow(infoPtr->hwndSelf), USER_DEFAULT_SCREEN_DPI);
++}
++
+ 
+ /* used by customization dialog */
+ typedef struct
+@@ -579,21 +585,21 @@
+ 
+ 
+ static void
+-TOOLBAR_DrawArrow (HDC hdc, INT left, INT top, COLORREF clr)
++TOOLBAR_DrawArrow (const TOOLBAR_INFO *infoPtr, HDC hdc, INT left, INT top, COLORREF clr)
+ {
+-    INT x, y;
++    /* 5x3 pixels at 96 DPI. Callers center an arrow of ARROW_HEIGHT. */
++    INT width = get_scaled_metric (infoPtr, 5) | 1, height = (width + 1) / 2;
++    INT x = left + get_scaled_metric (infoPtr, 2);
++    INT y = top - (height - ARROW_HEIGHT) / 2, i;
+     HPEN hPen, hOldPen;
+ 
+     if (!(hPen = CreatePen( PS_SOLID, 1, clr))) return;
+     hOldPen = SelectObject ( hdc, hPen );
+-    x = left + 2;
+-    y = top;
+-    MoveToEx (hdc, x, y, NULL);
+-    LineTo (hdc, x+5, y++); x++;
+-    MoveToEx (hdc, x, y, NULL);
+-    LineTo (hdc, x+3, y++); x++;
+-    MoveToEx (hdc, x, y, NULL);
+-    LineTo (hdc, x+1, y);
++    for (i = 0; i < height; i++)
++    {
++        MoveToEx (hdc, x + i, y + i, NULL);
++        LineTo (hdc, x + width - i, y + i);
++    }
+     SelectObject( hdc, hOldPen );
+     DeleteObject( hPen );
+ }
+@@ -923,11 +929,11 @@
+ 
+     if (tbcd->nmcd.uItemState & (CDIS_DISABLED | CDIS_INDETERMINATE))
+     {
+-        TOOLBAR_DrawArrow(hdc, rcArrow->left+1, rcArrow->top+1 + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnHighlight);
+-        TOOLBAR_DrawArrow(hdc, rcArrow->left, rcArrow->top + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clr3dShadow);
++        TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow->left+1, rcArrow->top+1 + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnHighlight);
++        TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow->left, rcArrow->top + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clr3dShadow);
+     }
+     else
+-        TOOLBAR_DrawArrow(hdc, rcArrow->left + offset, rcArrow->top + offset + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
++        TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow->left + offset, rcArrow->top + offset + (rcArrow->bottom - rcArrow->top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
+ }
+ 
+ static void
+@@ -1059,9 +1065,9 @@
+         int right;
+ 
+         if (dwStyle & TBSTYLE_FLAT)
+-            right = max(rc.left, rc.right - DDARROW_WIDTH);
++            right = max(rc.left, rc.right - get_scaled_metric(infoPtr, DDARROW_WIDTH));
+         else
+-            right = max(rc.left, rc.right - DDARROW_WIDTH - 2);
++            right = max(rc.left, rc.right - get_scaled_metric(infoPtr, DDARROW_WIDTH) - 2);
+ 
+         if (drawSepDropDownArrow)
+            rc.right = right;
+@@ -1198,16 +1204,16 @@
+     {
+         if (tbcd.nmcd.uItemState & (CDIS_DISABLED | CDIS_INDETERMINATE))
+         {
+-            TOOLBAR_DrawArrow(hdc, rcArrow.left+1, rcArrow.top+1 + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnHighlight);
+-            TOOLBAR_DrawArrow(hdc, rcArrow.left, rcArrow.top + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clr3dShadow);
++            TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow.left+1, rcArrow.top+1 + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnHighlight);
++            TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow.left, rcArrow.top + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clr3dShadow);
+         }
+         else if (tbcd.nmcd.uItemState & (CDIS_SELECTED | CDIS_CHECKED))
+         {
+             offset = (dwItemCDFlag & TBCDRF_NOOFFSET) ? 0 : 1;
+-            TOOLBAR_DrawArrow(hdc, rcArrow.left + offset, rcArrow.top + offset + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
++            TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow.left + offset, rcArrow.top + offset + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
+         }
+         else
+-            TOOLBAR_DrawArrow(hdc, rcArrow.left, rcArrow.top + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
++            TOOLBAR_DrawArrow(infoPtr, hdc, rcArrow.left, rcArrow.top + (rcArrow.bottom - rcArrow.top - ARROW_HEIGHT) / 2, comctl32_color.clrBtnText);
+     }
+ 
+     if (dwItemCustDraw & CDRF_NOTIFYPOSTPAINT)
+@@ -1457,14 +1463,14 @@
+         /* horizontal separators are treated as buttons for width    */
+ 	else if ((btnPtr[i].fsStyle & BTNS_SEP) &&
+             !(infoPtr->dwStyle & CCS_VERT))
+-            cx = (btnPtr[i].iBitmap > 0) ? btnPtr[i].iBitmap : SEPARATOR_WIDTH;
++            cx = (btnPtr[i].iBitmap > 0) ? btnPtr[i].iBitmap : get_scaled_metric(infoPtr, SEPARATOR_WIDTH);
+ 	else if (btnPtr[i].fsStyle & BTNS_AUTOSIZE)
+ 	    cx = TOOLBAR_AutoSizeButtonWidth(infoPtr, btnPtr + i);
+ 	else
+ 	    cx = infoPtr->nButtonWidth;
+ 
+         if (!btnPtr[i].cx && button_has_ddarrow( infoPtr, btnPtr + i ))
+-            cx += DDARROW_WIDTH;
++            cx += get_scaled_metric(infoPtr, DDARROW_WIDTH);
+ 
+ 	/* Two or more adjacent separators form a separator group.   */
+ 	/* The first separator in a group should be wrapped to the   */
+@@ -1694,9 +1700,9 @@
+         if (bValidImageList)
+         {
+             if (bHasBitmap)
+-                sizeButton.cy += DEFPAD_CY;
++                sizeButton.cy += get_scaled_metric(infoPtr, DEFPAD_CY);
+             else
+-                sizeButton.cy += LISTPAD_CY;
++                sizeButton.cy += get_scaled_metric(infoPtr, LISTPAD_CY);
+         }
+         else
+             sizeButton.cy += infoPtr->szPadding.cy;
+@@ -1712,7 +1718,7 @@
+     {
+         if (bHasBitmap)
+         {
+-            sizeButton.cy = infoPtr->nBitmapHeight + DEFPAD_CY;
++            sizeButton.cy = infoPtr->nBitmapHeight + get_scaled_metric(infoPtr, DEFPAD_CY);
+             if (sizeString.cy > 0)
+                 sizeButton.cy += 1 + sizeString.cy;
+             sizeButton.cx = infoPtr->szPadding.cx +
+@@ -1824,12 +1830,12 @@
+ 
+ 	if (btnPtr->fsStyle & BTNS_SEP) {
+ 	    if (infoPtr->dwStyle & CCS_VERT) {
+-                cy = (btnPtr->iBitmap > 0) ? btnPtr->iBitmap : SEPARATOR_WIDTH;
++                cy = (btnPtr->iBitmap > 0) ? btnPtr->iBitmap : get_scaled_metric(infoPtr, SEPARATOR_WIDTH);
+                 cx = (btnPtr->cx > 0) ? btnPtr->cx : infoPtr->nButtonWidth;
+ 	    }
+ 	    else
+                 cx = (btnPtr->cx > 0) ? btnPtr->cx :
+-                    (btnPtr->iBitmap > 0) ? btnPtr->iBitmap : SEPARATOR_WIDTH;
++                    (btnPtr->iBitmap > 0) ? btnPtr->iBitmap : get_scaled_metric(infoPtr, SEPARATOR_WIDTH);
+ 	}
+ 	else
+ 	{
+@@ -1843,7 +1849,7 @@
+             /* if size has been set manually then don't add on extra space
+              * for the drop down arrow */
+             if (!btnPtr->cx && button_has_ddarrow( infoPtr, btnPtr ))
+-              cx += DDARROW_WIDTH;
++              cx += get_scaled_metric(infoPtr, DDARROW_WIDTH);
+ 	}
+ 	if (btnPtr->fsState & TBSTATE_WRAP)
+ 		    bWrap = TRUE;
+@@ -1875,7 +1881,7 @@
+ 	    {
+                if ( !(infoPtr->dwStyle & CCS_VERT))
+                     y += cy + ( (btnPtr->cx > 0 ) ?
+-                                btnPtr->cx : SEPARATOR_WIDTH) * 2 /3;
++                                btnPtr->cx : get_scaled_metric(infoPtr, SEPARATOR_WIDTH)) * 2 /3;
+ 		else
+ 		    y += cy;
+ 
+@@ -4318,7 +4324,7 @@
+                 if (*nmtbr.pCurrent & 0x80000000)
+                 {
+                     /* separator */
+-                    nmtbr.tbButton.iBitmap = SEPARATOR_WIDTH;
++                    nmtbr.tbButton.iBitmap = get_scaled_metric(infoPtr, SEPARATOR_WIDTH);
+                     nmtbr.tbButton.idCommand = 0;
+                     nmtbr.tbButton.fsStyle = BTNS_SEP;
+                     if (*nmtbr.pCurrent != (DWORD)-1)
+@@ -5669,7 +5675,7 @@
+             infoPtr->nOldHit = nHit;
+ 
+             arrowRect = btnPtr->rect;
+-            arrowRect.left = max(btnPtr->rect.left, btnPtr->rect.right - DDARROW_WIDTH);
++            arrowRect.left = max(btnPtr->rect.left, btnPtr->rect.right - get_scaled_metric(infoPtr, DDARROW_WIDTH));
+ 
+             /* for EX_DRAWDDARROWS style,  click must be in the drop-down arrow rect */
+             if ((btnPtr->fsState & TBSTATE_ENABLED) &&
+@@ -6166,8 +6172,8 @@
+     infoPtr->bDoRedraw = TRUE;
+     infoPtr->clrBtnHighlight = CLR_DEFAULT;
+     infoPtr->clrBtnShadow = CLR_DEFAULT;
+-    infoPtr->szPadding.cx = DEFPAD_CX;
+-    infoPtr->szPadding.cy = DEFPAD_CY;
++    infoPtr->szPadding.cx = get_scaled_metric(infoPtr, DEFPAD_CX);
++    infoPtr->szPadding.cy = get_scaled_metric(infoPtr, DEFPAD_CY);
+     infoPtr->iListGap = DEFLISTGAP;
+     infoPtr->iTopMargin = default_top_margin(infoPtr);
+     infoPtr->dwStyle = lpcs->style;

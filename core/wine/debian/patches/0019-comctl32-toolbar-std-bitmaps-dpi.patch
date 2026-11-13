@@ -1,0 +1,155 @@
+Author: CusDeb OS Team
+Description: comctl32: Enlarge the standard toolbar bitmaps for the DPI.
+ The standard images (IDB_STD_*, IDB_VIEW_*, IDB_HIST_*) are 16 or 24
+ pixels at any DPI. Enlarge them by a whole factor, the DPI scale rounded
+ to the nearest whole number, with pixel replication. Images that the
+ application adds to the same toolbar are fitted into the larger cells,
+ and TB_SETBITMAPSIZE with the 16 or 24 pixel size of the standard images
+ is taken as a request for their size at the DPI.
+ .
+ Windows leaves this to the application, which asks TB_GETBITMAPFLAGS and
+ loads large images itself. Doing it here covers the Open and Save
+ dialogs and WordPad without changing each caller; the size test in
+ TB_SETBITMAPSIZE is a heuristic for that.
+ .
+ TB_GETBITMAPFLAGS asked a NULL DC for the DPI and never reported
+ TBBF_LARGE; it uses the system DPI.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/dlls/comctl32/toolbar.c
++++ b/src/dlls/comctl32/toolbar.c
+@@ -2830,6 +2830,71 @@
+     }
+ }
+ 
++/* Size at the window DPI of the 16 and 24 pixel standard images. They are
++ * enlarged by a whole factor, the DPI scale rounded to the nearest whole
++ * number. */
++static INT
++TOOLBAR_GetStdBitmapSize(const TOOLBAR_INFO *infoPtr, INT size)
++{
++    UINT dpi = GetDpiForWindow(infoPtr->hwndSelf);
++
++    return size * max(1, (dpi + USER_DEFAULT_SCREEN_DPI / 2) / USER_DEFAULT_SCREEN_DPI);
++}
++
++static BOOL
++TOOLBAR_HasStdBitmaps(const TOOLBAR_INFO *infoPtr)
++{
++    INT i;
++
++    for (i = 0; i < infoPtr->nNumBitmapInfos; i++)
++        if (infoPtr->bitmaps[i].hInst == COMCTL32_hModule) return TRUE;
++    return FALSE;
++}
++
++/* Fit a strip of count images into cells of cx x cy pixels. Each image is
++ * enlarged by the largest whole factor that fits, with pixel replication,
++ * and centered in its cell. The source bitmap is deleted, or returned when
++ * the new one cannot be created. */
++static HBITMAP
++TOOLBAR_FitBitmap(HBITMAP hbm, INT count, INT cx, INT cy)
++{
++    BITMAPINFO bmi = {{sizeof(BITMAPINFOHEADER), cx * count, cy, 1, 32, BI_RGB}};
++    HBITMAP hbmNew, hbmOldSrc, hbmOldDst;
++    HDC hdcSrc, hdcDst;
++    INT i, width, factor;
++    HBRUSH hbr;
++    BITMAP bm;
++    RECT rc;
++
++    if (!GetObjectW(hbm, sizeof(bm), &bm)) return hbm;
++    width = bm.bmWidth / count;
++    if (!width || width > cx || bm.bmHeight > cy || (width == cx && bm.bmHeight == cy)) return hbm;
++    factor = min(cx / width, cy / bm.bmHeight);
++
++    if (!(hbmNew = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, NULL, NULL, 0))) return hbm;
++    hdcSrc = CreateCompatibleDC(NULL);
++    hdcDst = CreateCompatibleDC(NULL);
++    hbmOldSrc = SelectObject(hdcSrc, hbm);
++    hbmOldDst = SelectObject(hdcDst, hbmNew);
++
++    SetRect(&rc, 0, 0, cx * count, cy);
++    hbr = CreateSolidBrush(comctl32_color.clrBtnFace);
++    FillRect(hdcDst, &rc, hbr);
++    DeleteObject(hbr);
++
++    SetStretchBltMode(hdcDst, COLORONCOLOR);
++    for (i = 0; i < count; i++)
++        StretchBlt(hdcDst, i * cx + (cx - width * factor) / 2, (cy - bm.bmHeight * factor) / 2,
++                   width * factor, bm.bmHeight * factor, hdcSrc, i * width, 0, width, bm.bmHeight, SRCCOPY);
++
++    SelectObject(hdcSrc, hbmOldSrc);
++    SelectObject(hdcDst, hbmOldDst);
++    DeleteDC(hdcSrc);
++    DeleteDC(hdcDst);
++    DeleteObject(hbm);
++    return hbmNew;
++}
++
+ static BOOL
+ TOOLBAR_AddBitmapToImageList(TOOLBAR_INFO *infoPtr, HIMAGELIST himlDef, const TBITMAP_INFO *bitmap)
+ {
+@@ -2852,6 +2917,11 @@
+ 
+     /* enlarge the bitmap if needed */
+     ImageList_GetIconSize(himlDef, &cxIcon, &cyIcon);
++    /* above 96 DPI the standard images are larger than the application expects;
++     * its own images in the same toolbar have to follow */
++    if (TOOLBAR_GetStdBitmapSize(infoPtr, 16) != 16 &&
++        (bitmap->hInst == COMCTL32_hModule || TOOLBAR_HasStdBitmaps(infoPtr)))
++        hbmLoad = TOOLBAR_FitBitmap(hbmLoad, max(bitmap->nButtons, 1), cxIcon, cyIcon);
+     if (bitmap->hInst != COMCTL32_hModule)
+         COMCTL32_EnsureBitmapSize(&hbmLoad, cxIcon*(INT)bitmap->nButtons, cyIcon, comctl32_color.clrBtnFace);
+     
+@@ -2921,6 +2991,7 @@
+ 
+     if (lpAddBmp->hInst == HINST_COMMCTRL)
+     {
++        INT size = TOOLBAR_GetStdBitmapSize(infoPtr, (lpAddBmp->nID & 1) ? 24 : 16);
+         info.hInst = COMCTL32_hModule;
+         switch (lpAddBmp->nID)
+         {
+@@ -2959,17 +3030,10 @@
+ 
+         TRACE ("adding %d internal bitmaps\n", info.nButtons);
+ 
+-	/* Windows resize all the buttons to the size of a newly added standard image */
+-	if (lpAddBmp->nID & 1)
+-	{
+-	    /* large icons: 24x24. Will make the button 31x30 */
+-	    SendMessageW (infoPtr->hwndSelf, TB_SETBITMAPSIZE, 0, MAKELPARAM(24, 24));
+-	}
+-	else
+-	{
+-	    /* small icons: 16x16. Will make the buttons 23x22 */
+-	    SendMessageW (infoPtr->hwndSelf, TB_SETBITMAPSIZE, 0, MAKELPARAM(16, 16));
+-	}
++	/* Windows resize all the buttons to the size of a newly added standard image:
++	 * 24x24 for large icons (button 31x30), 16x16 for small ones (button 23x22),
++	 * at 96 DPI */
++	SendMessageW (infoPtr->hwndSelf, TB_SETBITMAPSIZE, 0, MAKELPARAM(size, size));
+ 
+ 	TOOLBAR_CalcToolbar (infoPtr);
+     }
+@@ -3442,7 +3506,7 @@
+ static inline LRESULT
+ TOOLBAR_GetBitmapFlags (void)
+ {
+-    return (GetDeviceCaps (0, LOGPIXELSX) >= 120) ? TBBF_LARGE : 0;
++    return (GetDpiForSystem () >= 120) ? TBBF_LARGE : 0;
+ }
+ 
+ 
+@@ -4492,6 +4556,11 @@
+         return FALSE;
+     }
+ 
++    /* an application that asks for the size of the standard images gets them
++     * at their DPI size */
++    if (width == height && (width == 16 || width == 24) && TOOLBAR_HasStdBitmaps(infoPtr))
++        width = height = TOOLBAR_GetStdBitmapSize(infoPtr, width);
++
+     /* width or height of -1 means no change */
+     if (width != -1)
+         infoPtr->nBitmapWidth = width;
