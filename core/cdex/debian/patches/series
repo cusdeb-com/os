@@ -29,3 +29,4 @@
 0030-shell32-invalid-com-registrations.patch
 0031-shell32-cpl-actctx-cleanup.patch
 0032-shlwapi-sxs-aware-pin-dll-of-clsid.patch
+0033-tray-icon-cross-process.patch
