@@ -1,0 +1,257 @@
+Author: CusDeb OS Team
+Description: desk.cpl: Make the DPI setting in Display Properties work.
+ Advanced > General listed font sizes from font.inf, which the Wine prefix
+ does not have, showed the HKLM fallback LogPixels and saved nothing.
+ List Automatic and the DPI steps of the CDEX build (CDEX_DPI_STEPS, from
+ core/cdex/dpi-steps) instead and store the choice in C:\cusdeb\dpi
+ (removed for Automatic), which cdex-win32-session applies at the next
+ login. After a change, offer to sign out now or later; signing out asks
+ cdex-taskbar-bridge for its "logout" action through
+ C:\cusdeb\launch-request.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/cpl/desk/CMakeLists.txt
++++ b/src/dll/cpl/desk/CMakeLists.txt
+@@ -1,5 +1,7 @@
+ 
+-add_definitions(-D_WIN32)
++# CDEX_DPI_STEPS is a space-separated list; general.c takes it as an initializer.
++string(REPLACE " " "," _dpi_steps "${CDEX_DPI_STEPS}")
++add_definitions(-D_WIN32 -DCDEX_DPI_STEPS=${_dpi_steps})
+ spec2def(desk.cpl desk.spec)
+ 
+ list(APPEND SOURCE
+--- a/src/dll/cpl/desk/general.c
++++ b/src/dll/cpl/desk/general.c
+@@ -7,71 +7,129 @@
+ 
+ #include "desk.h"
+ 
++/* CusDeb: the session sets the DPI at login. The choice made here is stored in
++ * C:\cusdeb\dpi; without that file the session detects the DPI itself. */
++#define DPI_CHOICE_FILE _T("C:\\cusdeb\\dpi")
++/* cdex-taskbar-bridge runs the action named in this file. */
++#define LAUNCH_REQUEST_FILE _T("C:\\cusdeb\\launch-request")
++
++/* The DPI values with their own artwork, set by the CDEX build. */
++static const UINT DpiSteps[] = { CDEX_DPI_STEPS };
++
++static UINT
++ReadDpiChoice(VOID)
++{
++    HANDLE hFile;
++    char Buffer[16];
++    DWORD Read = 0;
++
++    hFile = CreateFile(DPI_CHOICE_FILE, GENERIC_READ, FILE_SHARE_READ, NULL,
++                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (hFile == INVALID_HANDLE_VALUE)
++        return 0;
++    ReadFile(hFile, Buffer, sizeof(Buffer) - 1, &Read, NULL);
++    CloseHandle(hFile);
++    Buffer[Read] = '\0';
++    return (UINT)atoi(Buffer);
++}
++
+ static VOID
+-InitFontSizeList(HWND hWnd)
++AddFontSize(HWND hFontSize, LPCTSTR Text, UINT Dpi, UINT Current)
+ {
+-    HINF hInf;
+-    HKEY hKey;
+-    HWND hFontSize;
+-    INFCONTEXT Context;
+-    int i, ci = 0;
+-    DWORD dwSize, dwValue, dwType;
++    int i = SendMessage(hFontSize, CB_ADDSTRING, 0, (LPARAM)Text);
+ 
+-    hFontSize = GetDlgItem(hWnd, IDC_FONTSIZE_COMBO);
++    if (i == CB_ERR)
++        return;
++    SendMessage(hFontSize, CB_SETITEMDATA, (WPARAM)i, (LPARAM)Dpi);
++    if (Dpi == Current)
++        SendMessage(hFontSize, CB_SETCURSEL, (WPARAM)i, 0);
++}
+ 
+-    hInf = SetupOpenInfFile(_T("font.inf"), NULL,
+-                            INF_STYLE_WIN4, NULL);
++static VOID
++InitFontSizeList(HWND hWnd)
++{
++    HWND hFontSize = GetDlgItem(hWnd, IDC_FONTSIZE_COMBO);
++    UINT Current = ReadDpiChoice();
++    BOOL Listed = (Current == 0);
++    TCHAR Text[64];
++    UINT i;
++
++    LoadString(hApplet, IDS_DPI_AUTOMATIC, Text, _countof(Text));
++    AddFontSize(hFontSize, Text, 0, Current);
+ 
+-    if (hInf != INVALID_HANDLE_VALUE)
++    for (i = 0; i < _countof(DpiSteps); i++)
+     {
+-        if (SetupFindFirstLine(hInf, _T("Font Sizes"), NULL, &Context))
+-        {
+-            if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, _T("SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current\\Software\\Fonts"),
+-                             0, KEY_READ, &hKey) == ERROR_SUCCESS)
+-            {
+-                dwSize = MAX_PATH;
+-                dwType = REG_DWORD;
++        _stprintf(Text, _T("%u%% (%u DPI)"), DpiSteps[i] * 100 / 96, DpiSteps[i]);
++        AddFontSize(hFontSize, Text, DpiSteps[i], Current);
++        Listed |= (DpiSteps[i] == Current);
++    }
+ 
+-                if (RegQueryValueEx(hKey, _T("LogPixels"), NULL, &dwType,
+-                                    (LPBYTE)&dwValue, &dwSize) != ERROR_SUCCESS)
+-                {
+-                    dwValue = 0;
+-                }
++    /* A value set elsewhere, for example with winecfg */
++    if (!Listed)
++    {
++        _stprintf(Text, _T("%u DPI"), Current);
++        AddFontSize(hFontSize, Text, Current, Current);
++    }
++}
+ 
+-                RegCloseKey(hKey);
+-            }
++static BOOL
++WriteTextFile(LPCTSTR Path, const char *Text)
++{
++    HANDLE hFile;
++    DWORD Written;
++    BOOL Ret;
++
++    CreateDirectory(_T("C:\\cusdeb"), NULL);
++    hFile = CreateFile(Path, GENERIC_WRITE, 0, NULL,
++                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (hFile == INVALID_HANDLE_VALUE)
++        return FALSE;
++    Ret = WriteFile(hFile, Text, strlen(Text), &Written, NULL);
++    CloseHandle(hFile);
++    return Ret;
++}
+ 
+-            for (;;)
+-            {
+-                TCHAR Buffer[LINE_LEN];
+-                TCHAR Desc[LINE_LEN];
++static INT_PTR CALLBACK
++SignOutDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
++{
++    if (uMsg == WM_INITDIALOG)
++        return TRUE;
++    if (uMsg == WM_COMMAND && (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL))
++    {
++        EndDialog(hwndDlg, LOWORD(wParam));
++        return TRUE;
++    }
++    return FALSE;
++}
+ 
+-                if (SetupGetStringField(&Context, 0, Buffer, sizeof(Buffer) / sizeof(TCHAR), NULL) &&
+-                    SetupGetIntField(&Context, 1, &ci))
+-                {
+-                    _stprintf(Desc, _T("%s (%d DPI)"), Buffer, ci);
+-                    i = SendMessage(hFontSize, CB_ADDSTRING, 0, (LPARAM)Desc);
+-                    if (i != CB_ERR)
+-                        SendMessage(hFontSize, CB_SETITEMDATA, (WPARAM)i, (LPARAM)ci);
++static VOID
++ApplyFontSize(HWND hWnd)
++{
++    HWND hFontSize = GetDlgItem(hWnd, IDC_FONTSIZE_COMBO);
++    int i = SendMessage(hFontSize, CB_GETCURSEL, 0, 0);
++    UINT Dpi;
++
++    if (i == CB_ERR)
++        return;
++    Dpi = (UINT)SendMessage(hFontSize, CB_GETITEMDATA, (WPARAM)i, 0);
++    if (Dpi == ReadDpiChoice())
++        return;
+ 
+-                    if ((int)dwValue == ci)
+-                    {
+-                        SendMessage(hFontSize, CB_SETCURSEL, (WPARAM)i, 0);
+-                        SetWindowText(GetDlgItem(hWnd, IDC_FONTSIZE_CUSTOM), Desc);
+-                    }
+-                    else
+-                        SendMessage(hFontSize, CB_SETCURSEL, 0, 0);
+-                }
++    if (Dpi)
++    {
++        char Buffer[16];
+ 
+-                if (!SetupFindNextLine(&Context, &Context))
+-                {
+-                    break;
+-                }
+-            }
+-        }
++        sprintf(Buffer, "%u\n", Dpi);
++        if (!WriteTextFile(DPI_CHOICE_FILE, Buffer))
++            return;
++    }
++    else
++    {
++        DeleteFile(DPI_CHOICE_FILE);
+     }
+ 
+-    SetupCloseInfFile(hInf);
++    if (DialogBox(hApplet, MAKEINTRESOURCE(IDD_DPI_SIGNOUT), hWnd, SignOutDlgProc) == IDOK)
++        WriteTextFile(LAUNCH_REQUEST_FILE, "logout");
+ }
+ 
+ static VOID
+@@ -150,6 +208,10 @@
+                 break;
+             }
+             break;
++        case WM_NOTIFY:
++            if (((LPNMHDR)lParam)->code == (UINT)PSN_APPLY)
++                ApplyFontSize(hwndDlg);
++            break;
+     }
+ 
+     return Ret;
+--- a/src/dll/cpl/desk/lang/en-US.rc
++++ b/src/dll/cpl/desk/lang/en-US.rc
+@@ -300,3 +300,18 @@
+     IDS_APPLY_NEEDS_RESTART "You need to restart your computer to apply changes."
+     IDS_TIMEOUTTEXT "Revert to previous settings in %d seconds."
+ END
++
++STRINGTABLE
++BEGIN
++    IDS_DPI_AUTOMATIC "Automatic"
++END
++
++IDD_DPI_SIGNOUT DIALOGEX 20, 30, 233, 62
++STYLE DS_SHELLFONT | DS_MODALFRAME | WS_CAPTION | WS_SYSMENU
++CAPTION "Display Settings"
++FONT 8, "MS Shell Dlg"
++BEGIN
++    LTEXT "You must sign out to apply the new DPI setting. Save any open files and close all programs before you sign out.", IDC_STATIC, 7, 7, 219, 26
++    DEFPUSHBUTTON "Sign out &now", IDOK, 91, 41, 66, 14
++    PUSHBUTTON "Sign out &later", IDCANCEL, 160, 41, 66, 14
++END
+--- a/src/dll/cpl/desk/resource.h
++++ b/src/dll/cpl/desk/resource.h
+@@ -17,6 +17,7 @@
+ #define IDD_DESKTOP_GENERAL  107
+ #define IDD_ADVANCED_GENERAL 200
+ #define IDD_CONFIRMSETTINGS  201
++#define IDD_DPI_SIGNOUT      202
+ 
+ /* Themes Page */
+ #define IDC_THEMES_COMBOBOX 1000
+@@ -163,6 +164,8 @@
+ #define IDS_APPLY_FAILED        3500
+ #define IDS_APPLY_NEEDS_RESTART 3501
+ 
++#define IDS_DPI_AUTOMATIC 3520
++
+ /* Effects Appearance Dialog */
+ #define IDC_EFFAPPEARANCE_KEYBOARDCUES    3601
+ #define IDC_EFFAPPEARANCE_ANIMATION       3602

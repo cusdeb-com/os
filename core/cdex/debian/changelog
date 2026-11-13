@@ -48,6 +48,9 @@ cdex (0.0.17-1cd) trixie; urgency=medium
     grips, radio buttons, 144 DPI check boxes) and set
     TrueSizeScalingType = Dpi for the true-size parts and image glyphs
     that lacked it.
+  * debian/patches/0025-desk-dpi-setting.patch: Display Properties >
+    Advanced > General lists Automatic and the DPI steps, stores the
+    choice in C:\cusdeb\dpi and offers to sign out.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.
