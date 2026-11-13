@@ -1,0 +1,20 @@
+Author: CusDeb OS Team
+Description: win32u: Scale SM_CXMINIMIZED to the DPI.
+ SM_CYMINIMIZED follows the caption height, which is scaled to the DPI,
+ while SM_CXMINIMIZED returned the 96 DPI width of the minimized metrics.
+ The ReactOS taskbar uses it as the maximum width of a task button, which
+ was half as wide as intended at 192 DPI. Scale the width to the system
+ DPI.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/win32u/sysparams.c
++++ b/src/dlls/win32u/sysparams.c
+@@ -7190,7 +7190,7 @@
+     case SM_CXMINIMIZED:
+         mm.cbSize = sizeof(mm);
+         NtUserSystemParametersInfo( SPI_GETMINIMIZEDMETRICS, sizeof(mm), &mm, 0 );
+-        return mm.iWidth + 6;
++        return map_to_dpi( mm.iWidth, get_system_dpi() ) + 6;
+     case SM_CYMINIMIZED:
+         ncm.cbSize = sizeof(ncm);
+         NtUserSystemParametersInfo( SPI_GETNONCLIENTMETRICS, 0, &ncm, 0 );

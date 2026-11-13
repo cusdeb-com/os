@@ -1,0 +1,206 @@
+Author: CusDeb OS Team
+Description: user32: Above 96 DPI pick and scale icons like Windows when the size is missing.
+ Without an entry of the requested size, the nearest one is used (on a
+ tie the first in the file) and resized by pixel replication. At 120 and
+ 144 DPI that shrinks 48 and 32 pixel icons with dropped rows and enlarges
+ 16 pixel ones blockily. Above 96 DPI prefer the smallest larger entry,
+ enlarge only when there is none, and resample color icons with a filter
+ on premultiplied pixels; transparency from the AND mask or alpha channel
+ goes into the alpha bitmap and a mask derived from it. Exact sizes, and
+ everything at 96 DPI, take the existing path.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/user32/cursoricon.c
++++ b/src/dlls/user32/cursoricon.c
+@@ -441,14 +441,17 @@
+ /**********************************************************************
+  *	    CURSORICON_FindBestIcon
+  *
+- * Find the icon closest to the requested size and bit depth.
++ * Find the icon closest to the requested size and bit depth. Above 96 DPI
++ * icons are often requested at sizes they have no entry for; the smallest
++ * larger entry is preferred then: shrinking keeps more detail than enlarging.
+  */
+ static int CURSORICON_FindBestIcon( LPCVOID dir, DWORD size, fnGetCIEntry get_entry,
+                                     int width, int height, int depth, UINT loadflags )
+ {
+     int i, cx, cy, bits, bestEntry = -1;
+     UINT iTotalDiff, iXDiff=0, iYDiff=0, iColorDiff;
+-    UINT iTempXDiff, iTempYDiff, iTempColorDiff;
++    UINT iTempXDiff, iTempYDiff, iTempDiff, iTempColorDiff;
++    BOOL prefer_larger = GetDpiForSystem() > USER_DEFAULT_SCREEN_DPI, smaller = FALSE;
+ 
+     /* Find Best Fit */
+     iTotalDiff = 0xFFFFFFFF;
+@@ -470,12 +473,16 @@
+     {
+         iTempXDiff = abs(width - cx);
+         iTempYDiff = abs(height - cy);
++        iTempDiff = iTempXDiff + iTempYDiff;
++        /* smaller entries rank after all larger ones */
++        if (prefer_larger && (cx < width || cy < height)) iTempDiff += 0x10000;
+ 
+-        if(iTotalDiff > (iTempXDiff + iTempYDiff))
++        if(iTotalDiff > iTempDiff)
+         {
+             iXDiff = iTempXDiff;
+             iYDiff = iTempYDiff;
+-            iTotalDiff = iXDiff + iYDiff;
++            iTotalDiff = iTempDiff;
++            smaller = iTempDiff >= 0x10000;
+         }
+     }
+ 
+@@ -484,7 +491,8 @@
+     {
+         TRACE("entry %d: %d x %d, %d bpp\n", i, cx, cy, bits);
+ 
+-        if(abs(width - cx) == iXDiff && abs(height - cy) == iYDiff)
++        if(abs(width - cx) == iXDiff && abs(height - cy) == iYDiff &&
++           (!prefer_larger || (cx < width || cy < height) == smaller))
+         {
+             iTempColorDiff = abs(depth - bits);
+             if(iColorDiff > iTempColorDiff)
+@@ -765,6 +773,127 @@
+     return alpha;
+ }
+ 
++/* Resample one row or column of premultiplied BGRA pixels (4 floats each) with a
++ * triangle filter that widens when shrinking, so shrunk icons are averaged and
++ * enlarged ones interpolated. */
++static void resample_line( const float *src, int src_len, int src_step,
++                           float *dst, int dst_len, int dst_step )
++{
++    float scale = (float)src_len / dst_len, radius = max( scale, 1.0f );
++    int i, j, k;
++
++    for (i = 0; i < dst_len; i++)
++    {
++        float center = (i + 0.5f) * scale - 0.5f, sum[4] = {0}, total = 0;
++        int first = max( 0, (int)(center - radius) ), last = min( src_len - 1, (int)(center + radius) + 1 );
++
++        for (j = first; j <= last; j++)
++        {
++            float weight = 1 - (j > center ? j - center : center - j) / radius;
++
++            if (weight <= 0) continue;
++            for (k = 0; k < 4; k++) sum[k] += weight * src[j * src_step + k];
++            total += weight;
++        }
++        for (k = 0; k < 4; k++) dst[i * dst_step + k] = total ? sum[k] / total : 0;
++    }
++}
++
++/* Scale a color icon with filtering. Transparency comes from its alpha channel
++ * or AND mask and ends up in the frame's alpha bitmap and mask. */
++static BOOL create_scaled_icon_frame( HDC hdc, const BITMAPINFO *bmi, const void *color_bits,
++                                      const BYTE *mask_bits, int width, int height,
++                                      struct cursoricon_frame *frame )
++{
++    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[2] )];
++    BITMAPINFO *info = (BITMAPINFO *)buffer;
++    int src_width = bmi->bmiHeader.biWidth, src_height = abs( bmi->bmiHeader.biHeight );
++    int mask_stride = ((src_width + 31) / 8) & ~3, dst_stride = ((width + 31) / 8) & ~3;
++    BOOL has_alpha = bmi_has_alpha( bmi, color_bits );
++    float *pixels, *rows = NULL, *scaled = NULL;
++    BYTE *mask = NULL;
++    DWORD *bits, *color = NULL;
++    HBITMAP src;
++    BOOL ret = FALSE;
++    int x, y, k;
++
++    memset( info, 0, sizeof(buffer) );
++    info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
++    info->bmiHeader.biWidth = src_width;
++    info->bmiHeader.biHeight = bmi->bmiHeader.biHeight;
++    info->bmiHeader.biPlanes = 1;
++    info->bmiHeader.biBitCount = 32;
++    info->bmiHeader.biCompression = BI_RGB;
++    if (!(src = CreateDIBSection( hdc, info, DIB_RGB_COLORS, (void **)&bits, NULL, 0 ))) return FALSE;
++    SelectObject( hdc, src );
++    StretchDIBits( hdc, 0, 0, src_width, src_height, 0, 0, src_width, src_height,
++                   color_bits, bmi, DIB_RGB_COLORS, SRCCOPY );
++
++    if (!(pixels = malloc( src_width * src_height * 4 * sizeof(float) )) ||
++        !(rows = malloc( width * src_height * 4 * sizeof(float) )) ||
++        !(scaled = malloc( width * height * 4 * sizeof(float) )) ||
++        !(mask = calloc( height, dst_stride )) ||
++        !(color = malloc( width * height * sizeof(*color) )))
++        goto done;
++
++    for (y = 0; y < src_height; y++)
++        for (x = 0; x < src_width; x++)
++        {
++            DWORD pixel = bits[y * src_width + x];
++            float alpha = has_alpha ? pixel >> 24 : 255;
++
++            if (!has_alpha && mask_bits && (mask_bits[y * mask_stride + x / 8] & (0x80 >> (x % 8))))
++                alpha = 0;
++            for (k = 0; k < 3; k++)
++                pixels[(y * src_width + x) * 4 + k] = ((pixel >> (8 * k)) & 0xff) * alpha / 255;
++            pixels[(y * src_width + x) * 4 + 3] = alpha;
++        }
++
++    for (y = 0; y < src_height; y++)
++        resample_line( pixels + y * src_width * 4, src_width, 4, rows + y * width * 4, width, 4 );
++    for (x = 0; x < width; x++)
++        resample_line( rows + x * 4, src_height, width * 4, scaled + x * 4, height, width * 4 );
++
++    /* The color bitmap is not premultiplied, as GetIconInfo callers expect. */
++    for (y = 0; y < height; y++)
++        for (x = 0; x < width; x++)
++        {
++            const float *px = scaled + (y * width + x) * 4;
++            DWORD pixel = (DWORD)(px[3] + 0.5f) << 24;
++
++            if (px[3] >= 0.5f)
++                for (k = 0; k < 3; k++)
++                    pixel |= (DWORD)min( px[k] * 255 / px[3] + 0.5f, 255 ) << (8 * k);
++            color[y * width + x] = pixel;
++            if (px[3] < 128) mask[y * dst_stride + x / 8] |= 0x80 >> (x % 8);
++        }
++
++    info->bmiHeader.biWidth = width;
++    info->bmiHeader.biHeight = bmi->bmiHeader.biHeight < 0 ? -height : height;
++    if (!(frame->color = create_color_bitmap( width, height ))) goto done;
++    SelectObject( hdc, frame->color );
++    StretchDIBits( hdc, 0, 0, width, height, 0, 0, width, height,
++                   color, info, DIB_RGB_COLORS, SRCCOPY );
++    frame->alpha = create_alpha_bitmap( frame->color, info, color );
++
++    if (!(frame->mask = CreateBitmap( width, height, 1, 1, NULL ))) goto done;
++    info->bmiHeader.biBitCount = 1;
++    info->bmiColors[1].rgbBlue = info->bmiColors[1].rgbGreen = info->bmiColors[1].rgbRed = 0xff;
++    SelectObject( hdc, frame->mask );
++    StretchDIBits( hdc, 0, 0, width, height, 0, 0, width, height,
++                   mask, info, DIB_RGB_COLORS, SRCCOPY );
++    ret = TRUE;
++
++done:
++    DeleteObject( src );
++    free( pixels );
++    free( rows );
++    free( scaled );
++    free( mask );
++    free( color );
++    return ret;
++}
++
+ static BOOL create_icon_frame( const BITMAPINFO *bmi, DWORD maxsize, POINT hotspot, BOOL is_icon,
+                                INT width, INT height, UINT flags, struct cursoricon_frame *frame )
+ {
+@@ -871,6 +1000,14 @@
+                        0, 0, bmi_width, bmi_height,
+                        color_bits, bmi_copy, DIB_RGB_COLORS, SRCCOPY );
+     }
++    else if (do_stretch && is_icon && bmi_copy->bmiHeader.biSize == sizeof(BITMAPINFOHEADER) &&
++             GetDpiForSystem() > USER_DEFAULT_SCREEN_DPI)
++    {
++        if (!create_scaled_icon_frame( hdc, bmi_copy, color_bits, mask_size ? mask_bits : NULL,
++                                       width, height, frame ))
++            goto done;
++        mask_size = 0;
++    }
+     else
+     {
+         if (!(frame->mask = CreateBitmap( width, height, 1, 1, NULL ))) goto done;

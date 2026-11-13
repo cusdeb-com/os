@@ -1,0 +1,61 @@
+Author: CusDeb OS Team
+Description: win32u: Draw the submenu arrow at the DPI.
+ The submenu arrow is the 7x11 OBM_MNARROW bitmap at any DPI. Above 96
+ DPI draw the same arrow as a polygon scaled to the DPI.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/win32u/menu.c
++++ b/src/dlls/win32u/menu.c
+@@ -1941,13 +1941,49 @@
+     return ret;
+ }
+ 
++/* OBM_MNARROW is a 7x11 bitmap for 96 DPI; above that, the same arrow is drawn
++ * at the DPI. Threads can have different DPIs and draw at the same time, so a
++ * bitmap is kept for each DPI and never deleted. */
+ static HBITMAP get_arrow_bitmap(void)
+ {
+     static HBITMAP arrow_bitmap;
++    static struct { UINT dpi; HBITMAP bitmap; } scaled[4];
++    UINT i, dpi = get_thread_dpi().num;
+ 
+-    if (!arrow_bitmap)
+-        arrow_bitmap = LoadImageW( 0, MAKEINTRESOURCEW(OBM_MNARROW), IMAGE_BITMAP, 0, 0, 0 );
+-    return arrow_bitmap;
++    if (!dpi) dpi = get_system_dpi();
++    if (dpi <= USER_DEFAULT_SCREEN_DPI)
++    {
++        if (!arrow_bitmap)
++            arrow_bitmap = LoadImageW( 0, MAKEINTRESOURCEW(OBM_MNARROW), IMAGE_BITMAP, 0, 0, 0 );
++        return arrow_bitmap;
++    }
++
++    for (i = 0; i < ARRAY_SIZE(scaled) && scaled[i].bitmap; i++)
++        if (scaled[i].dpi == dpi) return scaled[i].bitmap;
++    /* more DPIs than slots: use the arrow of the first one */
++    if (i == ARRAY_SIZE(scaled)) return scaled[0].bitmap;
++    else
++    {
++        int width = muldiv( 7, dpi, USER_DEFAULT_SCREEN_DPI );
++        int height = muldiv( 11, dpi, USER_DEFAULT_SCREEN_DPI );
++        int margin = muldiv( 1, dpi, USER_DEFAULT_SCREEN_DPI );
++        POINT points[3] = {{margin, margin}, {margin, height - margin},
++                           {margin + (height - 2 * margin) / 2, height / 2}};
++        RECT rect = {0, 0, width, height};
++        HDC hdc = NtGdiCreateCompatibleDC( 0 );
++        HBITMAP bitmap = NtGdiCreateBitmap( width, height, 1, 1, NULL );
++        ULONG count = 3;
++
++        NtGdiSelectBitmap( hdc, bitmap );
++        fill_rect( hdc, &rect, GetStockObject( WHITE_BRUSH ));
++        NtGdiSelectBrush( hdc, GetStockObject( BLACK_BRUSH ));
++        NtGdiSelectPen( hdc, GetStockObject( NULL_PEN ));
++        NtGdiPolyPolyDraw( hdc, points, &count, 1, NtGdiPolyPolygon );
++        NtGdiDeleteObjectApp( hdc );
++        scaled[i].dpi = dpi;
++        scaled[i].bitmap = bitmap;
++        return bitmap;
++    }
+ }
+ 
+ /* Get the size of a bitmap item */

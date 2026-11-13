@@ -10,6 +10,13 @@ wine (11.19.0-2cd) trixie; urgency=medium
     the DPI when the part sets TrueSizeScalingType = Dpi, as true-size
     images are, and enlarge images made for a lower DPI by pixel
     replication when the factor is a whole number.
+  * debian/patches/0015-win32u-menu-arrow-dpi.patch: draw the submenu
+    arrow at the DPI.
+  * debian/patches/0016-win32u-minimized-width-dpi.patch: scale
+    SM_CXMINIMIZED to the DPI.
+  * debian/patches/0017-user32-icon-scaling.patch: above 96 DPI, when an
+    icon has no entry of the requested size, prefer a larger one and
+    scale it with filtering.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 

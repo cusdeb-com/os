@@ -12,3 +12,6 @@
 0012-uxtheme-theme-font-system-dpi.patch
 0013-uxtheme-negative-int.patch
 0014-uxtheme-dpi-glyphs.patch
+0015-win32u-menu-arrow-dpi.patch
+0016-win32u-minimized-width-dpi.patch
+0017-user32-icon-scaling.patch
