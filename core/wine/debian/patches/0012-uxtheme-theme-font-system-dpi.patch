@@ -1,0 +1,46 @@
+Author: CusDeb OS Team
+Description: uxtheme: Size theme fonts for the system DPI above 96 DPI.
+ GetThemeFont converts the point size with GetDeviceCaps(hdc, LOGPIXELSY),
+ which returns 0 for a NULL hdc, so the font gets height 0 and the default
+ size at every DPI. The ReactOS tray clock calls it that way. Above 96 DPI
+ use the system DPI for a NULL hdc.
+ .
+ The theme's non-client fonts are passed to SPI_SETNONCLIENTMETRICS with
+ their point size as the height, although the metrics are stored in 96 DPI
+ pixels. Above 96 DPI convert the size to pixels.
+ .
+ Both changes are limited to DPIs above 96 so that 96 DPI renders as
+ before: there the tray clock keeps the default font size, and
+ cdex-registry restores the non-client fonts on every login.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/uxtheme/msstyles.c
++++ b/src/dlls/uxtheme/msstyles.c
+@@ -796,6 +796,10 @@
+     if (SUCCEEDED (MSSTYLES_GetFont (lpValue, lpValue + dwValueLen, &lpValue,
+         &font)))
+     {
++        /* the theme gives the size in points, the metrics are stored in
++         * 96 DPI pixels; 96 DPI keeps the point value as the height */
++        if (GetDpiForSystem() > USER_DEFAULT_SCREEN_DPI)
++            font.lfHeight = -MulDiv (font.lfHeight, USER_DEFAULT_SCREEN_DPI, 72);
+         switch (iPropertyId)
+         {
+ 	  case TMT_CAPTIONFONT:
+@@ -1490,8 +1494,15 @@
+ 
+     ZeroMemory(pFont, sizeof(LOGFONTW));
+     hr = MSSTYLES_GetFont (lpCur, lpEnd, &lpCur, pFont);
++    /* GetThemeFont accepts a NULL hdc. Above 96 DPI the font is then sized for
++     * the system DPI; at 96 DPI its height is 0, the default size. */
+     if (SUCCEEDED (hr))
+-        pFont->lfHeight = -MulDiv(pFont->lfHeight, GetDeviceCaps(hdc, LOGPIXELSY), 72);
++    {
++        UINT dpi = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : GetDpiForSystem();
++
++        if (!hdc && dpi <= USER_DEFAULT_SCREEN_DPI) dpi = 0;
++        pFont->lfHeight = -MulDiv(pFont->lfHeight, dpi, 72);
++    }
+ 
+     return hr;
+ }

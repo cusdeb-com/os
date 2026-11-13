@@ -1,0 +1,132 @@
+Author: CusDeb OS Team
+Description: uxtheme: Scale image glyphs to the DPI and keep enlarged images sharp.
+ A true-size background image is scaled to the theme DPI when its part
+ sets TrueSizeScalingType = Dpi and the DPI exceeds the image's by
+ TrueSizeStretchMark percent. Image glyphs were drawn at their source size
+ whatever the part said. Apply the same rule to them, as Windows does.
+ .
+ An image made for a lower DPI than the theme DPI is enlarged by pixel
+ replication when the factor is a whole number, so it stays sharp. Every
+ other stretch is filtered as before.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/uxtheme/draw.c
++++ b/src/dlls/uxtheme/draw.c
+@@ -342,7 +342,7 @@
+  */
+ static inline BOOL UXTHEME_StretchBlt(HDC hdcDst, int nXOriginDst, int nYOriginDst, int nWidthDst, int nHeightDst,
+                                       HDC hdcSrc, int nXOriginSrc, int nYOriginSrc, int nWidthSrc, int nHeightSrc,
+-                                      INT transparent, COLORREF transcolor)
++                                      INT transparent, COLORREF transcolor, BOOL replicate)
+ {
+     static const BLENDFUNCTION blendFunc = 
+     {
+@@ -356,7 +356,12 @@
+     int old_stretch_mode;
+     POINT old_brush_org;
+ 
+-    old_stretch_mode = SetStretchBltMode(hdcDst, HALFTONE);
++    /* An image drawn for a lower DPI is enlarged by pixel replication when the
++     * factor is a whole number, which keeps it sharp. */
++    old_stretch_mode = SetStretchBltMode(hdcDst,
++            replicate && nWidthSrc > 0 && nWidthDst >= 2 * nWidthSrc && !(nWidthDst % nWidthSrc)
++            && nHeightDst * nWidthSrc == nHeightSrc * nWidthDst
++            ? COLORONCOLOR : HALFTONE);
+     SetBrushOrgEx(hdcDst, nXOriginDst, nYOriginDst, &old_brush_org);
+ 
+     if (transparent == ALPHABLEND_BINARY) {
+@@ -391,7 +396,7 @@
+ {
+     return UXTHEME_StretchBlt(hdcDest, nXOriginDest, nYOriginDest, nWidthDest, nHeightDest,
+                               hdcSrc, nXOriginSrc, nYOriginSrc, nWidthDest, nHeightDest,
+-                              transparent, transcolor);
++                              transparent, transcolor, FALSE);
+ }
+ 
+ /***********************************************************************
+@@ -488,7 +493,7 @@
+     {
+         return UXTHEME_StretchBlt (hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
+                                    hdcSrc, nXOriginSrc, nYOriginSrc, nWidthSrc, nHeightSrc,
+-                                   transparent, transcolor);
++                                   transparent, transcolor, FALSE);
+     }
+ }
+ 
+@@ -577,11 +582,13 @@
+     int halign = HA_CENTER;
+     POINT dstSize;
+     POINT srcSize;
++    POINT drawSize;
+     POINT topleft;
+     BOOL hasAlpha, hasDefaultTransparentColour;
++    int imageDpi, dpi, scalingType = TSST_NONE, stretchMark = 0;
+ 
+     hr = UXTHEME_LoadImage(hTheme, iPartId, iStateId, pRect, TRUE, &bmpSrc, &rcSrc, &hasAlpha,
+-                           &hasDefaultTransparentColour, NULL);
++                           &hasDefaultTransparentColour, &imageDpi);
+     if(FAILED(hr)) return hr;
+     hdcSrc = CreateCompatibleDC(hdc);
+     if(!hdcSrc) {
+@@ -594,6 +601,16 @@
+     dstSize.y = pRect->bottom-pRect->top;
+     srcSize.x = rcSrc.right-rcSrc.left;
+     srcSize.y = rcSrc.bottom-rcSrc.top;
++    drawSize = srcSize;
++    /* Glyphs follow TrueSizeScalingType like true-size background images. */
++    GetThemeEnumValue(hTheme, iPartId, iStateId, TMT_TRUESIZESCALINGTYPE, &scalingType);
++    GetThemeInt(hTheme, iPartId, iStateId, TMT_TRUESIZESTRETCHMARK, &stretchMark);
++    dpi = MSSTYLES_GetThemeDPI(hTheme);
++    if (scalingType == TSST_DPI && dpi != imageDpi && MulDiv(100, dpi, imageDpi) >= stretchMark + 100)
++    {
++        drawSize.x = MulDiv(srcSize.x, dpi, imageDpi);
++        drawSize.y = MulDiv(srcSize.y, dpi, imageDpi);
++    }
+ 
+     get_transparency (hTheme, iPartId, iStateId, hasAlpha, hasDefaultTransparentColour, &transparent,
+                       &transparentcolor, TRUE);
+@@ -602,14 +619,14 @@
+ 
+     topleft.x = pRect->left;
+     topleft.y = pRect->top;
+-    if(halign == HA_CENTER)      topleft.x += (dstSize.x/2)-(srcSize.x/2);
+-    else if(halign == HA_RIGHT)  topleft.x += dstSize.x-srcSize.x;
+-    if(valign == VA_CENTER)      topleft.y += (dstSize.y/2)-(srcSize.y/2);
+-    else if(valign == VA_BOTTOM) topleft.y += dstSize.y-srcSize.y;
+-
+-    if(!UXTHEME_Blt(hdc, topleft.x, topleft.y, srcSize.x, srcSize.y,
+-                    hdcSrc, rcSrc.left, rcSrc.top,
+-                    transparent, transparentcolor)) {
++    if(halign == HA_CENTER)      topleft.x += (dstSize.x/2)-(drawSize.x/2);
++    else if(halign == HA_RIGHT)  topleft.x += dstSize.x-drawSize.x;
++    if(valign == VA_CENTER)      topleft.y += (dstSize.y/2)-(drawSize.y/2);
++    else if(valign == VA_BOTTOM) topleft.y += dstSize.y-drawSize.y;
++
++    if(!UXTHEME_StretchBlt(hdc, topleft.x, topleft.y, drawSize.x, drawSize.y,
++                           hdcSrc, rcSrc.left, rcSrc.top, srcSize.x, srcSize.y,
++                           transparent, transparentcolor, dpi > imageDpi)) {
+         hr = HRESULT_FROM_WIN32(GetLastError());
+     }
+ 
+@@ -763,9 +780,10 @@
+     INT transparent;
+     COLORREF transparentcolor = 0;
+     BOOL hasAlpha, hasDefaultTransparentColour;
++    int imageDpi;
+ 
+     hr = UXTHEME_LoadImage(hTheme, iPartId, iStateId, pRect, FALSE, &bmpSrc, &rcSrc, &hasAlpha,
+-                           &hasDefaultTransparentColour, NULL);
++                           &hasDefaultTransparentColour, &imageDpi);
+     if(FAILED(hr)) return hr;
+     hdcSrc = CreateCompatibleDC(hdc);
+     if(!hdcSrc) {
+@@ -804,7 +822,8 @@
+         rcDst.bottom = rcDst.top + drawSize.y;
+         if(!UXTHEME_StretchBlt(hdc, rcDst.left, rcDst.top, drawSize.x, drawSize.y,
+                                 hdcSrc, rcSrc.left, rcSrc.top, srcSize.x, srcSize.y,
+-                                transparent, transparentcolor))
++                                transparent, transparentcolor,
++                                MSSTYLES_GetThemeDPI(hTheme) > imageDpi))
+             hr = HRESULT_FROM_WIN32(GetLastError());
+     }
+     else {

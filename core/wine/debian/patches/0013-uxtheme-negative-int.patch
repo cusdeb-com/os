@@ -1,0 +1,21 @@
+Author: CusDeb OS Team
+Description: uxtheme: Keep the sign of negative theme integers.
+ The scan for the first digit of an integer property skipped a leading
+ minus sign, so negative values were read as positive. Mizu's Start button
+ ContentMargins = -82, 95 thus put the button image inside the button,
+ where it showed once the button got wider at a higher DPI.
+ The fix applies at any DPI; at 96 DPI the affected Mizu parts (caption
+ buttons, task band group menu) are not drawn in CDEX.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/dlls/uxtheme/msstyles.c
++++ b/src/dlls/uxtheme/msstyles.c
+@@ -1361,7 +1361,7 @@
+     LONG total = 0;
+     BOOL gotNeg = FALSE;
+ 
+-    while(cur < lpStringEnd && (*cur < '0' || *cur > '9' || *cur == '-')) cur++;
++    while(cur < lpStringEnd && *cur != '-' && (*cur < '0' || *cur > '9')) cur++;
+     if(cur >= lpStringEnd) {
+         return FALSE;
+     }

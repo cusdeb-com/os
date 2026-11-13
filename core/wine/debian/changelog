@@ -1,3 +1,18 @@
+wine (11.19.0-2cd) trixie; urgency=medium
+
+  * debian/patches/0012-uxtheme-theme-font-system-dpi.patch: above 96
+    DPI size theme fonts for the system DPI when GetThemeFont is called
+    without a DC, and convert the point size of the theme's non-client
+    fonts to pixels.
+  * debian/patches/0013-uxtheme-negative-int.patch: keep the sign of
+    negative theme integers.
+  * debian/patches/0014-uxtheme-dpi-glyphs.patch: scale image glyphs to
+    the DPI when the part sets TrueSizeScalingType = Dpi, as true-size
+    images are, and enlarge images made for a lower DPI by pixel
+    replication when the factor is a whole number.
+
+ -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
+
 wine (11.19.0-1cd) trixie; urgency=medium
 
   * Import Wine 11.19 (upstream commit
