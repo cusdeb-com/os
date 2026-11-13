@@ -1,0 +1,278 @@
+Author: CusDeb OS Team
+Description: Scale fixed pixel sizes in Remote Desktop Connection, Event Viewer and the picture viewer.
+ mstsc: tab page position, banner and icons. Event Viewer: column widths,
+ split positions and the icons of the detail buttons. shimgvw: the 96 DPI
+ toolbar images are enlarged by a whole factor with pixel replication,
+ and the default and minimum window sizes are scaled.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/base/applications/mscutils/eventvwr/eventvwr.c
++++ b/src/base/applications/mscutils/eventvwr/eventvwr.c
+@@ -13,6 +13,7 @@
+ #include <sddl.h> // For ConvertSidToStringSidW
+ #include <shellapi.h>
+ #include <shlwapi.h>
++#include <dpiscale.h>
+ 
+ #include <pseh/pseh2.h>
+ 
+@@ -356,8 +357,8 @@
+     Settings.bShowDetailsPane = TRUE;
+     Settings.bShowGrid = FALSE;
+     Settings.bNewestEventsFirst = TRUE;
+-    Settings.nVSplitPos = 250; /* Splitter default positions */
+-    Settings.nHSplitPos = 250;
++    Settings.nVSplitPos = ScaleToDpi(250); /* Splitter default positions */
++    Settings.nHSplitPos = ScaleToDpi(250);
+     ZeroMemory(&Settings.wpPos, sizeof(Settings.wpPos));
+     Settings.wpPos.length = sizeof(Settings.wpPos);
+     SetRect(&Settings.wpPos.rcNormalPosition,
+@@ -3267,7 +3268,7 @@
+     lvc.pszText = szTemp;
+     for (iColumn = 0; iColumn < ARRAYSIZE(columnItems); ++iColumn)
+     {
+-        lvc.cx = columnItems[iColumn].width;
++        lvc.cx = ScaleToDpi(columnItems[iColumn].width);
+         LoadStringW(hInstance, columnItems[iColumn].uID, szTemp, ARRAYSIZE(szTemp));
+         ListView_InsertColumn(hwndListView, iColumn, &lvc);
+     }
+--- a/src/base/applications/mscutils/eventvwr/evtdetctl.c
++++ b/src/base/applications/mscutils/eventvwr/evtdetctl.c
+@@ -1026,9 +1026,12 @@
+ {
+     DWORD dwMask;
+ 
+-    HANDLE nextIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_NEXT), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+-    HANDLE prevIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_PREV), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+-    HANDLE copyIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_COPY), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    HANDLE nextIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_NEXT), IMAGE_ICON,
++                                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
++    HANDLE prevIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_PREV), IMAGE_ICON,
++                                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
++    HANDLE copyIcon = LoadImageW(hInst, MAKEINTRESOURCEW(IDI_COPY), IMAGE_ICON,
++                                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+ 
+     SendDlgItemMessageW(hDlg, IDC_NEXT, BM_SETIMAGE, (WPARAM)IMAGE_ICON, (LPARAM)nextIcon);
+     SendDlgItemMessageW(hDlg, IDC_PREVIOUS, BM_SETIMAGE, (WPARAM)IMAGE_ICON, (LPARAM)prevIcon);
+--- a/src/base/applications/mstsc/connectdialog.c
++++ b/src/base/applications/mstsc/connectdialog.c
+@@ -22,6 +22,7 @@
+ 
+ #include <winreg.h>
+ #include <commdlg.h>
++#include <dpiscale.h>
+ 
+ #define MAX_KEY_NAME 255
+ 
+@@ -289,8 +290,8 @@
+ 
+     SetWindowPos(pInfo->hGeneralPage,
+                  NULL,
+-                 2,
+-                 22,
++                 ScaleToDpi(2),
++                 ScaleToDpi(22),
+                  0,
+                  0,
+                  SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER);
+@@ -298,8 +299,8 @@
+     pInfo->hLogon = LoadImageW(hInst,
+                                MAKEINTRESOURCEW(IDI_LOGON),
+                                IMAGE_ICON,
+-                               32,
+-                               32,
++                               GetSystemMetrics(SM_CXICON),
++                               GetSystemMetrics(SM_CYICON),
+                                LR_DEFAULTCOLOR);
+     if (pInfo->hLogon)
+     {
+@@ -313,8 +314,8 @@
+     pInfo->hConn = LoadImageW(hInst,
+                               MAKEINTRESOURCEW(IDI_CONN),
+                               IMAGE_ICON,
+-                              32,
+-                              32,
++                              GetSystemMetrics(SM_CXICON),
++                              GetSystemMetrics(SM_CYICON),
+                               LR_DEFAULTCOLOR);
+     if (pInfo->hConn)
+     {
+@@ -857,8 +858,8 @@
+ 
+     SetWindowPos(pInfo->hDisplayPage,
+                  NULL,
+-                 2,
+-                 22,
++                 ScaleToDpi(2),
++                 ScaleToDpi(22),
+                  0,
+                  0,
+                  SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER);
+@@ -866,8 +867,8 @@
+         pInfo->hRemote = LoadImageW(hInst,
+                                     MAKEINTRESOURCEW(IDI_REMOTE),
+                                     IMAGE_ICON,
+-                                    32,
+-                                    32,
++                                    GetSystemMetrics(SM_CXICON),
++                                    GetSystemMetrics(SM_CYICON),
+                                     LR_DEFAULTCOLOR);
+         if (pInfo->hRemote)
+         {
+@@ -881,8 +882,8 @@
+         pInfo->hColor = LoadImageW(hInst,
+                                    MAKEINTRESOURCEW(IDI_COLORS),
+                                    IMAGE_ICON,
+-                                   32,
+-                                   32,
++                                   GetSystemMetrics(SM_CXICON),
++                                   GetSystemMetrics(SM_CYICON),
+                                   LR_DEFAULTCOLOR);
+         if (pInfo->hColor)
+         {
+@@ -1041,8 +1042,8 @@
+         pInfo->hMstscSm = LoadImageW(hInst,
+                                    MAKEINTRESOURCEW(IDI_MSTSC),
+                                    IMAGE_ICON,
+-                                   16,
+-                                   16,
++                                   GetSystemMetrics(SM_CXSMICON),
++                                   GetSystemMetrics(SM_CYSMICON),
+                                    LR_DEFAULTCOLOR);
+         if (pInfo->hMstscSm)
+         {
+@@ -1054,8 +1055,8 @@
+         pInfo->hMstscLg = LoadImageW(hInst,
+                                    MAKEINTRESOURCEW(IDI_MSTSC),
+                                    IMAGE_ICON,
+-                                   32,
+-                                   32,
++                                   GetSystemMetrics(SM_CXICON),
++                                   GetSystemMetrics(SM_CYICON),
+                                    LR_DEFAULTCOLOR);
+         if (pInfo->hMstscLg)
+         {
+@@ -1212,6 +1213,7 @@
+                 {
+                     WCHAR szBuffer[32];
+                     RECT bmpRc, txtRc;
++                    INT cyHeader = ScaleToDpi(pInfo->headerbitmap.bmHeight);
+                     LOGFONTW lf;
+                     HFONT hFont, hFontOld;
+                     HBITMAP hBmpOld;
+@@ -1223,7 +1225,7 @@
+                                0,
+                                0,
+                                bmpRc.right,
+-                               pInfo->headerbitmap.bmHeight,
++                               cyHeader,
+                                hdcMem,
+                                0,
+                                0,
+@@ -1233,9 +1235,9 @@
+ 
+                     SelectObject(hdcMem, hBmpOld);
+                     txtRc.left = bmpRc.right / 4;
+-                    txtRc.top = 10;
++                    txtRc.top = ScaleToDpi(10);
+                     txtRc.right = bmpRc.right * 3 / 4;
+-                    txtRc.bottom = pInfo->headerbitmap.bmHeight / 2;
++                    txtRc.bottom = cyHeader / 2;
+ 
+                     ZeroMemory(&lf, sizeof(LOGFONTW));
+ 
+@@ -1244,7 +1246,7 @@
+                                     szBuffer,
+                                     sizeof(szBuffer) / sizeof(WCHAR)))
+                     {
+-                        lf.lfHeight = 20;
++                        lf.lfHeight = ScaleToDpi(20);
+                         lf.lfCharSet = OEM_CHARSET;
+                         lf.lfQuality = DEFAULT_QUALITY;
+                         lf.lfWeight = FW_MEDIUM;
+@@ -1269,20 +1271,20 @@
+                     }
+ 
+                     txtRc.left = bmpRc.right / 4;
+-                    txtRc.top = txtRc.bottom - 5;
++                    txtRc.top = txtRc.bottom - ScaleToDpi(5);
+ #ifdef __REACTOS__
+                     txtRc.right = bmpRc.right * 4 / 5;
+ #else
+                     txtRc.right = bmpRc.right * 3 / 4;
+ #endif
+-                    txtRc.bottom = pInfo->headerbitmap.bmHeight * 9 / 10;
++                    txtRc.bottom = cyHeader * 9 / 10;
+ 
+                     if (LoadStringW(hInst,
+                                     IDS_HEADERTEXT2,
+                                     szBuffer,
+                                     sizeof(szBuffer) / sizeof(WCHAR)))
+                     {
+-                        lf.lfHeight = 24;
++                        lf.lfHeight = ScaleToDpi(24);
+                         lf.lfCharSet = OEM_CHARSET;
+                         lf.lfQuality = DEFAULT_QUALITY;
+                         lf.lfWeight = FW_EXTRABOLD;
+--- a/src/dll/win32/shimgvw/shimgvw.c
++++ b/src/dll/win32/shimgvw/shimgvw.c
+@@ -13,11 +13,12 @@
+ #include <commdlg.h>
+ #include <shlobj.h>
+ #include <shellapi.h>
++#include <dpiscale.h>
+ 
+ EXTERN_C PCWSTR GetExtraExtensionsGdipList(VOID);
+ EXTERN_C HRESULT LoadImageFromPath(LPCWSTR Path, GpImage** ppImage);
+ 
+-/* Toolbar image size */
++/* Toolbar image size at 96 DPI */
+ #define TB_IMAGE_WIDTH  16
+ #define TB_IMAGE_HEIGHT 16
+ 
+@@ -906,8 +907,8 @@
+     g_Settings.Maximized = FALSE;
+     g_Settings.X         = CW_USEDEFAULT;
+     g_Settings.Y         = CW_USEDEFAULT;
+-    g_Settings.Width     = 520;
+-    g_Settings.Height    = 400;
++    g_Settings.Width     = ScaleToDpi(520);
++    g_Settings.Height    = ScaleToDpi(400);
+ }
+ 
+ static BOOL
+@@ -949,6 +950,7 @@
+     HWND hwndToolBar;
+     HIMAGELIST hImageList, hOldImageList;
+     DWORD style = WS_CHILD | WS_VISIBLE | TBSTYLE_FLAT | TBSTYLE_TOOLTIPS;
++    INT factor = GetDpiImageFactor();
+ 
+     if (!Preview_IsMainWnd(pData->m_hwnd))
+         return TRUE; /* FIXME */
+@@ -964,13 +966,14 @@
+     SendMessageW(hwndToolBar, TB_BUTTONSTRUCTSIZE, sizeof(s_Buttons[0]), 0);
+     SendMessageW(hwndToolBar, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_HIDECLIPPEDBUTTONS);
+ 
+-    hImageList = ImageList_Create(TB_IMAGE_WIDTH, TB_IMAGE_HEIGHT, ILC_MASK | ILC_COLOR24, 1, 1);
++    hImageList = ImageList_Create(TB_IMAGE_WIDTH * factor, TB_IMAGE_HEIGHT * factor, ILC_MASK | ILC_COLOR24, 1, 1);
+     if (hImageList == NULL)
+         return FALSE;
+ 
+     for (UINT n = 0; n < _countof(s_ButtonConfig); n++)
+     {
+         HBITMAP hBitmap = LoadBitmapW(g_hInstance, MAKEINTRESOURCEW(s_ButtonConfig[n].idb));
++        hBitmap = EnlargeBitmap(hBitmap, factor);
+         ImageList_AddMasked(hImageList, hBitmap, RGB(255, 255, 255));
+         DeleteObject(hBitmap);
+     }
+@@ -1667,8 +1670,8 @@
+         case WM_GETMINMAXINFO:
+         {
+             MINMAXINFO *pMMI = (MINMAXINFO*)lParam;
+-            pMMI->ptMinTrackSize.x = 350;
+-            pMMI->ptMinTrackSize.y = 290;
++            pMMI->ptMinTrackSize.x = ScaleToDpi(350);
++            pMMI->ptMinTrackSize.y = ScaleToDpi(290);
+             break;
+         }
+         case WM_MOVE:

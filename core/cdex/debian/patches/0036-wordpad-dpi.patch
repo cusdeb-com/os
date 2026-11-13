@@ -1,0 +1,177 @@
+Author: CusDeb OS Team
+Description: wordpad: Scale the format bar, ruler, print preview and default window size to the DPI.
+ The main toolbar has standard images, which comctl32 enlarges by a whole
+ factor; give the format bar images of the same size. Scale the font and
+ size combo boxes, the ruler, the print preview bar and the default
+ window size to the screen DPI.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/base/applications/wordpad/print.c
++++ b/src/base/applications/wordpad/print.c
+@@ -29,6 +29,7 @@
+ #include <commdlg.h>
+ 
+ #include "wordpad.h"
++#include <dpiscale.h>
+ 
+ typedef struct _previewinfo
+ {
+@@ -127,16 +128,16 @@
+ 
+     LoadStringW(hInstance, string, text, MAX_STRING_LEN);
+     hButton = CreateWindowW(WC_BUTTONW, text,
+-                            WS_VISIBLE | WS_CHILD, 5, 5, 100, 15,
++                            WS_VISIBLE | WS_CHILD, 5, 5, ScaleToDpi(100), ScaleToDpi(15),
+                             hRebarWnd, ULongToHandle(command), hInstance, NULL);
+ 
+     rb.cbSize = REBARBANDINFOW_V6_SIZE;
+     rb.fMask = RBBIM_SIZE | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_CHILD | RBBIM_IDEALSIZE | RBBIM_ID;
+     rb.fStyle = RBBS_NOGRIPPER | RBBS_VARIABLEHEIGHT;
+     rb.hwndChild = hButton;
+-    rb.cyChild = rb.cyMinChild = 22;
+-    rb.cx = rb.cxMinChild = 90;
+-    rb.cxIdeal = 100;
++    rb.cyChild = rb.cyMinChild = ScaleToDpi(22);
++    rb.cx = rb.cxMinChild = ScaleToDpi(90);
++    rb.cxIdeal = ScaleToDpi(100);
+     rb.wID = id;
+ 
+     SendMessageW(hRebarWnd, RB_INSERTBANDW, -1, (LPARAM)&rb);
+@@ -327,7 +328,7 @@
+         SelectObject(hdc, hBitmap);
+         FillRect(hdc, drawRect, GetStockObject(WHITE_BRUSH));
+ 
+-        hFont = CreateFontW(10, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, FontName);
++        hFont = CreateFontW(ScaleToDpi(10), ScaleToDpi(6), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, FontName);
+ 
+         SelectObject(hdc, hFont);
+         SetBkMode(hdc, TRANSPARENT);
+@@ -345,28 +346,28 @@
+                 break;
+ 
+             MoveToEx(hdc, x2, y, NULL);
+-            LineTo(hdc, x2, y+2);
++            LineTo(hdc, x2, y + ScaleToDpi(2));
+ 
+             x2 += QuarterCmPixels;
+             if(x2 > RulerTextEnd)
+                 break;
+ 
+-            MoveToEx(hdc, x2, y - 3, NULL);
+-            LineTo(hdc, x2, y + 3);
++            MoveToEx(hdc, x2, y - ScaleToDpi(3), NULL);
++            LineTo(hdc, x2, y + ScaleToDpi(3));
+ 
+             x2 += QuarterCmPixels;
+             if(x2 > RulerTextEnd)
+                 break;
+ 
+             MoveToEx(hdc, x2, y, NULL);
+-            LineTo(hdc, x2, y+2);
++            LineTo(hdc, x2, y + ScaleToDpi(2));
+ 
+             x += CmPixels;
+             if(x > RulerTextEnd)
+                 break;
+ 
+             wsprintfW(str, format, i);
+-            TextOutW(hdc, x, 5, str, lstrlenW(str));
++            TextOutW(hdc, x, ScaleToDpi(5), str, lstrlenW(str));
+         }
+         DeleteObject(hFont);
+     }
+@@ -603,9 +604,9 @@
+         rb.fMask = RBBIM_SIZE | RBBIM_CHILDSIZE | RBBIM_STYLE | RBBIM_CHILD | RBBIM_IDEALSIZE | RBBIM_ID;
+         rb.fStyle = RBBS_NOGRIPPER | RBBS_VARIABLEHEIGHT;
+         rb.hwndChild = hStatic;
+-        rb.cyChild = rb.cyMinChild = 22;
+-        rb.cx = rb.cxMinChild = 90;
+-        rb.cxIdeal = 100;
++        rb.cyChild = rb.cyMinChild = ScaleToDpi(22);
++        rb.cx = rb.cxMinChild = ScaleToDpi(90);
++        rb.cxIdeal = ScaleToDpi(100);
+         rb.wID = BANDID_PREVIEW_BUFFER;
+ 
+         SendMessageW(hReBar, RB_INSERTBANDW, -1, (LPARAM)&rb);
+--- a/src/base/applications/wordpad/registry.c
++++ b/src/base/applications/wordpad/registry.c
+@@ -25,6 +25,7 @@
+ #include <richedit.h>
+ 
+ #include "wordpad.h"
++#include <dpiscale.h>
+ 
+ static const WCHAR key_recentfiles[] = {'R','e','c','e','n','t',' ','f','i','l','e',
+                                         ' ','l','i','s','t',0};
+@@ -116,7 +117,7 @@
+     if(registry_get_handle(&hKey, 0, key_options) != ERROR_SUCCESS ||
+        RegQueryValueExW(hKey, var_framerect, 0, NULL, (LPBYTE)rc, &size) !=
+        ERROR_SUCCESS || size != sizeof(RECT))
+-        SetRect(rc, 0, 0, 600, 300);
++        SetRect(rc, 0, 0, ScaleToDpi(600), ScaleToDpi(300));
+ 
+     RegCloseKey(hKey);
+ }
+--- a/src/base/applications/wordpad/wordpad.c
++++ b/src/base/applications/wordpad/wordpad.c
+@@ -36,6 +36,7 @@
+ #include <wine/unicode.h>
+ 
+ #include "wordpad.h"
++#include <dpiscale.h>
+ 
+ #ifdef NONAMELESSUNION
+ # define U(x)  (x).u
+@@ -1809,6 +1810,11 @@
+     HANDLE hDLL;
+     TBADDBITMAP ab;
+     int nStdBitmaps = 0;
++    /* comctl32 enlarges the images of the main toolbar, which has standard
++     * images, by this factor; the format bar gets images of the same size */
++    int factor = GetDpiImageFactor();
++    HINSTANCE hFormatBarInst = hInstance;
++    UINT_PTR formatBarBitmap = IDB_FORMATBAR;
+     REBARINFO rbi;
+     REBARBANDINFOW rbb;
+     static const WCHAR wszRichEditDll[] = {'R','I','C','H','E','D','2','0','.','D','L','L','\0'};
+@@ -1868,28 +1874,35 @@
+ 
+     hFontListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
+                       WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN | CBS_SORT,
+-                      0, 0, 200, 150, hReBarWnd, (HMENU)IDC_FONTLIST, hInstance, NULL);
++                      0, 0, ScaleToDpi(200), ScaleToDpi(150), hReBarWnd, (HMENU)IDC_FONTLIST, hInstance, NULL);
+ 
+     rbb.hwndChild = hFontListWnd;
+-    rbb.cx = 200;
++    rbb.cx = ScaleToDpi(200);
+     rbb.wID = BANDID_FONTLIST;
+ 
+     SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
+ 
+     hSizeListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
+                       WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN,
+-                      0, 0, 50, 150, hReBarWnd, (HMENU)IDC_SIZELIST, hInstance, NULL);
++                      0, 0, ScaleToDpi(50), ScaleToDpi(150), hReBarWnd, (HMENU)IDC_SIZELIST, hInstance, NULL);
+ 
+     rbb.hwndChild = hSizeListWnd;
+-    rbb.cx = 50;
++    rbb.cx = ScaleToDpi(50);
+     rbb.fStyle ^= RBBS_BREAK;
+     rbb.wID = BANDID_SIZELIST;
+ 
+     SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
+ 
++    if (factor > 1)
++    {
++        /* the toolbar keeps a bitmap handle for its lifetime */
++        hFormatBarInst = NULL;
++        formatBarBitmap = (UINT_PTR)EnlargeBitmap(CreateMappedBitmap(hInstance, IDB_FORMATBAR, 0, NULL, 0), factor);
++    }
+     hFormatBarWnd = CreateToolbarEx(hReBarWnd,
+          CCS_NOPARENTALIGN | CCS_NOMOVEY | WS_VISIBLE | TBSTYLE_TOOLTIPS | BTNS_BUTTON,
+-         IDC_FORMATBAR, 8, hInstance, IDB_FORMATBAR, NULL, 0, 16, 16, 16, 16, sizeof(TBBUTTON));
++         IDC_FORMATBAR, 8, hFormatBarInst, formatBarBitmap,
++         NULL, 0, 16 * factor, 16 * factor, 16 * factor, 16 * factor, sizeof(TBBUTTON));
+ 
+     AddButton(hFormatBarWnd, 0, ID_FORMAT_BOLD);
+     AddButton(hFormatBarWnd, 1, ID_FORMAT_ITALIC);

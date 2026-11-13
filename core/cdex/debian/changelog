@@ -81,6 +81,14 @@ cdex (0.0.17-1cd) trixie; urgency=medium
   * debian/patches/0034-games-dpi.patch: enlarge the WineMine and Spider
     graphics by a whole factor and, above 96 DPI, keep the WineMine
     window as wide as its menu bar.
+  * debian/patches/0035-regedit-dpi.patch, 0036-wordpad-dpi.patch,
+    0037-mstsc-eventvwr-shimgvw-dpi.patch: scale fixed pixel sizes in
+    regedit, WordPad, Remote Desktop Connection, Event Viewer and the
+    picture viewer to the DPI.
+  * debian/patches/0038-desk-preview-dpi.patch, 0039-cpl-dpi.patch:
+    scale the Display appearance and screen saver previews and the icons
+    and pictures of the Mouse, Sound, User Accounts, Date/Time and
+    System applets to the DPI.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.

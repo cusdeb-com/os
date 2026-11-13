@@ -1,0 +1,212 @@
+Author: CusDeb OS Team
+Description: desk.cpl: Scale the appearance and screen saver previews to the DPI.
+ The window preview of the Appearance page, the colour buttons of the
+ advanced appearance dialog and the screen saver preview inside the
+ monitor picture were laid out in fixed pixels. Scale them to the screen
+ DPI; at 96 DPI the screen saver preview keeps its rectangle.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/cpl/desk/advappdlg.c
++++ b/src/dll/cpl/desk/advappdlg.c
+@@ -72,10 +72,10 @@
+         hgdiTmp = SelectObject(hdcCompat, g->hbmpColor[nButton]);
+ 
+         /* Create a brush and draw the rectangle */
+-        rect.left = 2;
+-        rect.top = 2;
+-        rect.right = 22;
+-        rect.bottom = 13;
++        rect.left = ScaleToDpi(2);
++        rect.top = ScaleToDpi(2);
++        rect.right = ScaleToDpi(22);
++        rect.bottom = ScaleToDpi(13);
+         hbrush = CreateSolidBrush(g->SchemeAdv.crColor[nColor]);
+         FillRect(hdcCompat, &rect, hbrush);
+         DeleteObject(hbrush);
+@@ -108,7 +108,12 @@
+     HGDIOBJ hgdiTemp;
+     COLOR_SCHEME *scheme = &g->SchemeAdv;
+ 
+-    const POINT Points[3] = {{29,6},{33,6},{31,8}};
++    const POINT Points[3] =
++    {
++        {ScaleToDpi(29), ScaleToDpi(6)},
++        {ScaleToDpi(33), ScaleToDpi(6)},
++        {ScaleToDpi(31), ScaleToDpi(8)}
++    };
+ 
+     hwndColorButton = GetDlgItem(hwndDlg, IDC_ADVAPPEARANCE_COLOR1_B);
+     hdcColorButton = GetDC(hwndColorButton);
+@@ -118,7 +123,7 @@
+         hdcCompat = CreateCompatibleDC(hdcColorButton);
+ 
+         /* Create the button image */
+-        g->hbmpColor[i] = CreateCompatibleBitmap(hdcColorButton, 36, 15);
++        g->hbmpColor[i] = CreateCompatibleBitmap(hdcColorButton, ScaleToDpi(36), ScaleToDpi(15));
+ 
+         /* Select the button image to the DC */
+         hgdiTemp = SelectObject(hdcCompat, g->hbmpColor[i]);
+@@ -126,17 +131,17 @@
+         /* Draw the buttons background color */
+         rect.left = 0;
+         rect.top = 0;
+-        rect.right = 36;
+-        rect.bottom = 15;
++        rect.right = ScaleToDpi(36);
++        rect.bottom = ScaleToDpi(15);
+         hbrush = CreateSolidBrush(scheme->crColor[COLOR_BTNFACE]);
+         FillRect(hdcCompat, &rect, hbrush);
+         DeleteObject(hbrush);
+ 
+         /* Draw the rectangle */
+-        rect.left = 1;
+-        rect.top = 1;
+-        rect.right = 23;
+-        rect.bottom = 14;
++        rect.left = ScaleToDpi(1);
++        rect.top = ScaleToDpi(1);
++        rect.right = ScaleToDpi(23);
++        rect.bottom = ScaleToDpi(14);
+         hbrush = CreateSolidBrush(scheme->crColor[COLOR_BTNTEXT]);
+         FillRect(hdcCompat, &rect, hbrush);
+         DeleteObject(hbrush);
+@@ -144,16 +149,16 @@
+         /* Draw left side of line */
+         hPen = CreatePen(PS_SOLID, 1, scheme->crColor[COLOR_BTNSHADOW]);
+         SelectObject(hdcCompat, hPen);
+-        MoveToEx(hdcCompat, 26, 1, NULL);
+-        LineTo(hdcCompat, 26, 14);
++        MoveToEx(hdcCompat, ScaleToDpi(26), ScaleToDpi(1), NULL);
++        LineTo(hdcCompat, ScaleToDpi(26), ScaleToDpi(14));
+         SelectObject(hdcCompat, GetStockObject(BLACK_PEN));
+         DeleteObject(hPen);
+ 
+         /* Draw right side of line */
+         hPen = CreatePen(PS_SOLID, 1, scheme->crColor[COLOR_BTNHIGHLIGHT]);
+         SelectObject(hdcCompat,hPen);
+-        MoveToEx(hdcCompat, 27, 1, NULL);
+-        LineTo(hdcCompat, 27, 14);
++        MoveToEx(hdcCompat, ScaleToDpi(26) + 1, ScaleToDpi(1), NULL);
++        LineTo(hdcCompat, ScaleToDpi(26) + 1, ScaleToDpi(14));
+         SelectObject(hdcCompat, GetStockObject(BLACK_PEN));
+         DeleteObject(hPen);
+ 
+--- a/src/dll/cpl/desk/desk.h
++++ b/src/dll/cpl/desk/desk.h
+@@ -24,6 +24,7 @@
+ #include <dll/desk/deskcplx.h>
+ #include <strsafe.h>
+ #include <gdiplus.h>
++#include <dpiscale.h>
+ 
+ #include "appearance.h"
+ #include "preview.h"
+--- a/src/dll/cpl/desk/preview.c
++++ b/src/dll/cpl/desk/preview.c
+@@ -145,10 +145,10 @@
+     int width, height;
+ 
+     /* Calculate the inactive window rectangle */
+-    pPreviewData->rcInactiveFrame.left = pPreviewData->rcDesktop.left + 8;
+-    pPreviewData->rcInactiveFrame.top = pPreviewData->rcDesktop.top + 8;
+-    pPreviewData->rcInactiveFrame.right = pPreviewData->rcDesktop.right - 25;
+-    pPreviewData->rcInactiveFrame.bottom = pPreviewData->rcDesktop.bottom - 30;
++    pPreviewData->rcInactiveFrame.left = pPreviewData->rcDesktop.left + ScaleToDpi(8);
++    pPreviewData->rcInactiveFrame.top = pPreviewData->rcDesktop.top + ScaleToDpi(8);
++    pPreviewData->rcInactiveFrame.right = pPreviewData->rcDesktop.right - ScaleToDpi(25);
++    pPreviewData->rcInactiveFrame.bottom = pPreviewData->rcDesktop.bottom - ScaleToDpi(30);
+ 
+     /* Calculate the inactive caption rectangle */
+     pPreviewData->rcInactiveCaption.left = pPreviewData->rcInactiveFrame.left + pPreviewData->cxEdge + pPreviewData->cySizeFrame + 1;
+@@ -157,16 +157,16 @@
+     pPreviewData->rcInactiveCaption.bottom = pPreviewData->rcInactiveCaption.top + pPreviewData->cyCaption - pPreviewData->cyBorder;
+ 
+     /* Calculate the inactive caption buttons rectangle */
+-    pPreviewData->rcInactiveCaptionButtons.left = pPreviewData->rcInactiveCaption.right - 2 - 2 - 3 * 16;
++    pPreviewData->rcInactiveCaptionButtons.left = pPreviewData->rcInactiveCaption.right - 2 - 2 - 3 * ScaleToDpi(16);
+     pPreviewData->rcInactiveCaptionButtons.top = pPreviewData->rcInactiveCaption.top + 2;
+     pPreviewData->rcInactiveCaptionButtons.right = pPreviewData->rcInactiveCaption.right - 2;
+     pPreviewData->rcInactiveCaptionButtons.bottom = pPreviewData->rcInactiveCaption.bottom - 2;
+ 
+     /* Calculate the active window rectangle */
+-    pPreviewData->rcActiveFrame.left = pPreviewData->rcInactiveFrame.left + 3 + pPreviewData->cySizeFrame;
++    pPreviewData->rcActiveFrame.left = pPreviewData->rcInactiveFrame.left + ScaleToDpi(3) + pPreviewData->cySizeFrame;
+     pPreviewData->rcActiveFrame.top = pPreviewData->rcInactiveCaption.bottom + 1;
+-    pPreviewData->rcActiveFrame.right = pPreviewData->rcDesktop.right - 10;
+-    pPreviewData->rcActiveFrame.bottom = pPreviewData->rcDesktop.bottom - 25;
++    pPreviewData->rcActiveFrame.right = pPreviewData->rcDesktop.right - ScaleToDpi(10);
++    pPreviewData->rcActiveFrame.bottom = pPreviewData->rcDesktop.bottom - ScaleToDpi(25);
+ 
+     /* Calculate the active caption rectangle */
+     pPreviewData->rcActiveCaption.left = pPreviewData->rcActiveFrame.left + pPreviewData->cxEdge + pPreviewData->cySizeFrame + 1;
+@@ -175,7 +175,7 @@
+     pPreviewData->rcActiveCaption.bottom = pPreviewData->rcActiveCaption.top + pPreviewData->cyCaption - pPreviewData->cyBorder;
+ 
+     /* Calculate the active caption buttons rectangle */
+-    pPreviewData->rcActiveCaptionButtons.left = pPreviewData->rcActiveCaption.right - 2 - 2 - 3 * 16;
++    pPreviewData->rcActiveCaptionButtons.left = pPreviewData->rcActiveCaption.right - 2 - 2 - 3 * ScaleToDpi(16);
+     pPreviewData->rcActiveCaptionButtons.top = pPreviewData->rcActiveCaption.top + 2;
+     pPreviewData->rcActiveCaptionButtons.right = pPreviewData->rcActiveCaption.right - 2;
+     pPreviewData->rcActiveCaptionButtons.bottom = pPreviewData->rcActiveCaption.bottom - 2;
+@@ -200,10 +200,10 @@
+ 
+ 
+     /* Dialog window */
+-    pPreviewData->rcDialogFrame.left = pPreviewData->rcActiveClient.left + 4;
++    pPreviewData->rcDialogFrame.left = pPreviewData->rcActiveClient.left + ScaleToDpi(4);
+     pPreviewData->rcDialogFrame.top = (pPreviewData->rcDesktop.bottom * 60) / 100;
+     pPreviewData->rcDialogFrame.right = (pPreviewData->rcDesktop.right * 65) / 100;
+-    pPreviewData->rcDialogFrame.bottom = pPreviewData->rcDesktop.bottom - 5;
++    pPreviewData->rcDialogFrame.bottom = pPreviewData->rcDesktop.bottom - ScaleToDpi(5);
+ 
+     /* Calculate the dialog caption rectangle */
+     pPreviewData->rcDialogCaption.left = pPreviewData->rcDialogFrame.left + 3;
+@@ -212,7 +212,7 @@
+     pPreviewData->rcDialogCaption.bottom = pPreviewData->rcDialogFrame.top + pPreviewData->cyCaption + 1 + 1;
+ 
+     /* Calculate the inactive caption buttons rectangle */
+-    pPreviewData->rcDialogCaptionButtons.left = pPreviewData->rcDialogCaption.right - 2 - 16;
++    pPreviewData->rcDialogCaptionButtons.left = pPreviewData->rcDialogCaption.right - 2 - ScaleToDpi(16);
+     pPreviewData->rcDialogCaptionButtons.top = pPreviewData->rcDialogCaption.top + 2;
+     pPreviewData->rcDialogCaptionButtons.right = pPreviewData->rcDialogCaption.right - 2;
+     pPreviewData->rcDialogCaptionButtons.bottom = pPreviewData->rcDialogCaption.bottom - 2;
+@@ -224,8 +224,8 @@
+     pPreviewData->rcDialogClient.bottom = pPreviewData->rcDialogFrame.bottom - 3;
+ 
+     /* Calculate the dialog button rectangle */
+-    width = 80;
+-    height = 28;
++    width = ScaleToDpi(80);
++    height = ScaleToDpi(28);
+ 
+     pPreviewData->rcDialogButton.left =
+         (pPreviewData->rcDialogClient.right + pPreviewData->rcDialogClient.left - width) / 2;
+--- a/src/dll/cpl/desk/screensaver.c
++++ b/src/dll/cpl/desk/screensaver.c
+@@ -690,9 +690,23 @@
+         {
+             RECT rc;
+             GetClientRect(hParent, &rc);
+-            rc.left += MONITOR_LEFT;
+-            rc.top += MONITOR_TOP;
+-            MoveWindow(hChild, rc.left, rc.top, MONITOR_WIDTH, MONITOR_HEIGHT, FALSE);
++            if (GetScreenDpi() > USER_DEFAULT_SCREEN_DPI && g_GlobalData.bmMonWidth && g_GlobalData.bmMonHeight)
++            {
++                /* Follow the monitor image, which is drawn stretched to the
++                   control's width and height plus one pixel */
++                MoveWindow(hChild,
++                           MulDiv(MONITOR_LEFT, rc.right + 1, g_GlobalData.bmMonWidth),
++                           MulDiv(MONITOR_TOP, rc.bottom + 1, g_GlobalData.bmMonHeight),
++                           MulDiv(MONITOR_WIDTH, rc.right + 1, g_GlobalData.bmMonWidth),
++                           MulDiv(MONITOR_HEIGHT, rc.bottom + 1, g_GlobalData.bmMonHeight),
++                           FALSE);
++            }
++            else
++            {
++                rc.left += MONITOR_LEFT;
++                rc.top += MONITOR_TOP;
++                MoveWindow(hChild, rc.left, rc.top, MONITOR_WIDTH, MONITOR_HEIGHT, FALSE);
++            }
+         }
+ 
+         pData->ScreenSaverPreviewParent = hChild;

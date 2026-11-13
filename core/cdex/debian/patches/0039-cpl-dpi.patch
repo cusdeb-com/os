@@ -1,0 +1,316 @@
+Author: CusDeb OS Team
+Description: Scale icons and pictures of the control panel applets to the DPI.
+ main.cpl, mmsys.cpl and usrmgr.cpl loaded icons and pictures at 16, 32
+ or 48 pixels; use the system icon sizes or scale the size to the screen
+ DPI. timedate.cpl: scale the dots of the clock dial and widen the
+ outline of the hands from 192 DPI. sysdm.cpl: the System Properties logo
+ only exists at 96 DPI and sits in a slot laid out in dialog units;
+ enlarge it by the DPI scale rounded down, with pixel replication.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/cpl/main/mouse.c
++++ b/src/dll/cpl/main/mouse.c
+@@ -32,6 +32,7 @@
+ #include <commdlg.h>
+ #include <cplext.h>
+ #include <tchar.h>
++#include <dpiscale.h>
+ 
+ #define DEFAULT_DOUBLE_CLICK_SPEED	500
+ #define DEFAULT_CLICK_LOCK_TIME		2200
+@@ -205,7 +206,7 @@
+             SendMessage(hDlgCtrl, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)pos);
+ 
+             hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_LOCK_KEY),
+-                              IMAGE_ICON, 16, 16, 0);
++                              IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
+             SendMessage(hwndDlg, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+             return TRUE;
+ 
+@@ -259,12 +260,12 @@
+             SystemParametersInfo(SPI_GETMOUSECLICKLOCKTIME, 0, &pButtonData->g_ClickLockTime, 0);
+ 
+             /* Load mouse button icons */
+-            pButtonData->hButtonLeft = LoadImage(hApplet, MAKEINTRESOURCE(IDI_MOUSE_LEFT), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR);
+-            pButtonData->hButtonRight = LoadImage(hApplet, MAKEINTRESOURCE(IDI_MOUSE_RIGHT), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR);
++            pButtonData->hButtonLeft = LoadImage(hApplet, MAKEINTRESOURCE(IDI_MOUSE_LEFT), IMAGE_ICON, ScaleToDpi(48), ScaleToDpi(48), LR_DEFAULTCOLOR);
++            pButtonData->hButtonRight = LoadImage(hApplet, MAKEINTRESOURCE(IDI_MOUSE_RIGHT), IMAGE_ICON, ScaleToDpi(48), ScaleToDpi(48), LR_DEFAULTCOLOR);
+ 
+             /* Load folder icons */
+-            pButtonData->hIcon1 = LoadImage(hApplet, MAKEINTRESOURCE(IDI_FOLDER_CLOSED), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR);
+-            pButtonData->hIcon2 = LoadImage(hApplet, MAKEINTRESOURCE(IDI_FOLDER_OPEN), IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR);
++            pButtonData->hIcon1 = LoadImage(hApplet, MAKEINTRESOURCE(IDI_FOLDER_CLOSED), IMAGE_ICON, ScaleToDpi(48), ScaleToDpi(48), LR_DEFAULTCOLOR);
++            pButtonData->hIcon2 = LoadImage(hApplet, MAKEINTRESOURCE(IDI_FOLDER_OPEN), IMAGE_ICON, ScaleToDpi(48), ScaleToDpi(48), LR_DEFAULTCOLOR);
+ 
+             if (pButtonData->g_SwapMouseButtons)
+             {
+--- a/src/dll/cpl/mmsys/sounds.c
++++ b/src/dll/cpl/mmsys/sounds.c
+@@ -1267,14 +1267,14 @@
+             pGlobalData->hPlayIcon = LoadImageW(hApplet,
+                                                 MAKEINTRESOURCEW(IDI_PLAY_ICON),
+                                                 IMAGE_ICON,
+-                                                32,
+-                                                32,
++                                                GetSystemMetrics(SM_CXICON),
++                                                GetSystemMetrics(SM_CYICON),
+                                                 LR_DEFAULTCOLOR);
+             pGlobalData->hStopIcon = LoadImageW(hApplet,
+                                                 MAKEINTRESOURCEW(IDI_STOP_ICON),
+                                                 IMAGE_ICON,
+-                                                32,
+-                                                32,
++                                                GetSystemMetrics(SM_CXICON),
++                                                GetSystemMetrics(SM_CYICON),
+                                                 LR_DEFAULTCOLOR);
+             SendDlgItemMessageW(hwndDlg, IDC_PLAY_SOUND, BM_SETIMAGE,
+                                 IMAGE_ICON, (LPARAM)pGlobalData->hPlayIcon);
+--- a/src/dll/cpl/mmsys/volume.c
++++ b/src/dll/cpl/mmsys/volume.c
+@@ -10,6 +10,7 @@
+ #include "mmsys.h"
+ 
+ #include <shellapi.h>
++#include <dpiscale.h>
+ 
+ 
+ typedef struct _GLOBAL_DATA
+@@ -390,7 +391,7 @@
+               WPARAM wParam,
+               LPARAM lParam)
+ {
+-    static const INT speakImgSize[] = {72, 72};
++    static INT speakImgSize[2];
+     PGLOBAL_DATA pGlobalData;
+ 
+     pGlobalData = (PGLOBAL_DATA)GetWindowLongPtrW(hwndDlg, DWLP_USER);
+@@ -423,9 +424,10 @@
+             pGlobalData = (PGLOBAL_DATA)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(GLOBAL_DATA));
+             SetWindowLongPtrW(hwndDlg, DWLP_USER, (LONG_PTR)pGlobalData);
+ 
+-            pGlobalData->hIconUnMuted = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_CPLICON), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+-            pGlobalData->hIconMuted = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_MUTED_ICON), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+-            pGlobalData->hIconNoHW = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_NO_HW), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
++            pGlobalData->hIconUnMuted = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_CPLICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
++            pGlobalData->hIconMuted = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_MUTED_ICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
++            pGlobalData->hIconNoHW = LoadImageW(hApplet, MAKEINTRESOURCEW(IDI_NO_HW), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
++            speakImgSize[0] = speakImgSize[1] = ScaleToDpi(72);
+             pGlobalData->hIconSpeakImg = LoadImageW(hApplet,
+                                                     MAKEINTRESOURCEW(IDI_SPEAKIMG),
+                                                     IMAGE_ICON,
+--- a/src/dll/cpl/sysdm/general.c
++++ b/src/dll/cpl/sysdm/general.c
+@@ -14,6 +14,7 @@
+ #include <winnls.h>
+ #include <powrprof.h>
+ #include <buildno.h>
++#include <dpiscale.h>
+ 
+ #define ANIM_STEP 2
+ #define ANIM_TIME 50
+@@ -71,7 +72,7 @@
+     HBITMAP hMask = NULL, hLogo = NULL;
+     HBITMAP hAlphaLogo = NULL;
+     COLORREF *pBits;
+-    INT line, column;
++    INT line, column, factor, cx, cy;
+ 
+     hDC = GetDC(hwndDlg);
+     hDCLogo = CreateCompatibleDC(NULL);
+@@ -95,13 +96,18 @@
+     if (logoBitmap.bmHeight != maskBitmap.bmHeight || logoBitmap.bmWidth != maskBitmap.bmWidth)
+         goto Cleanup;
+ 
++    /* The logo is enlarged by a whole factor; its pixels are replicated. */
++    factor = GetDpiSlotImageFactor();
++    cx = logoBitmap.bmWidth * factor;
++    cy = logoBitmap.bmHeight * factor;
++
+     bmpi.bmiHeader.biSize = sizeof(BITMAPINFO);
+-    bmpi.bmiHeader.biWidth = logoBitmap.bmWidth;
+-    bmpi.bmiHeader.biHeight = logoBitmap.bmHeight;
++    bmpi.bmiHeader.biWidth = cx;
++    bmpi.bmiHeader.biHeight = cy;
+     bmpi.bmiHeader.biPlanes = 1;
+     bmpi.bmiHeader.biBitCount = 32;
+     bmpi.bmiHeader.biCompression = BI_RGB;
+-    bmpi.bmiHeader.biSizeImage = 4 * logoBitmap.bmWidth * logoBitmap.bmHeight;
++    bmpi.bmiHeader.biSizeImage = 4 * cx * cy;
+ 
+     /* Create a premultiplied bitmap */
+     hAlphaLogo = CreateDIBSection(hDC, &bmpi, DIB_RGB_COLORS, (PVOID*)&pBits, 0, 0);
+@@ -111,12 +117,12 @@
+     SelectObject(hDCLogo, hLogo);
+     SelectObject(hDCMask, hMask);
+ 
+-    for (line = logoBitmap.bmHeight - 1; line >= 0; line--)
++    for (line = cy - 1; line >= 0; line--)
+     {
+-        for (column = 0; column < logoBitmap.bmWidth; column++)
++        for (column = 0; column < cx; column++)
+         {
+-            COLORREF alpha = GetPixel(hDCMask, column, line) & 0xFF;
+-            COLORREF Color = GetPixel(hDCLogo, column, line);
++            COLORREF alpha = GetPixel(hDCMask, column / factor, line / factor) & 0xFF;
++            COLORREF Color = GetPixel(hDCLogo, column / factor, line / factor);
+             DWORD r, g, b;
+ 
+             r = GetRValue(Color) * alpha / 255;
+@@ -128,8 +134,8 @@
+     }
+ 
+     pImgInfo->hBitmap = hAlphaLogo;
+-    pImgInfo->cxSource = logoBitmap.bmWidth;
+-    pImgInfo->cySource = logoBitmap.bmHeight;
++    pImgInfo->cxSource = cx;
++    pImgInfo->cySource = cy;
+     pImgInfo->iBits = logoBitmap.bmBitsPixel;
+     pImgInfo->iPlanes = logoBitmap.bmPlanes;
+ 
+--- a/src/dll/cpl/timedate/clock.c
++++ b/src/dll/cpl/timedate/clock.c
+@@ -12,6 +12,7 @@
+ #include "timedate.h"
+ 
+ #include <math.h>
++#include <dpiscale.h>
+ 
+ typedef struct _CLOCKDATA
+ {
+@@ -77,12 +78,12 @@
+            * i.e. 1-4 or 5, 6-9 or 10, 11-14 or 15 */
+           if (iAngle % 5)
+           {
+-                pt[2].x = pt[2].y = 7;
++                pt[2].x = pt[2].y = ScaleToDpi(7);
+                 SelectObject(hdc, pClockData->hGreyPen);
+           }
+           else
+           {
+-              pt[2].x = pt[2].y = 16;
++              pt[2].x = pt[2].y = ScaleToDpi(16);
+               SelectObject(hdc, GetStockObject(BLACK_PEN));
+           }
+ 
+@@ -111,9 +112,17 @@
+      {{0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, (INT) Radius*0.89}} };
+      INT i, iAngle[3];
+      POINT ptTemp[3][5];
++     POINT ptWidth[2] = { {0, 0}, {GetScreenDpi() / USER_DEFAULT_SCREEN_DPI, 0} };
++     HPEN hPen = NULL;
+ 
+-     /* Black pen for outline, white brush for fill */
+-     SelectObject(hdc, GetStockObject(BLACK_PEN));
++     /* Black pen for outline, white brush for fill. From 192 DPI the
++        outline is more than one pixel wide. */
++     if (ptWidth[1].x > 1)
++     {
++          DPtoLP(hdc, ptWidth, 2);
++          hPen = CreatePen(PS_SOLID, abs(ptWidth[1].x - ptWidth[0].x), RGB(0, 0, 0));
++     }
++     SelectObject(hdc, hPen ? hPen : GetStockObject(BLACK_PEN));
+      SelectObject(hdc, GetStockObject(WHITE_BRUSH));
+ 
+      iAngle[0] = (pst->wHour * 30) % 360 + pst->wMinute / 2;
+@@ -128,6 +137,12 @@
+ 
+           Polygon(hdc, ptTemp[i], 5);
+      }
++
++     if (hPen)
++     {
++          SelectObject(hdc, GetStockObject(BLACK_PEN));
++          DeleteObject(hPen);
++     }
+ }
+ 
+ 
+--- a/src/dll/cpl/usrmgr/groupprops.c
++++ b/src/dll/cpl/usrmgr/groupprops.c
+@@ -83,14 +83,14 @@
+     hwndLV = GetDlgItem(hwndDlg, IDC_USER_ADD_MEMBERSHIP_LIST);
+     GetClientRect(hwndLV, &rect);
+ 
+-    hImgList = ImageList_Create(16,16,ILC_COLOR32 | ILC_MASK,5,5);
+-    hIcon = LoadImage(hApplet,MAKEINTRESOURCE(IDI_GROUP),IMAGE_ICON,16,16,LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet,MAKEINTRESOURCE(IDI_GROUP),IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList,hIcon);
+     DestroyIcon(hIcon);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_LOCKED_USER), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_LOCKED_USER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+ 
+@@ -405,11 +405,11 @@
+     hwndLV = GetDlgItem(hwndDlg, IDC_GROUP_GENERAL_MEMBERS);
+ 
+     /* Create the image list */
+-    hImgList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 5, 5);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+ 
+--- a/src/dll/cpl/usrmgr/groups.c
++++ b/src/dll/cpl/usrmgr/groups.c
+@@ -290,8 +290,8 @@
+     HICON hIcon;
+ 
+     /* Create the image list */
+-    hImgList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 5, 5);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+ 
+--- a/src/dll/cpl/usrmgr/userprops.c
++++ b/src/dll/cpl/usrmgr/userprops.c
+@@ -225,8 +225,8 @@
+     hwndLV = GetDlgItem(hwndDlg, IDC_USER_MEMBERSHIP_LIST);
+ 
+     /* Create the image list */
+-    hImgList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 5, 5);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+     (void)ListView_SetImageList(hwndLV, hImgList, LVSIL_SMALL);
+@@ -333,8 +333,8 @@
+     hwndLV = GetDlgItem(hwndDlg, IDC_USER_ADD_MEMBERSHIP_LIST);
+     GetClientRect(hwndLV, &rect);
+ 
+-    hImgList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 5, 5);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_GROUP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+ 
+--- a/src/dll/cpl/usrmgr/users.c
++++ b/src/dll/cpl/usrmgr/users.c
+@@ -480,10 +480,10 @@
+     HICON hIcon;
+ 
+     /* Create the image list */
+-    hImgList = ImageList_Create(16, 16, ILC_COLOR32 | ILC_MASK, 5, 5);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, 5, 5);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_USER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+-    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_LOCKED_USER), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
++    hIcon = LoadImage(hApplet, MAKEINTRESOURCE(IDI_LOCKED_USER), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+     ImageList_AddIcon(hImgList, hIcon);
+     DestroyIcon(hIcon);
+ 

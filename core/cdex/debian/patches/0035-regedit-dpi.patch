@@ -1,0 +1,79 @@
+Author: CusDeb OS Team
+Description: regedit: Scale the address bar, splitter and value icons to the DPI.
+ The address bar height, the splitter width and initial position and the
+ value type icons of the list had fixed pixel sizes. Scale them to the
+ screen DPI and create the list's image list at the small icon size.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/base/applications/regedit/childwnd.c
++++ b/src/base/applications/regedit/childwnd.c
+@@ -96,8 +96,8 @@
+ {
+     HDWP hdwp = BeginDeferWindowPos(4);
+     RECT rt, rs, rb;
+-    const int nButtonWidth = 44;
+-    const int nButtonHeight = 22;
++    const int nButtonWidth = ScaleToDpi(44);
++    const int nButtonHeight = ScaleToDpi(22);
+     int cyEdge = GetSystemMetrics(SM_CYEDGE);
+     const UINT uFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS;
+ 
+@@ -392,7 +392,7 @@
+         if (!g_pChildWnd) return 0;
+ 
+         wcsncpy(g_pChildWnd->szPath, buffer, MAX_PATH);
+-        g_pChildWnd->nSplitPos = 190;
++        g_pChildWnd->nSplitPos = ScaleToDpi(190);
+         g_pChildWnd->hWnd = hWnd;
+ 
+         /* ES_AUTOHSCROLL style enables horizontal scrolling and shrinking */
+@@ -407,7 +407,7 @@
+                                                       CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                                       hWnd, (HMENU)0, hInst, 0);
+         g_pChildWnd->hArrowIcon = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_ARROW),
+-                                                    IMAGE_ICON, 12, 12, 0);
++                                                    IMAGE_ICON, ScaleToDpi(12), ScaleToDpi(12), 0);
+         SendMessageW(g_pChildWnd->hAddressBtnWnd, BM_SETIMAGE, IMAGE_ICON, (LPARAM)g_pChildWnd->hArrowIcon);
+ 
+         if (SUCCEEDED(CoCreateInstance(&CLSID_AutoComplete, NULL, CLSCTX_INPROC_SERVER, &IID_IAutoComplete, (void**)&pAutoComplete)))
+--- a/src/base/applications/regedit/listview.c
++++ b/src/base/applications/regedit/listview.c
+@@ -7,8 +7,6 @@
+ 
+ #include "regedit.h"
+ 
+-#define CX_ICON            16
+-#define CY_ICON            16
+ #define LISTVIEW_NUM_ICONS 2
+ 
+ int Image_String;
+@@ -271,7 +269,7 @@
+     HICON hico;       /* handle to icon  */
+ 
+     /* Create the image list.  */
+-    if ((himl = ImageList_Create(CX_ICON, CY_ICON,
++    if ((himl = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                                  ILC_MASK, 0, LISTVIEW_NUM_ICONS)) == NULL)
+     {
+         return FALSE;
+--- a/src/base/applications/regedit/main.h
++++ b/src/base/applications/regedit/main.h
+@@ -14,7 +14,7 @@
+ #define TREE_WINDOW     2002
+ #define LIST_WINDOW     2003
+ 
+-#define SPLIT_WIDTH    5
++#define SPLIT_WIDTH   ScaleToDpi(5)
+ #define SPLIT_MIN     30
+ 
+ #define ARRAY_SIZE(A) (sizeof(A)/sizeof(*A))
+--- a/src/base/applications/regedit/regedit.h
++++ b/src/base/applications/regedit/regedit.h
+@@ -12,6 +12,7 @@
+ #include <shellapi.h>
+ #include <strsafe.h>
+ #include <stdlib.h>
++#include <dpiscale.h>
+ 
+ #include "main.h"
+ #include "hexedit.h"
