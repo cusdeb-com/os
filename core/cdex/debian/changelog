@@ -51,6 +51,13 @@ cdex (0.0.17-1cd) trixie; urgency=medium
   * debian/patches/0025-desk-dpi-setting.patch: Display Properties >
     Advanced > General lists Automatic and the DPI steps, stores the
     choice in C:\cusdeb\dpi and offers to sign out.
+  * debian/patches/0026-explorer-taskbar-dpi.patch: scale the
+    show-desktop button, tray and clock paddings and tray balloon width
+    to the DPI and enlarge the Taskbar and Start Menu properties
+    previews.
+  * debian/patches/0027-explorer-taskbar-size-dpi.patch: store the DPI
+    with the saved taskbar size and use the default size after a DPI
+    change.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.

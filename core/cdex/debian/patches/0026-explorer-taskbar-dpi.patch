@@ -1,0 +1,83 @@
+Author: CusDeb OS Team
+Description: explorer: Scale the fixed pixel sizes of the taskbar and tray to the DPI.
+ The show-desktop button, the tray and clock paddings and the tray
+ balloon width were fixed pixel values; scale them to the screen DPI. The
+ preview bitmaps of the Taskbar and Start Menu properties only exist at
+ 96 DPI and sit in a slot laid out in dialog units; enlarge them by the
+ DPI scale rounded down, with pixel replication.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/base/shell/explorer/syspager.cpp
++++ b/src/base/shell/explorer/syspager.cpp
+@@ -21,7 +21,7 @@
+ 
+ #include "precomp.h"
+ 
+-#define BALLOON_MAXWIDTH 340
++#define BALLOON_MAXWIDTH ScaleToDpi(340)
+ 
+ struct InternalIconData : NOTIFYICONDATA
+ {
+--- a/src/base/shell/explorer/trayclock.cpp
++++ b/src/base/shell/explorer/trayclock.cpp
+@@ -152,7 +152,7 @@
+ #define ID_TRAYCLOCK_TIMER  0
+ #define ID_TRAYCLOCK_TIMER_INIT 1
+ 
+-#define TRAY_CLOCK_WND_SPACING_X    5
++#define TRAY_CLOCK_WND_SPACING_X    ScaleToDpi(5)
+ #define TRAY_CLOCK_WND_SPACING_Y    0
+ 
+ CTrayClockWnd::CTrayClockWnd() :
+--- a/src/base/shell/explorer/traydeskbtn.cpp
++++ b/src/base/shell/explorer/traydeskbtn.cpp
+@@ -36,20 +36,14 @@
+     {
+         if (m_drawWithDedicatedBackground)
+         {
+-            if (GetSystemMetrics(SM_TABLETPC))
+-            {
+-                //TODO: DPI scaling - return logical-to-physical conversion of 24, not fixed value
+-                return 24;
+-            }
+-            else
+-                return 15;
++            return ScaleToDpi(GetSystemMetrics(SM_TABLETPC) ? 24 : 15);
+         }
+         else
+         {
+             INT CurMargin = m_bHorizontal
+                 ? (m_ContentMargins.cxLeftWidth + m_ContentMargins.cxRightWidth)
+                 : (m_ContentMargins.cyTopHeight + m_ContentMargins.cyBottomHeight);
+-            return max(16 + CurMargin, 18) + 6;
++            return max(GetSystemMetrics(SM_CXSMICON) + CurMargin, ScaleToDpi(18)) + ScaleToDpi(6);
+         }
+     }
+     else
+--- a/src/base/shell/explorer/trayntfy.cpp
++++ b/src/base/shell/explorer/trayntfy.cpp
+@@ -24,9 +24,9 @@
+ 
+ static const WCHAR szTrayNotifyWndClass[] = L"TrayNotifyWnd";
+ 
+-#define TRAY_NOTIFY_WND_SPACING_X   1
+-#define TRAY_NOTIFY_WND_SPACING_Y   1
+-#define CLOCK_TEXT_HACK             4
++#define TRAY_NOTIFY_WND_SPACING_X   ScaleToDpi(1)
++#define TRAY_NOTIFY_WND_SPACING_Y   ScaleToDpi(1)
++#define CLOCK_TEXT_HACK             ScaleToDpi(4)
+ 
+ /*
+  * TrayNotifyWnd
+--- a/src/base/shell/explorer/trayprop.cpp
++++ b/src/base/shell/explorer/trayprop.cpp
+@@ -33,6 +33,9 @@
+                                 0,
+                                 LR_DEFAULTCOLOR);
+ 
++    /* The previews only exist at 96 DPI */
++    *hbmp = EnlargeBitmap(*hbmp, GetDpiSlotImageFactor());
++
+     if (*hbmp && hwnd)
+     {
+         BITMAP bm;

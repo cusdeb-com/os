@@ -1,0 +1,34 @@
+Author: CusDeb OS Team
+Description: explorer: Use the default taskbar size after a DPI change.
+ The saved taskbar size (StuckRects2) is in pixels, so a taskbar saved at
+ 192 DPI was twice as high after a change to 96 DPI. Store the DPI next
+ to the size and fall back to the default size when it differs from the
+ screen DPI.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/base/shell/explorer/settings.cpp
++++ b/src/base/shell/explorer/settings.cpp
+@@ -34,6 +34,8 @@
+     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarSmallIcons", REG_DWORD, &bSmallIcons, sizeof(bSmallIcons));
+     SHSetValueW(hkExplorer, L"Advanced", L"TaskbarSd", REG_DWORD, &bShowDesktopButton, sizeof(bShowDesktopButton));
+     SHSetValueW(hkExplorer, L"StuckRects2", L"Settings", REG_BINARY, &sr, sizeof(sr));
++    DWORD dwDpi = GetScreenDpi();
++    SHSetValueW(hkExplorer, L"StuckRects2", L"Dpi", REG_DWORD, &dwDpi, sizeof(dwDpi));
+ 
+     /* TODO: AutoHide writes something to HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Desktop\Components\0 figure out what and why */
+     return TRUE;
+@@ -90,6 +92,14 @@
+     {
+         if (sr.Position > ABE_BOTTOM)
+             sr.Position = ABE_BOTTOM;
++
++        /* The size is in pixels of the DPI it was saved at; at another DPI
++           the taskbar gets its default size. */
++        dwValue = USER_DEFAULT_SCREEN_DPI;
++        cbSize = sizeof(dwValue);
++        SHGetValueW(hkExplorer, L"StuckRects2", L"Dpi", NULL, &dwValue, &cbSize);
++        if (dwValue != (DWORD)GetScreenDpi())
++            sr.Size.cx = sr.Size.cy = 0;
+     }
+ 
+     return TRUE;
