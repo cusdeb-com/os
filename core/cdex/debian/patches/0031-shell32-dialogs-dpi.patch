@@ -1,0 +1,248 @@
+Author: CusDeb OS Team
+Description: shell32: Scale fixed pixel sizes of the folder view, menus and dialogs to the DPI.
+ The file size and location parts of the folder view status bar had fixed
+ widths, which clip their text once the font is scaled. The New menu,
+ Open With, drive properties, File Types and Folder Options loaded their
+ icons at 16 or 32 pixels; use the system icon sizes. Scale the depth of
+ the drive usage pie chart, the Recycle Bin properties column and the
+ layout of the file operation confirmation dialog.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/win32/shell32/CDefView.cpp
++++ b/src/dll/win32/shell32/CDefView.cpp
+@@ -37,6 +37,7 @@
+ 
+ #include <atlwin.h>
+ #include <ui/rosctrls.h>
++#include <dpiscale.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(shell);
+ 
+@@ -4685,8 +4686,8 @@
+         return;
+     }
+ 
+-    int nFileSizePartLength = 125;
+-    const int nLocationPartLength = 150;
++    int nFileSizePartLength = ScaleToDpi(125);
++    const int nLocationPartLength = ScaleToDpi(150);
+     const int nRightPartsLength = nFileSizePartLength + nLocationPartLength;
+     int nObjectsPartLength = nWidth - nRightPartsLength;
+ 
+--- a/src/dll/win32/shell32/CNewMenu.cpp
++++ b/src/dll/win32/shell32/CNewMenu.cpp
+@@ -734,8 +734,8 @@
+ 
+             if (lpmis->itemWidth < (UINT)GetSystemMetrics(SM_CXMENUCHECK))
+                 lpmis->itemWidth = GetSystemMetrics(SM_CXMENUCHECK);
+-            if (lpmis->itemHeight < 16)
+-                lpmis->itemHeight = 16;
++            if (lpmis->itemHeight < (UINT)GetSystemMetrics(SM_CYSMICON))
++                lpmis->itemHeight = GetSystemMetrics(SM_CYSMICON);
+ 
+             if (plResult)
+                 *plResult = TRUE;
+@@ -767,12 +767,13 @@
+             if (!hIcon)
+                 break;
+ 
++            const INT cx = GetSystemMetrics(SM_CXSMICON), cy = GetSystemMetrics(SM_CYSMICON);
+             DrawIconEx(lpdis->hDC,
+                        2,
+-                       lpdis->rcItem.top + (lpdis->rcItem.bottom - lpdis->rcItem.top - 16) / 2,
++                       lpdis->rcItem.top + (lpdis->rcItem.bottom - lpdis->rcItem.top - cy) / 2,
+                        hIcon,
+-                       16,
+-                       16,
++                       cx,
++                       cy,
+                        0, NULL, DI_NORMAL);
+ 
+             if(plResult)
+--- a/src/dll/win32/shell32/COpenWithMenu.cpp
++++ b/src/dll/win32/shell32/COpenWithMenu.cpp
+@@ -1141,7 +1141,7 @@
+ 
+         /* Init treeview */
+         m_hTreeView = GetDlgItem(hwnd, 14002);
+-        m_hImgList = ImageList_Create(16, 16,  ILC_COLOR32 | ILC_MASK, m_pAppList->GetCount() + 1, m_pAppList->GetCount() + 1);
++        m_hImgList = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), ILC_COLOR32 | ILC_MASK, m_pAppList->GetCount() + 1, m_pAppList->GetCount() + 1);
+         (void)TreeView_SetImageList(m_hTreeView, m_hImgList, TVSIL_NORMAL);
+ 
+         /* If there are some recommendations add parent nodes: Recommended and Others */
+@@ -1155,7 +1155,9 @@
+             tvins.item.mask = TVIF_TEXT|TVIF_STATE|TVIF_IMAGE|TVIF_SELECTEDIMAGE;
+             tvins.item.pszText = (LPWSTR)wszBuf;
+             tvins.item.state = tvins.item.stateMask = TVIS_EXPANDED;
+-            hFolderIcon = (HICON)LoadImage(shell32_hInstance, MAKEINTRESOURCE(IDI_SHELL_PROGRAMS_FOLDER), IMAGE_ICON, 0, 0, 0);
++            /* Above 96 DPI load the entry of the image list size; at 96 DPI the first entry */
++            const INT cxyIcon = GetSystemMetrics(SM_CXSMICON) > 16 ? GetSystemMetrics(SM_CXSMICON) : 0;
++            hFolderIcon = (HICON)LoadImage(shell32_hInstance, MAKEINTRESOURCE(IDI_SHELL_PROGRAMS_FOLDER), IMAGE_ICON, cxyIcon, cxyIcon, 0);
+             tvins.item.iImage = tvins.item.iSelectedImage = ImageList_AddIcon(m_hImgList, hFolderIcon);
+ 
+             LoadStringW(shell32_hInstance, IDS_OPEN_WITH_RECOMMENDED, wszBuf, _countof(wszBuf));
+--- a/src/dll/win32/shell32/dialogs/drvdefext.cpp
++++ b/src/dll/win32/shell32/dialogs/drvdefext.cpp
+@@ -25,6 +25,7 @@
+ #define _USE_MATH_DEFINES
+ #include <math.h>
+ #include <devguid.h>
++#include <dpiscale.h>
+ 
+ #define NTOS_MODE_USER
+ #include <ndk/iofuncs.h>
+@@ -220,10 +221,11 @@
+         HPEN hDarkBluePen = CreatePen(PS_SOLID, 1, RGB(0, 0, 128));
+         HPEN hDarkMagPen = CreatePen(PS_SOLID, 1, RGB(128, 0, 128));
+         HPEN hOldPen = (HPEN)SelectObject(pDrawItem->hDC, hDarkMagPen);
++        INT cyDepth = ScaleToDpi(10);
+         INT xCenter = (pDrawItem->rcItem.left + pDrawItem->rcItem.right) / 2;
+-        INT yCenter = (pDrawItem->rcItem.top + pDrawItem->rcItem.bottom - 10) / 2;
++        INT yCenter = (pDrawItem->rcItem.top + pDrawItem->rcItem.bottom - cyDepth) / 2;
+         INT cx = pDrawItem->rcItem.right - pDrawItem->rcItem.left;
+-        INT cy = pDrawItem->rcItem.bottom - pDrawItem->rcItem.top - 10;
++        INT cy = pDrawItem->rcItem.bottom - pDrawItem->rcItem.top - cyDepth;
+         INT xRadial = xCenter + (INT)(cos(M_PI + m_FreeSpacePerc / 100.0f * M_PI * 2.0f) * cx / 2);
+         INT yRadial = yCenter - (INT)(sin(M_PI + m_FreeSpacePerc / 100.0f * M_PI * 2.0f) * cy / 2);
+ 
+@@ -245,8 +247,8 @@
+                 SelectObject(pDrawItem->hDC, hBlackPen);
+ 
+             MoveToEx(pDrawItem->hDC, x, y, NULL);
+-            LineTo(pDrawItem->hDC, x, y + 10);
+-            SetPixel(pDrawItem->hDC, x, y + 10, RGB(0, 0, 0));
++            LineTo(pDrawItem->hDC, x, y + cyDepth);
++            SetPixel(pDrawItem->hDC, x, y + cyDepth, RGB(0, 0, 0));
+             
+             /* Restore fill section pens */
+             if (x == pDrawItem->rcItem.left)
+@@ -260,14 +262,14 @@
+             hbrOld = (HBRUSH)SelectObject(pDrawItem->hDC, hMagBrush);
+ 
+             Ellipse(pDrawItem->hDC, pDrawItem->rcItem.left, pDrawItem->rcItem.top,
+-                    pDrawItem->rcItem.right, pDrawItem->rcItem.bottom - 10);
++                    pDrawItem->rcItem.right, pDrawItem->rcItem.bottom - cyDepth);
+ 
+             SelectObject(pDrawItem->hDC, hBlueBrush);
+ 
+             if (m_FreeSpacePerc < 100)
+             {
+                 Pie(pDrawItem->hDC, pDrawItem->rcItem.left, pDrawItem->rcItem.top, pDrawItem->rcItem.right,
+-                    pDrawItem->rcItem.bottom - 10, xRadial, yRadial, pDrawItem->rcItem.left, yCenter);
++                    pDrawItem->rcItem.bottom - cyDepth, xRadial, yRadial, pDrawItem->rcItem.left, yCenter);
+             }
+         }
+         else
+@@ -275,14 +277,14 @@
+             hbrOld = (HBRUSH)SelectObject(pDrawItem->hDC, hBlueBrush);
+ 
+             Ellipse(pDrawItem->hDC, pDrawItem->rcItem.left, pDrawItem->rcItem.top,
+-                    pDrawItem->rcItem.right, pDrawItem->rcItem.bottom - 10);
++                    pDrawItem->rcItem.right, pDrawItem->rcItem.bottom - cyDepth);
+ 
+             SelectObject(pDrawItem->hDC, hMagBrush);
+ 
+             if (m_FreeSpacePerc > 0)
+             {
+                 Pie(pDrawItem->hDC, pDrawItem->rcItem.left, pDrawItem->rcItem.top, pDrawItem->rcItem.right,
+-                    pDrawItem->rcItem.bottom - 10, pDrawItem->rcItem.left, yCenter, xRadial, yRadial);
++                    pDrawItem->rcItem.bottom - cyDepth, pDrawItem->rcItem.left, yCenter, xRadial, yRadial);
+             }
+         }
+ 
+@@ -443,7 +445,8 @@
+     /* volume label textbox */
+     SendMessage(GetDlgItem(hwndDlg, 14000), EM_SETREADONLY, !bCanSetLabel, 0);
+ 
+-    HICON hIcon = (HICON)LoadImage(shell32_hInstance, MAKEINTRESOURCE(IconId), IMAGE_ICON, 32, 32, LR_SHARED);
++    HICON hIcon = (HICON)LoadImage(shell32_hInstance, MAKEINTRESOURCE(IconId), IMAGE_ICON,
++                                   GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+     if (hIcon)
+         SendDlgItemMessageW(hwndDlg, 14016, STM_SETICON, (WPARAM)hIcon, 0);
+     if (TypeStrId && LoadStringW(shell32_hInstance, TypeStrId, wszBuf, _countof(wszBuf)))
+--- a/src/dll/win32/shell32/dialogs/filetypes.cpp
++++ b/src/dll/win32/shell32/dialogs/filetypes.cpp
+@@ -1854,7 +1854,7 @@
+     {
+         ExtractIconExW(exe, 0, NULL, &hIconSm, 1);
+     }
+-    hbmProgram = BitmapFromIcon(hIconSm, 16, 16);
++    hbmProgram = BitmapFromIcon(hIconSm, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+     DestroyIcon(hIconSm);
+     SendDlgItemMessageW(hwndDlg, IDC_FILETYPES_ICON, STM_SETIMAGE, IMAGE_BITMAP, LPARAM(hbmProgram));
+ 
+--- a/src/dll/win32/shell32/dialogs/general.cpp
++++ b/src/dll/win32/shell32/dialogs/general.cpp
+@@ -194,7 +194,8 @@
+     if (lpTaskIconName)
+     {
+         hTaskIcon = (HICON)LoadImage(shell32_hInstance, lpTaskIconName,
+-                                     IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
++                                     IMAGE_ICON, GetSystemMetrics(SM_CXICON),
++                                     GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+         if (hTaskIcon)
+         {
+             HWND hwndTaskIcon = GetDlgItem(hDlg, IDC_FOLDER_OPTIONS_TASKICON);
+@@ -211,7 +212,8 @@
+     if (lpFolderIconName)
+     {
+         hFolderIcon = (HICON)LoadImage(shell32_hInstance, lpFolderIconName,
+-                                       IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
++                                       IMAGE_ICON, GetSystemMetrics(SM_CXICON),
++                                       GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+         if (hFolderIcon)
+         {
+             HWND hwndFolderIcon = GetDlgItem(hDlg, IDC_FOLDER_OPTIONS_FOLDERICON);
+@@ -228,7 +230,8 @@
+     if (lpClickIconName)
+     {
+         hClickIcon = (HICON)LoadImage(shell32_hInstance, lpClickIconName,
+-                                      IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
++                                      IMAGE_ICON, GetSystemMetrics(SM_CXICON),
++                                      GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+         if (hClickIcon)
+         {
+             HWND hwndClickIcon = GetDlgItem(hDlg, IDC_FOLDER_OPTIONS_CLICKICON);
+--- a/src/dll/win32/shell32/dialogs/recycler_prop.cpp
++++ b/src/dll/win32/shell32/dialogs/recycler_prop.cpp
+@@ -21,6 +21,7 @@
+ 
+ #include <precomp.h>
+ #include <commctrl.h>
++#include <dpiscale.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(CRecycleBin);
+ 
+@@ -81,7 +82,7 @@
+     ZeroMemory(&lc, sizeof(lc));
+     lc.mask = LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM | LVCF_FMT;
+ 
+-    columnSize = 140; //FIXME
++    columnSize = ScaleToDpi(140);
+     lc.iSubItem   = 0;
+     lc.fmt = LVCFMT_FIXED_WIDTH;
+     lc.cx         = columnSize;
+--- a/src/dll/win32/shell32/shlfileop.cpp
++++ b/src/dll/win32/shell32/shlfileop.cpp
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include "precomp.h"
++#include <dpiscale.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(shell);
+ 
+@@ -207,11 +208,11 @@
+     DrawTextW(hdc, info->lpszText, -1, &r, DT_NOPREFIX | DT_PATH_ELLIPSIS | DT_WORDBREAK | DT_CALCRECT);
+     SelectObject(hdc, hOldFont);
+     yOffset -= r.bottom;
+-    yOffset = min(yOffset, 35);  /* don't make the dialog too small */
++    yOffset = min(yOffset, ScaleToDpi(35));  /* don't make the dialog too small */
+     ReleaseDC(hDlg, hdc);
+ 
+     GetClientRect(hDlg, &r);
+-    xPos = r.right - 7;
++    xPos = r.right - ScaleToDpi(7);
+     GetWindowRect(hDlg, &r);
+     width = r.right - r.left;
+     height = r.bottom - r.top - yOffset;

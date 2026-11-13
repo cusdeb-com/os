@@ -1,0 +1,53 @@
+Author: CusDeb OS Team
+Description: shell32: Enlarge the About dialog banner for the DPI.
+ The banner is a 96 DPI bitmap in a dialog that grows with the DPI.
+ Enlarge it by the DPI scale rounded down, with pixel replication: twice
+ the size does not fit the dialog at 144 DPI. Above 96 DPI the dialog is
+ still wider than the banner, and the banner art cannot be redrawn, so
+ its right edge and the line below it are continued to the dialog's
+ right edge.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/win32/shell32/wine/shell32_main.c
++++ b/src/dll/win32/shell32/wine/shell32_main.c
+@@ -44,6 +44,7 @@
+ 
+ #include <reactos/version.h>
+ #include <reactos/buildno.h>
++#include <dpiscale.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(shell);
+ 
+@@ -1219,11 +1220,30 @@
+ 
+                 if (hdcMem)
+                 {
++                    int factor = GetDpiSlotImageFactor();
++                    int cxBanner = cxLogoBmp * factor, cxLine = cxBanner;
++
++                    /* The banner is enlarged by a whole factor; its pixels are replicated. */
++                    SetStretchBltMode(hdc, COLORONCOLOR);
+                     hOldObj = SelectObject(hdcMem, hLogoBmp);
+-                    BitBlt(hdc, 0, 0, cxLogoBmp, cyLogoBmp, hdcMem, 0, 0, SRCCOPY);
++                    StretchBlt(hdc, 0, 0, cxBanner, cyLogoBmp * factor,
++                               hdcMem, 0, 0, cxLogoBmp, cyLogoBmp, SRCCOPY);
++
++                    /* Above 96 DPI the dialog is wider than the banner: continue the
++                       banner's right edge and the line up to the dialog's right edge. */
++                    if (GetScreenDpi() > USER_DEFAULT_SCREEN_DPI)
++                    {
++                        RECT rcClient;
++
++                        GetClientRect(hWnd, &rcClient);
++                        cxLine = rcClient.right;
++                        StretchBlt(hdc, cxBanner, 0, cxLine - cxBanner, cyLogoBmp * factor,
++                                   hdcMem, cxLogoBmp - 1, 0, 1, cyLogoBmp, SRCCOPY);
++                    }
+ 
+                     SelectObject(hdcMem, hLineBmp);
+-                    BitBlt(hdc, 0, cyLogoBmp, cxLogoBmp, cyLineBmp, hdcMem, 0, 0, SRCCOPY);
++                    StretchBlt(hdc, 0, cyLogoBmp * factor, cxLine, cyLineBmp * factor,
++                               hdcMem, 0, 0, cxLogoBmp, cyLineBmp, SRCCOPY);
+ 
+                     SelectObject(hdcMem, hOldObj);
+                     DeleteDC(hdcMem);

@@ -1,0 +1,76 @@
+Author: CusDeb OS Team
+Description: shell32: Scale the Start menu item metrics to the DPI.
+ The item padding, the list gap, the space for the submenu arrow and the
+ arrow itself were fixed pixel values. The arrow uses a Marlett font
+ created with height 0, which is 16 pixels at any DPI, so at 192 DPI the
+ arrows were tiny and the items cramped. Scale them to the screen DPI; 96
+ DPI is unchanged.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/dll/win32/shell32/shellmenu/CMenuBand.cpp
++++ b/src/dll/win32/shell32/shellmenu/CMenuBand.cpp
+@@ -21,6 +21,7 @@
+ #include <windowsx.h>
+ #include <commoncontrols.h>
+ #include <shlwapi_undoc.h>
++#include <dpiscale.h>
+ 
+ #include "CMenuBand.h"
+ #include "CMenuToolbars.h"
+@@ -368,9 +369,9 @@
+ 
+     if (m_dwFlags & SMINIT_VERTICAL)
+     {
+-        pdbi->ptMinSize.x = max(minStatic.cx, minShlFld.cx) + 20;
++        pdbi->ptMinSize.x = max(minStatic.cx, minShlFld.cx) + ScaleToDpi(20);
+         pdbi->ptMinSize.y = minStatic.cy + minShlFld.cy;
+-        pdbi->ptMaxSize.x = max(maxStatic.cx, maxShlFld.cx) + 20;
++        pdbi->ptMaxSize.x = max(maxStatic.cx, maxShlFld.cx) + ScaleToDpi(20);
+         pdbi->ptMaxSize.y = maxStatic.cy + maxShlFld.cy;
+         pdbi->dwModeFlags = DBIMF_VARIABLEHEIGHT;
+     }
+--- a/src/dll/win32/shell32/shellmenu/CMenuToolbars.cpp
++++ b/src/dll/win32/shell32/shellmenu/CMenuToolbars.cpp
+@@ -22,6 +22,7 @@
+ #include <shlwapi_undoc.h>
+ #include <uxtheme.h>
+ #include <vssym32.h>
++#include <dpiscale.h>
+ 
+ #include "CMenuBand.h"
+ #include "CMenuToolbars.h"
+@@ -206,7 +207,7 @@
+ 
+             // Set the text color, will be used by the internal drawing code
+             cdraw->clrText = clrText;
+-            cdraw->iListGap += 4;
++            cdraw->iListGap += ScaleToDpi(4);
+ 
+             // Tell the default drawing code we don't want any fanciness, not even a background.
+             *theResult = CDRF_NOTIFYPOSTPAINT | TBCDRF_NOBACKGROUND | TBCDRF_NOEDGES | TBCDRF_NOOFFSET | TBCDRF_NOMARK | 0x00800000; // FIXME: the last bit is Vista+, useful for debugging only
+@@ -288,8 +289,9 @@
+     m_idealSize.cy = 0;
+     m_itemSize.cx = 0;
+     m_itemSize.cy = 0;
++    // A height of 0 gives a 16 pixel font; keep that size at 96 DPI.
+     m_marlett = CreateFont(
+-        0, 0, 0, 0, 0, 0, 0, 0, DEFAULT_CHARSET,
++        ScaleToDpi(16), 0, 0, 0, 0, 0, 0, 0, DEFAULT_CHARSET,
+         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+         DEFAULT_QUALITY, FF_DONTCARE, L"Marlett");
+ }
+@@ -344,12 +346,12 @@
+     if (m_menuBand->UseBigIcons())
+     {
+         shiml = SHIL_LARGE;
+-        SetPadding(4, 0);
++        SetPadding(ScaleToDpi(4), 0);
+     }
+     else
+     {
+         shiml = SHIL_SMALL;
+-        SetPadding(4, 4);
++        SetPadding(ScaleToDpi(4), ScaleToDpi(4));
+     }
+ 
+     IImageList * piml;

@@ -65,6 +65,16 @@ cdex (0.0.17-1cd) trixie; urgency=medium
   * debian/patches/0029-browseui-folder-window-resource-icon.patch:
     above 96 DPI give folder windows an icon loaded from its resource,
     which Wine can export at the title bar size.
+  * debian/patches/0030-shell32-start-menu-dpi.patch: scale the Start
+    menu item padding, list gap and submenu arrow to the DPI.
+  * debian/patches/0031-shell32-dialogs-dpi.patch: scale the folder view
+    status bar parts, the icons of the New menu, Open With, drive
+    properties, File Types and Folder Options, the drive usage chart,
+    the Recycle Bin properties column and the file operation
+    confirmation dialog to the DPI.
+  * debian/patches/0032-shell32-about-banner-dpi.patch: enlarge the
+    About dialog banner by a whole factor and continue it to the
+    dialog's right edge.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.
