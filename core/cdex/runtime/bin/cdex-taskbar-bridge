@@ -53,6 +53,8 @@ _ICON_GEOMETRY = {}
 _TASKBAR_BUTTONS_X = 60
 _TASKBAR_BUTTON_WIDTH = 160
 _TASKBAR_HEIGHT = 24
+# Display DPI of the session (--dpi); the taskbar size limits are for 96 DPI.
+_DPI = 96
 
 # window_id -> (sha1 of the raw _NET_WM_ICON payload, exported .ico path)
 _ICON_CACHE = {}
@@ -433,7 +435,7 @@ def normalize_taskbar_window(window, root_width, root_height):
         if geo:
             bottom = root_height - geo.get("y", 0)
             # Sanity: taskbar is at bottom, small height
-            if bottom > 0 and bottom < 200:
+            if bottom > 0 and bottom < 200 * _DPI / 96:
                 strut_val = f"0,0,0,{bottom},0,0,0,0,0,0,0,{root_width - 1}"
                 if set_xprop(window_id, "_NET_WM_STRUT", "32c", f"0,0,0,{bottom}"):
                     print(f"taskbar bridge: set {window_id} strut bottom={bottom}", flush=True)
@@ -460,7 +462,7 @@ def normalize_window(window, root_width, root_height):
         geo = get_window_geometry(window["window_id"])
         if geo:
             # Taskbar: wide, short, near bottom of screen
-            if geo.get("width", 0) > root_width * 0.7 and geo.get("height", 0) < 100 and geo.get("y", 0) > root_height * 0.8:
+            if geo.get("width", 0) > root_width * 0.7 and geo.get("height", 0) < 100 * _DPI / 96 and geo.get("y", 0) > root_height * 0.8:
                 return normalize_taskbar_window(window, root_width, root_height)
     return False
 
@@ -599,6 +601,8 @@ LINUX_LAUNCHERS = {
     "display-settings": ["/usr/bin/cdex-display-properties"],
     "poweroff": ["/usr/bin/cdex-shutdown-helper", "poweroff"],
     "reboot": ["/usr/bin/cdex-shutdown-helper", "reboot"],
+    # The session ends when Openbox exits.
+    "logout": ["openbox", "--exit"],
 }
 
 
@@ -656,13 +660,16 @@ def main():
                         help="window list sync interval, seconds")
     parser.add_argument("--control-interval", type=float, default=0.1,
                         help="control/launch file poll interval, seconds")
+    parser.add_argument("--dpi", type=int, default=96,
+                        help="display DPI of the session")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
-    # _icon_dir/_buttons_path are module-level runtime settings; `global` is
-    # required because main() assigns to them after parsing command-line
+    # _icon_dir/_buttons_path/_DPI are module-level runtime settings; `global`
+    # is required because main() assigns to them after parsing command-line
     # arguments.
-    global _icon_dir, _buttons_path
+    global _icon_dir, _buttons_path, _DPI
+    _DPI = args.dpi
 
     # Keep exported icons next to the state file: the ReactOS side reaches
     # them through Wine's Z: drive, which maps to the host filesystem root.

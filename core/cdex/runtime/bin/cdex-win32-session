@@ -21,6 +21,10 @@ REACTOS_SOURCE_DIR="/usr/share/cusdeb/cdex"
 REACTOS_PREFIX="$HOME/.wine"
 REACTOS_DRIVE_DIR="$REACTOS_PREFIX/drive_c/reactos"
 REACTOS_REGISTRY_MARKER="$REACTOS_PREFIX/.cusdeb-reactos-registry-ready"
+# The DPI chosen in Display Properties; without the file it is detected.
+DPI_CHOICE_FILE="$REACTOS_PREFIX/drive_c/cusdeb/dpi"
+# LogPixels as last written by ensure_display_dpi.
+APPLIED_DPI_FILE="$REACTOS_PREFIX/.cusdeb-applied-dpi"
 
 # The native ReactOS DLL overrides are scoped to the 32-bit shell processes:
 # a global export would make 64-bit Wine processes (wineboot, services, ...)
@@ -61,7 +65,7 @@ start_splash() {
     mkdir -p "$XDG_RUNTIME_DIR/gtk-3.0"
     cat > "$XDG_RUNTIME_DIR/gtk-3.0/gtk.css" <<'EOF'
 * {
-    font-size: 16px;
+    font-size: 12pt;
     font-family: sans-serif;
 }
 EOF
@@ -134,8 +138,8 @@ ensure_wine_prefix() {
 # Re-apply the display resolution the user last chose (persisted by Explorer to
 # C:\cusdeb\resolution on WM_DISPLAYCHANGE). The X server always starts at its
 # own default mode, so without this the user's choice is lost on every login.
-# Runs early, before reactos-explorer starts, so the shell initializes at the
-# correct resolution and no resize is needed afterwards.
+# Runs before anything is drawn and before the display scale is detected, which
+# depends on the mode.
 restore_saved_resolution() {
   local file="$REACTOS_PREFIX/drive_c/cusdeb/resolution"
   local mode output
@@ -145,6 +149,105 @@ restore_saved_resolution() {
   if [ -n "$mode" ] && [ -n "$output" ]; then
     log_stage "resolution-restore-$mode"
     xrandr --output "$output" --mode "$mode" >/dev/null 2>&1 || log_stage "resolution-restore-failed"
+  fi
+}
+
+# Print the DPI step closest to $1: 96 or one of the steps in dpi-steps, which
+# have their own artwork and Openbox theme. awk runs in the C locale here and
+# below: mawk prints the locale's decimal separator and compares a number
+# written with a comma as a string.
+nearest_dpi_step() {
+  LC_ALL=C awk -v dpi="$1" 'BEGIN { step = 96 }
+    { for (i = 1; i <= NF; i++) if (dpi >= (step + $i) / 2) step = $i }
+    END { print step }' "$REACTOS_SOURCE_DIR/dpi-steps"
+}
+
+# winecfg sets the DPI by writing LogPixels. A value that differs from the one
+# written at the last login is such a change and becomes the user's choice.
+adopt_winecfg_dpi() {
+  local logpixels applied=96
+  # A wineserver left over from the previous session writes user.reg when it
+  # exits.
+  WINEDEBUG=-all timeout 5s wineserver -w >/dev/null 2>&1 || true
+  logpixels="$(read_logpixels)"
+  # Without the file the last written value is Wine's default of 96; an
+  # unreadable one adopts nothing.
+  [ -f "$APPLIED_DPI_FILE" ] && applied="$(tr -dc 0-9 <"$APPLIED_DPI_FILE")"
+  if [ -n "$applied" ] && [ -n "$logpixels" ] && [ "$logpixels" != "$applied" ]; then
+    mkdir -p "${DPI_CHOICE_FILE%/*}"
+    echo "$logpixels" >"$DPI_CHOICE_FILE"
+  fi
+}
+
+# Print the display DPI: the user's choice if it is between 96 and 480,
+# otherwise the step closest to the primary monitor's physical DPI. A monitor
+# without a plausible physical size (missing or broken EDID) gets 96.
+detect_display_dpi() {
+  local dpi=""
+  [ -f "$DPI_CHOICE_FILE" ] && dpi="$(tr -dc 0-9 <"$DPI_CHOICE_FILE")"
+  if [ -n "$dpi" ] && [ "$dpi" -ge 96 ] && [ "$dpi" -le 480 ]; then
+    echo "$dpi"
+    return
+  fi
+  # Lines look like " 0: +*eDP-1 2560/344x1600/215+0+0  eDP-1"; "*" marks
+  # the primary monitor. The size counts as missing when a dimension is 0,
+  # when it is an aspect ratio (16x9, 16x10, 160x90 or 160x100 mm, reported
+  # by some TVs and projectors), or when it gives more than 400 DPI.
+  dpi="$({ xrandr --listmonitors 2>/dev/null || true; } | LC_ALL=C awk '
+    NR > 1 && (px == "" || $2 ~ /\*/) { split($3, g, "[/x+]"); px = g[1]; mm = g[2]; mmh = g[4] }
+    END {
+      ratio = (mm == 16 || mm == 160) && (mmh == mm * 9 / 16 || mmh == mm * 10 / 16)
+      dpi = mm > 0 && mmh > 0 && !ratio ? px * 25.4 / mm : 96
+      print (dpi > 400 ? 96 : dpi)
+    }')"
+  nearest_dpi_step "$dpi"
+}
+
+# Scale the Linux side of the session above 96 DPI. Xft.dpi scales Xft/Pango
+# text (Openbox, xterm, GTK); xterm gets a scalable font for it. GTK scales px
+# sizes and images only by the integer GDK_SCALE, and GDK_DPI_SCALE then keeps
+# its text from being scaled twice. Openbox does not scale its button bitmaps
+# and border, so the theme variant drawn for the nearest DPI step is used
+# (tools/render_openbox_theme.py). The Wine side is set by ensure_display_dpi
+# in cdex-registry.
+apply_display_scale() {
+  local step theme rc=/etc/xdg/cusdeb/openbox/rc.xml
+  adopt_winecfg_dpi
+  DISPLAY_DPI="$(detect_display_dpi)" || true
+  case "$DISPLAY_DPI" in
+    "" | *[!0-9]*) DISPLAY_DPI=96 ;;
+  esac
+  log_stage "display-dpi-$DISPLAY_DPI"
+  openbox_args=()
+  [ "$DISPLAY_DPI" -gt 96 ] || return 0
+  # 24 is the smallest Adwaita cursor size.
+  export XCURSOR_SIZE=$((24 * DISPLAY_DPI / 96))
+  xrdb -nocpp -merge <<EOF || log_stage "xrdb-failed"
+Xft.dpi: $DISPLAY_DPI
+Xcursor.size: $XCURSOR_SIZE
+XTerm*faceName: Monospace
+XTerm*faceSize: 10
+EOF
+  # With the Win10 themes Openbox draws the title bar icon at the height of
+  # the title font plus 8 pixels. The font is Sans 10 (rc.xml), 12 points
+  # high with its line spacing, which is DPI / 6 pixels. Wine exports window
+  # icons of this size (ensure_display_dpi), so Openbox does not scale them.
+  TITLE_ICON_SIZE=$((DISPLAY_DPI / 6 + 8))
+  step="$(nearest_dpi_step "$DISPLAY_DPI")" || true
+  step="${step:-96}"
+  if [ "$((step / 96))" -ge 2 ]; then
+    GDK_SCALE=$((step / 96))
+    GDK_DPI_SCALE="$(LC_ALL=C awk -v scale="$GDK_SCALE" 'BEGIN { print 1 / scale }')"
+    export GDK_SCALE GDK_DPI_SCALE
+  fi
+  theme="Win10-$step"
+  [ -d "/usr/share/themes/$theme" ] || return 0
+  # --config-file also replaces a user's ~/.config/openbox/rc.xml.
+  if grep -q "<name>Win10</name>" "$rc"; then
+    sed "s|<name>Win10</name>|<name>$theme</name>|" "$rc" >"$XDG_RUNTIME_DIR/openbox-rc.xml"
+    openbox_args=(--config-file "$XDG_RUNTIME_DIR/openbox-rc.xml")
+  else
+    log_stage "openbox-theme-failed"
   fi
 }
 
@@ -281,6 +384,9 @@ create_reactos_shortcuts() {
   return "$cscript_rc"
 }
 
+restore_saved_resolution
+apply_display_scale
+
 # ---------------------------------------------------------------------------
 # Splash and window manager startup.
 # Openbox is started before any Wine operations so that the window manager
@@ -301,7 +407,7 @@ if command -v spice-vdagent >/dev/null 2>&1; then
   spice-vdagent &
 fi
 
-openbox &
+openbox "${openbox_args[@]}" &
 wm_pid=$!
 sleep 1
 log_stage "openbox-started pid=$wm_pid"
@@ -309,7 +415,7 @@ splash_update 15
 
 if [ -x /usr/bin/cdex-taskbar-bridge ]; then
   rm -f "$BRIDGE_CONTROL" "$BRIDGE_LOG" 2>/dev/null || true
-  /usr/bin/cdex-taskbar-bridge --state "$BRIDGE_STATE" --control "$BRIDGE_CONTROL" --launch-request "$BRIDGE_LAUNCH_REQUEST" --buttons "$REACTOS_TASKBAR_BUTTONS" >"$BRIDGE_LOG" 2>&1 &
+  /usr/bin/cdex-taskbar-bridge --state "$BRIDGE_STATE" --control "$BRIDGE_CONTROL" --launch-request "$BRIDGE_LAUNCH_REQUEST" --buttons "$REACTOS_TASKBAR_BUTTONS" --dpi "$DISPLAY_DPI" >"$BRIDGE_LOG" 2>&1 &
   bridge_pid=$!
   log_stage "bridge-started pid=$bridge_pid"
 fi
@@ -320,6 +426,7 @@ fi
 # "Loading CDEX...".
 # ---------------------------------------------------------------------------
 ensure_wine_prefix
+ensure_display_dpi || log_stage "display-dpi-failed"
 splash_update 40
 
 if prepare_reactos_payload; then
@@ -372,7 +479,6 @@ splash_update 90
 # and UI font settings; restore them on every login. The desktop background
 # color is set once on prefix creation and left to the user afterwards.
 ensure_reactos_ui_settings || log_stage "ui-settings-failed"
-restore_saved_resolution
 log_stage "reactos-explorer-start"
 splash_update 95
 

@@ -1,5 +1,24 @@
 cdex (0.0.17-1cd) trixie; urgency=medium
 
+  * runtime/bin/cdex-win32-session: detect the display scale at login
+    from the primary monitor's physical size (96 DPI or the nearest step
+    of dpi-steps; 96 when the size is missing or implausible), with the
+    user's choice in C:\cusdeb\dpi taking precedence. A LogPixels change
+    made with winecfg is adopted as that choice. Above 96 DPI set
+    Xft.dpi, the cursor size and a scalable xterm font (Monospace 10),
+    scale GTK and select the Openbox theme variant. Restore the saved
+    resolution before Openbox starts, because the scale depends on the
+    mode. Give the splash text its size in points (12pt instead of
+    16px), so it follows the DPI.
+  * runtime/bin/cdex-registry: write LogPixels at login when the DPI has
+    changed. Above 96 DPI make Win32 processes system DPI aware and set
+    Wine's TitleIconSize to the size of Openbox's title bar icon; remove
+    both at 96 DPI.
+  * runtime/bin/cdex-taskbar-bridge: scale the taskbar size limits to
+    the DPI (--dpi) and add the "logout" launch request, which ends the
+    session.
+  * runtime/config/gtk: drop the fixed cursor size so GTK follows the
+    session's cursor size.
   * dpi-steps, Makefile: name the DPI steps above 96 that have their own
     artwork in one file. The Makefile installs it for the session and
     passes the steps to the CDEX build (CDEX_DPI_STEPS) and to the
@@ -29,6 +48,8 @@ cdex (0.0.17-1cd) trixie; urgency=medium
     grips, radio buttons, 144 DPI check boxes) and set
     TrueSizeScalingType = Dpi for the true-size parts and image glyphs
     that lacked it.
+  * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
+    support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.
   * debian/copyright: cover artwork/.
 

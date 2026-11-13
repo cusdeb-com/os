@@ -1,6 +1,7 @@
 #!/bin/bash
 # ReactOS registry setup helpers.
-# Sourced by cdex-win32-session.
+# Sourced by cdex-win32-session, which sets REACTOS_PREFIX, DISPLAY_DPI,
+# TITLE_ICON_SIZE and APPLIED_DPI_FILE.
 
 reg_add() {
   WINEDEBUG=-all wine reg add "$@" >/dev/null
@@ -228,4 +229,51 @@ ensure_reactos_ui_settings() {
   reg_add_logfont "$metrics" IconFont -14 "$logfont_tail"
   reg_add_logfont "$metrics" MenuFont -14 "$logfont_tail"
   reg_add_logfont "$metrics" SmCaptionFont -14 "$logfont_tail"
+}
+
+# Print LogPixels as stored in user.reg, in decimal; nothing when it is unset.
+# Reading the file avoids a Wine start on every login.
+read_logpixels() {
+  local hex
+  hex="$(awk 'index($0, "[") == 1 { desktop = index($0, "[Control Panel\\\\Desktop]") == 1 }
+    desktop && sub(/^"LogPixels"=dword:/, "") { print; exit }' "$REACTOS_PREFIX/user.reg" 2>/dev/null)" || true
+  [ -z "$hex" ] || echo "$((16#$hex))"
+}
+
+# Set the Wine side of the display scale to DISPLAY_DPI. Runs on every login
+# before the shell starts, because Win32 processes read LogPixels when they
+# start. Wine is started only for values that change.
+#
+# Above 96 DPI two more values are set and at 96 DPI removed. HIGHDPIAWARE as
+# the default value of the Layers key (a Wine extension) makes every process
+# system DPI aware, so Wine draws it at the system DPI instead of stretching
+# a 96 DPI bitmap. TitleIconSize (TITLE_ICON_SIZE) makes Wine export window
+# icons at the size Openbox draws in the title bar.
+#
+# APPLIED_DPI_FILE records the DPI once all values hold it.
+ensure_display_dpi() {
+  local old applied="" layers="HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers"
+  local x11="HKCU\\Software\\Wine\\X11 Driver"
+  # A prefix without LogPixels runs at 96 DPI.
+  old="$(read_logpixels)"
+  old="${old:-96}"
+  [ -f "$APPLIED_DPI_FILE" ] && applied="$(tr -dc 0-9 <"$APPLIED_DPI_FILE")"
+  [ "$old" != "$DISPLAY_DPI" ] || [ "$applied" != "$DISPLAY_DPI" ] || return 0
+  if [ "$DISPLAY_DPI" -gt 96 ]; then
+    WINEDEBUG=-all wine reg add "$layers" /ve /t REG_SZ /d HIGHDPIAWARE /f >/dev/null || return 1
+    WINEDEBUG=-all wine reg add "$x11" /v TitleIconSize /t REG_SZ /d "$TITLE_ICON_SIZE" /f >/dev/null || return 1
+  elif [ "$old" -gt 96 ] || [ "${applied:-96}" -gt 96 ]; then
+    WINEDEBUG=-all wine reg delete "$layers" /ve /f >/dev/null 2>&1 || true
+    WINEDEBUG=-all wine reg delete "$x11" /v TitleIconSize /f >/dev/null 2>&1 || true
+  fi
+  # LogPixels goes last: a failure above leaves it equal to the applied DPI,
+  # so the next login retries instead of taking it for a winecfg change.
+  if [ "$old" != "$DISPLAY_DPI" ]; then
+    WINEDEBUG=-all wine reg add "HKCU\\Control Panel\\Desktop" /v LogPixels /t REG_DWORD /d "$DISPLAY_DPI" /f >/dev/null || return 1
+  fi
+  echo "$DISPLAY_DPI" >"$APPLIED_DPI_FILE"
+  # The wine calls above started Wine's desktop process with the previous DPI.
+  if [ "$old" != "$DISPLAY_DPI" ]; then
+    WINEDEBUG=-all wineserver -k || true
+  fi
 }
