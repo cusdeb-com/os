@@ -1,0 +1,22 @@
+Author: CusDeb OS Team
+Description: riched20: Keep the point size of the default font at any DPI.
+ The default character format takes its height from the stock GUI font,
+ whose pixel height is already scaled to the DPI, and divided by the DPI
+ twice. WordPad text was 4.5 points at 192 DPI. Convert the pixel height
+ with the DPI once.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/riched20/para.c
++++ b/src/dlls/riched20/para.c
+@@ -177,8 +177,9 @@
+   
+   cf.dwEffects = CFE_AUTOCOLOR | CFE_AUTOBACKCOLOR;
+   lstrcpyW(cf.szFaceName, lf.lfFaceName);
+-  /* Convert system font height from logical units to twips for cf.yHeight */
+-  cf.yHeight = (lf.lfHeight * 72 * 1440) / (c.dpi.cy * c.dpi.cy);
++  /* Convert system font height from logical units to twips for cf.yHeight.
++   * The stock font is scaled to the DPI, the point size stays the same. */
++  cf.yHeight = (lf.lfHeight * 72 * 1440) / (c.dpi.cy * USER_DEFAULT_SCREEN_DPI);
+   if (lf.lfWeight > FW_NORMAL) cf.dwEffects |= CFE_BOLD;
+   cf.wWeight = lf.lfWeight;
+   if (lf.lfItalic) cf.dwEffects |= CFE_ITALIC;

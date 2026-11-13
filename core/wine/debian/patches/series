@@ -19,3 +19,5 @@
 0019-comctl32-toolbar-std-bitmaps-dpi.patch
 0020-comctl32-controls-dpi.patch
 0021-edit-caret-dpi.patch
+0022-comdlg32-fontdlg-dpi.patch
+0023-riched20-default-font-dpi.patch

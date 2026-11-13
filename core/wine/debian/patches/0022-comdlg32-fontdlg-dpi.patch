@@ -1,0 +1,109 @@
+Author: CusDeb OS Team
+Description: comdlg32: Scale the font dialog images and colour swatch to the DPI.
+ The font type images in the face list are a 96 DPI bitmap strip; enlarge
+ it by a whole factor, the DPI scale rounded to the nearest whole number,
+ with pixel replication. Scale the colour box of the colour list.
+Last-Modified: Thu, 12 Nov 2026 19:28:12 +0300
+
+--- a/src/dlls/comdlg32/fontdlg.c
++++ b/src/dlls/comdlg32/fontdlg.c
+@@ -53,6 +53,47 @@
+ static HIMAGELIST himlTT = 0;
+ #define TTBITMAP_XSIZE 20 /* x-size of the bitmaps */
+ 
++/* Load the font type bitmaps, enlarged by a whole factor for the DPI. Pixels
++ * are replicated. */
++static void load_font_type_images(void)
++{
++    int factor = max( 1, (GetDpiForSystem() + USER_DEFAULT_SCREEN_DPI / 2) / USER_DEFAULT_SCREEN_DPI );
++    HBITMAP bitmap, scaled, old_src, old_dst;
++    HDC hdc, hdc_src, hdc_dst;
++    BITMAP bm;
++
++    if (himlTT) return;
++    if (factor == 1)
++    {
++        himlTT = ImageList_LoadImageW( COMDLG32_hInstance, MAKEINTRESOURCEW(38),
++                TTBITMAP_XSIZE, 0, CLR_DEFAULT, IMAGE_BITMAP, 0);
++        return;
++    }
++
++    if (!(bitmap = LoadImageW( COMDLG32_hInstance, MAKEINTRESOURCEW(38), IMAGE_BITMAP, 0, 0, 0 ))) return;
++    GetObjectW( bitmap, sizeof(bm), &bm );
++    hdc = GetDC( 0 );
++    hdc_src = CreateCompatibleDC( hdc );
++    hdc_dst = CreateCompatibleDC( hdc );
++    scaled = CreateCompatibleBitmap( hdc, bm.bmWidth * factor, bm.bmHeight * factor );
++    ReleaseDC( 0, hdc );
++    old_src = SelectObject( hdc_src, bitmap );
++    old_dst = SelectObject( hdc_dst, scaled );
++    SetStretchBltMode( hdc_dst, COLORONCOLOR );
++    StretchBlt( hdc_dst, 0, 0, bm.bmWidth * factor, bm.bmHeight * factor,
++                hdc_src, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY );
++    SelectObject( hdc_src, old_src );
++    SelectObject( hdc_dst, old_dst );
++    DeleteDC( hdc_src );
++    DeleteDC( hdc_dst );
++
++    himlTT = ImageList_Create( TTBITMAP_XSIZE * factor, bm.bmHeight * factor, ILC_COLOR | ILC_MASK,
++                               bm.bmWidth / TTBITMAP_XSIZE, 0 );
++    ImageList_AddMasked( himlTT, scaled, CLR_DEFAULT );
++    DeleteObject( scaled );
++    DeleteObject( bitmap );
++}
++
+ static INT_PTR CALLBACK FormatCharDlgProcA(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
+ static INT_PTR CALLBACK FormatCharDlgProcW(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
+ 
+@@ -626,9 +667,7 @@
+         EndDialog (hDlg, 0);
+         return FALSE;
+     }
+-    if (!himlTT)
+-        himlTT = ImageList_LoadImageW( COMDLG32_hInstance, MAKEINTRESOURCEW(38),
+-                TTBITMAP_XSIZE, 0, CLR_DEFAULT, IMAGE_BITMAP, 0);
++    load_font_type_images();
+ 
+     /* Set effect flags */
+     if((lpcf->Flags & CF_EFFECTS) && (lpcf->Flags & CF_INITTOLOGFONTSTRUCT))
+@@ -755,9 +794,7 @@
+     LPMEASUREITEMSTRUCT lpmi=(LPMEASUREITEMSTRUCT)lParam;
+     INT height = 0, cx;
+ 
+-    if (!himlTT)
+-        himlTT = ImageList_LoadImageW( COMDLG32_hInstance, MAKEINTRESOURCEW(38),
+-                TTBITMAP_XSIZE, 0, CLR_DEFAULT, IMAGE_BITMAP, 0);
++    load_font_type_images();
+     ImageList_GetIconSize( himlTT, &cx, &height);
+     lpmi->itemHeight = height + 2;
+     /* use MAX of bitmap height and tm.tmHeight .*/
+@@ -846,23 +883,25 @@
+             /* TRACE(commdlg,"WM_DRAWITEM cmb4 (=COLOR)\n"); */
+             SendMessageW(lpdi->hwndItem, CB_GETLBTEXT, lpdi->itemID,
+                      (LPARAM)buffer);
+-            TextOutW(lpdi->hDC, lpdi->rcItem.left +  25+5,
++            /* color box: 5 pixels of space and 20 of box at 96 DPI */
++            cx = MulDiv(5, GetDpiForWindow(lpdi->hwndItem), USER_DEFAULT_SCREEN_DPI);
++            TextOutW(lpdi->hDC, lpdi->rcItem.left + 6 * cx,
+                      lpdi->rcItem.top, buffer, lstrlenW(buffer));
+             cr = SendMessageW(lpdi->hwndItem, CB_GETITEMDATA, lpdi->itemID,0L);
+             hBrush = CreateSolidBrush(cr);
+             if (hBrush)
+             {
+                 hBrush = SelectObject (lpdi->hDC, hBrush) ;
+-                rect.right=rect.left+25;
++                rect.right=rect.left + 5 * cx;
+                 rect.top++;
+-                rect.left+=5;
++                rect.left+=cx;
+                 rect.bottom--;
+                 Rectangle( lpdi->hDC, rect.left, rect.top,
+                            rect.right, rect.bottom );
+                 DeleteObject( SelectObject (lpdi->hDC, hBrush)) ;
+             }
+             rect=lpdi->rcItem;
+-            rect.left+=25+5;
++            rect.left+=6 * cx;
+             break;
+ 
+         default:

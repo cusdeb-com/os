@@ -31,6 +31,10 @@ wine (11.19.0-2cd) trixie; urgency=medium
     tab, tooltip, track bar and tree view controls to the DPI.
   * debian/patches/0021-edit-caret-dpi.patch: scale the caret width of
     the comctl32 and user32 edit controls to the DPI.
+  * debian/patches/0022-comdlg32-fontdlg-dpi.patch: enlarge the font
+    dialog images by the same whole factor and scale its colour swatch.
+  * debian/patches/0023-riched20-default-font-dpi.patch: keep the point
+    size of the rich edit default font at any DPI.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 
