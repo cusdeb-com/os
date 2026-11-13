@@ -11,6 +11,7 @@ usr/share/cusdeb/cdex/hh.exe
 usr/share/cusdeb/cdex/create-cusdeb-shortcuts.js
 usr/share/cusdeb/cdex/cdex-shortcut-helper
 usr/share/cusdeb/cdex/reactos-classes.reg
+usr/share/cusdeb/cdex/dpi-steps
 usr/share/cusdeb/cdex/*.dll
 usr/share/cusdeb/cdex/*.cpl
 usr/share/cusdeb/cdex/mizu.msstyles

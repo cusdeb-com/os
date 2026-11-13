@@ -1,0 +1,135 @@
+Author: CusDeb OS Team
+Description: Add sdk/include/reactos/dpiscale.h with the DPI helpers of the ReactOS sources.
+ ReactOS user mode has many fixed pixel sizes and 96 DPI bitmaps. The
+ header gives the DPI patches one set of helpers: the screen DPI, the
+ scaling of a 96 DPI length, the whole factors by which raster images
+ without high-DPI artwork are enlarged, the bitmap enlargement with pixel
+ replication, and the lookup of a bitmap resource drawn for the screen
+ DPI. Wine has no shared header, so its patches compute the same factor
+ locally.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- /dev/null
++++ b/src/sdk/include/reactos/dpiscale.h
+@@ -0,0 +1,121 @@
++/*
++ * PROJECT:     ReactOS headers
++ * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
++ * PURPOSE:     Scaling of 96 DPI pixel sizes and raster images to the screen DPI
++ */
++
++#pragma once
++
++#include <windef.h>
++#include <winbase.h>
++#include <wingdi.h>
++#include <winuser.h>
++
++/* The screen DPI. It is fixed for the lifetime of a process. Without a screen
++ * DC the result is 96 and the query is repeated on the next call. */
++static inline int GetScreenDpi(void)
++{
++    static int dpi;
++
++    if (!dpi)
++    {
++        HDC hdc = GetDC(NULL);
++        dpi = GetDeviceCaps(hdc, LOGPIXELSX);
++        ReleaseDC(NULL, hdc);
++    }
++    return dpi ? dpi : 96;
++}
++
++/* Scale a length in 96 DPI pixels to the screen DPI. */
++static inline int ScaleToDpi(int value)
++{
++    return MulDiv(value, GetScreenDpi(), 96);
++}
++
++/* Whole factor by which 96 DPI raster images are enlarged: the DPI scale
++ * rounded to the nearest whole number (1 at 120 DPI, 2 at 144 and 192). */
++static inline int GetDpiImageFactor(void)
++{
++    int factor = (GetScreenDpi() + 48) / 96;
++
++    return factor > 1 ? factor : 1;
++}
++
++/* The factor for images in a dialog slot that is laid out in dialog units and
++ * does not hold the image at twice its size at 144 DPI: the DPI scale rounded
++ * down. Used for the About dialog banner (shell32), the System Properties
++ * logo (sysdm.cpl) and the Taskbar and Start Menu Properties previews
++ * (explorer). */
++static inline int GetDpiSlotImageFactor(void)
++{
++    int factor = GetScreenDpi() / 96;
++
++    return factor > 1 ? factor : 1;
++}
++
++/* The highest DPI up to the screen DPI that the module has a bitmap for.
++ * Such bitmaps have the resource identifier idBase + DPI; without one the
++ * result is 96. */
++static inline int FindDpiBitmap(HINSTANCE hInst, UINT idBase)
++{
++    int dpi;
++
++    for (dpi = GetScreenDpi(); dpi > 96; dpi--)
++    {
++        if (FindResourceW(hInst, MAKEINTRESOURCEW(idBase + dpi), (LPCWSTR)RT_BITMAP))
++            break;
++    }
++    return dpi;
++}
++
++/* Enlarge a bitmap by a whole factor. Pixels are replicated, so the image
++ * stays sharp. A 32-bit DIB section gives a 32-bit DIB section, which keeps
++ * the alpha channel; any other bitmap gives a screen-compatible bitmap. The
++ * source bitmap is deleted, or returned when the new one cannot be created. */
++static inline HBITMAP EnlargeBitmap(HBITMAP hbm, int factor)
++{
++    HDC hdcScreen, hdcSrc, hdcDst;
++    HGDIOBJ hbmOldSrc, hbmOldDst;
++    HBITMAP hbmNew;
++    BITMAP bm;
++
++    if (factor <= 1 || !GetObjectW(hbm, sizeof(bm), &bm))
++        return hbm;
++
++    hdcScreen = GetDC(NULL);
++    if (bm.bmBits && bm.bmBitsPixel == 32)
++    {
++        BITMAPINFO bmi;
++
++        ZeroMemory(&bmi, sizeof(bmi));
++        bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
++        bmi.bmiHeader.biWidth = bm.bmWidth * factor;
++        bmi.bmiHeader.biHeight = bm.bmHeight * factor;
++        bmi.bmiHeader.biPlanes = 1;
++        bmi.bmiHeader.biBitCount = 32;
++        hbmNew = CreateDIBSection(hdcScreen, &bmi, DIB_RGB_COLORS, NULL, NULL, 0);
++    }
++    else
++    {
++        hbmNew = CreateCompatibleBitmap(hdcScreen, bm.bmWidth * factor, bm.bmHeight * factor);
++    }
++
++    if (hbmNew)
++    {
++        hdcSrc = CreateCompatibleDC(hdcScreen);
++        hdcDst = CreateCompatibleDC(hdcScreen);
++        hbmOldSrc = SelectObject(hdcSrc, hbm);
++        hbmOldDst = SelectObject(hdcDst, hbmNew);
++        SetStretchBltMode(hdcDst, COLORONCOLOR);
++        StretchBlt(hdcDst, 0, 0, bm.bmWidth * factor, bm.bmHeight * factor,
++                   hdcSrc, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++        SelectObject(hdcSrc, hbmOldSrc);
++        SelectObject(hdcDst, hbmOldDst);
++        DeleteDC(hdcSrc);
++        DeleteDC(hdcDst);
++        DeleteObject(hbm);
++        hbm = hbmNew;
++    }
++    ReleaseDC(NULL, hdcScreen);
++    return hbm;
++}

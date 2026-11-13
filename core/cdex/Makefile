@@ -37,6 +37,12 @@ REAPPLY_PATCHES ?= 0
 
 # Build asset settings
 FONT_FACES := R B RI
+# DPI steps above 96 that have their own artwork and Openbox theme. A new step
+# also needs its bitmaps in artwork/ (make regen-artwork), their resource lines
+# in explorer.rc, mspaint's rsrc.rc and mizu.rc, and ImageFile/MinDpi lines in
+# the theme's NormalNormal.INI; without them it uses the next lower step's.
+DPI_STEPS := $(shell cat dpi-steps)
+$(if $(strip $(DPI_STEPS)),,$(error dpi-steps is missing or empty))
 
 # Cross-compilation settings
 export ROS_ARCH := i386
@@ -199,6 +205,7 @@ cdex-build:
 		-DENABLE_ROSTESTS=0 \
 		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(UPSTREAM_SRC_DIR)/toolchain-gcc.cmake" \
 		-DARCH:STRING=i386 \
+		-DCDEX_DPI_STEPS:STRING="96 $(DPI_STEPS)" \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building CDEX components ==="
 	ninja -C "$(OUT_DIR)" host-tools $(CDEX_TARGETS)
@@ -286,6 +293,7 @@ install-in-container:
 	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
 	install -m 644 "$(CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
+	install -m 644 dpi-steps "$(CDEX_DIR)/dpi-steps"
 	@echo "=== Installing session/config files ==="
 	install -D -m 644 runtime/xsessions/cusdeb-win32.desktop "$(DESTDIR)/usr/share/xsessions/cusdeb-win32.desktop"
 	install -D -m 644 runtime/config/lightdm/50-cusdeb-greeter.conf "$(DESTDIR)/etc/lightdm/lightdm.conf.d/50-cusdeb-greeter.conf"

@@ -1,3 +1,19 @@
+cdex (0.0.17-1cd) trixie; urgency=medium
+
+  * dpi-steps, Makefile: name the DPI steps above 96 that have their own
+    artwork in one file. The Makefile installs it for the session and
+    passes the steps to the CDEX build (CDEX_DPI_STEPS) and to the
+    generators.
+  * debian/patches/0022-dpiscale-header.patch: add
+    sdk/include/reactos/dpiscale.h with the DPI helpers the patches
+    below share. Raster images without DPI artwork are enlarged by a
+    whole factor with pixel replication: 1 at 120 DPI, 2 at 144 and 192
+    DPI; images in a dialog slot (About banner, System Properties logo,
+    Taskbar and Start Menu properties previews) stay at 1 at 144 DPI.
+  * debian/cdex-base.install: install dpi-steps.
+
+ -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
+
 cdex (0.0.16-1cd) trixie; urgency=medium
 
   * debian/patches/0020-appwiz-cpl-split.patch, runtime/bin/cdex-win32-
