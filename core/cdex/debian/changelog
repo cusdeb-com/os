@@ -4,13 +4,29 @@ cdex (0.0.17-1cd) trixie; urgency=medium
     artwork in one file. The Makefile installs it for the session and
     passes the steps to the CDEX build (CDEX_DPI_STEPS) and to the
     generators.
+  * tools/render_artwork.py, tools/render_theme_glyphs.py,
+    tools/render_paint_icons.py, artwork/: add the generators of the
+    high-DPI start button, Start menu banner, Mizu glyph and Paint tool
+    icon bitmaps and their output for 120, 144 and 192 DPI. "make
+    regen-artwork" runs them; the Makefile passes CDEX_ARTWORK_DIR to
+    the CDEX build.
   * debian/patches/0022-dpiscale-header.patch: add
     sdk/include/reactos/dpiscale.h with the DPI helpers the patches
     below share. Raster images without DPI artwork are enlarged by a
     whole factor with pixel replication: 1 at 120 DPI, 2 at 144 and 192
     DPI; images in a dialog slot (About banner, System Properties logo,
     Taskbar and Start Menu properties previews) stay at 1 at 144 DPI.
+  * debian/patches/0023-explorer-start-button-banner-dpi.patch: load the
+    Start menu banner drawn for the DPI and keep the start button as
+    wide as its theme image.
+  * debian/patches/0024-mizu-dpi-artwork.patch: add 120, 144 and 192 DPI
+    images to the Mizu theme (start button, scroll bar, combo box, spin
+    and split button arrows, tree view expanders, toolbar chevrons, size
+    grips, radio buttons, 144 DPI check boxes) and set
+    TrueSizeScalingType = Dpi for the true-size parts and image glyphs
+    that lacked it.
   * debian/cdex-base.install: install dpi-steps.
+  * debian/copyright: cover artwork/.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 

@@ -1,0 +1,756 @@
+Author: CusDeb OS Team
+Description: Mizu: Add high-DPI start button and glyph images and scale the other true-size parts.
+ The start button, scroll bar arrows, combo box, spin and split button
+ arrows, tree view expanders, toolbar chevrons, size grips and radio
+ buttons only had 96 DPI images, which were stretched at a higher DPI.
+ Add images drawn for 120, 144 and 192 DPI and select them with
+ ImageSelectType = Dpi. They are rendered by tools/render_artwork.py and
+ tools/render_theme_glyphs.py into CDEX_ARTWORK_DIR; mizu.rc is rebuilt
+ when they change. Check boxes get a 20 pixel image for 144 DPI, between
+ the theme's 16 and 25 pixel ones.
+ .
+ The scroll bar button names no glyph images: the theme's two are empty,
+ and without them its background image is selected by DPI.
+ .
+ True-size parts and image glyphs without TrueSizeScalingType were drawn
+ at their 96 DPI size at any DPI. Set TrueSizeScalingType = Dpi in those
+ sections, so uxtheme scales them. That covers the parts without DPI
+ images (MDI buttons, the tooltip close button, explorer bar buttons,
+ task band scroll arrows, the taskbar and tray chevrons) and, for the
+ parts above, a DPI between two of their images.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/media/themes/Mizu/mizu.msstyles/CMakeLists.txt
++++ b/src/media/themes/Mizu/mizu.msstyles/CMakeLists.txt
+@@ -14,7 +14,10 @@
+     list(APPEND _converted_files ${_converted_file})
+ endforeach()
+ 
+-set_source_files_properties(mizu.rc PROPERTIES OBJECT_DEPENDS "${_converted_files};xdk")
++# The high-DPI images come from CDEX_ARTWORK_DIR.
++file(GLOB _artwork ${CDEX_ARTWORK_DIR}/start-button-*.bmp ${CDEX_ARTWORK_DIR}/mizu-*.bmp)
++set_source_files_properties(mizu.rc PROPERTIES OBJECT_DEPENDS "${_converted_files};${_artwork};xdk")
++include_directories(${CDEX_ARTWORK_DIR})
+ add_library(mizu.msstyles MODULE mizu.rc)
+ set_module_type(mizu.msstyles module)
+ set_target_properties(mizu.msstyles PROPERTIES SUFFIX "")
+--- a/src/media/themes/Mizu/mizu.msstyles/mizu.rc
++++ b/src/media/themes/Mizu/mizu.msstyles/mizu.rc
+@@ -24,11 +24,18 @@
+ NORMAL_BUTTON_BMP BITMAP "bitmaps/NORMAL_BUTTON.bmp"
+ NORMAL_CHECKBOX13_BMP BITMAP "bitmaps/NORMAL_CHECKBOX13.bmp"
+ NORMAL_CHECKBOX16_BMP BITMAP "bitmaps/NORMAL_CHECKBOX16.bmp"
++NORMAL_CHECKBOX144_BMP BITMAP "mizu-checkbox-144.bmp"
+ NORMAL_CHECKBOX25_BMP BITMAP "bitmaps/NORMAL_CHECKBOX25.bmp"
+ NORMAL_CHEVRON_BMP BITMAP "bitmaps/NORMAL_CHEVRON.bmp"
++NORMAL_CHEVRON120_BMP BITMAP "mizu-chevron-120.bmp"
++NORMAL_CHEVRON144_BMP BITMAP "mizu-chevron-144.bmp"
++NORMAL_CHEVRON192_BMP BITMAP "mizu-chevron-192.bmp"
+ NORMAL_CLOSEBUTTON_BMP BITMAP "bitmaps/NORMAL_CLOSEBUTTON.bmp"
+ NORMAL_CLOSEGLYPH9_BMP BITMAP "bitmaps/NORMAL_CLOSEGLYPH9.bmp"
+ NORMAL_COMBOBUTTONGLYPH_BMP BITMAP "bitmaps/NORMAL_COMBOBUTTONGLYPH.bmp"
++NORMAL_COMBOBUTTONGLYPH120_BMP BITMAP "mizu-combo-glyph-120.bmp"
++NORMAL_COMBOBUTTONGLYPH144_BMP BITMAP "mizu-combo-glyph-144.bmp"
++NORMAL_COMBOBUTTONGLYPH192_BMP BITMAP "mizu-combo-glyph-192.bmp"
+ NORMAL_COMBOBUTTON_BMP BITMAP "bitmaps/NORMAL_COMBOBUTTON.bmp"
+ NORMAL_EXPLORERBARHEADERBACKGROUND_BMP BITMAP "bitmaps/NORMAL_EXPLORERBARHEADERBACKGROUND.bmp"
+ NORMAL_EXPLORERBARHEADERCLOSE_BMP BITMAP "bitmaps/NORMAL_EXPLORERBARHEADERCLOSE.bmp"
+@@ -64,11 +71,20 @@
+ NORMAL_PROGRESSTRACKVERT_BMP BITMAP "bitmaps/NORMAL_PROGRESSTRACKVERT.bmp"
+ NORMAL_PROGRESSTRACK_BMP BITMAP "bitmaps/NORMAL_PROGRESSTRACK.bmp"
+ NORMAL_RADIOBUTTON13_BMP BITMAP "bitmaps/NORMAL_RADIOBUTTON13.bmp"
++NORMAL_RADIOBUTTON120_BMP BITMAP "mizu-radio-120.bmp"
++NORMAL_RADIOBUTTON144_BMP BITMAP "mizu-radio-144.bmp"
++NORMAL_RADIOBUTTON192_BMP BITMAP "mizu-radio-192.bmp"
+ NORMAL_RESIZEGRIP2_BMP BITMAP "bitmaps/NORMAL_RESIZEGRIP2.bmp"
++NORMAL_RESIZEGRIP120_BMP BITMAP "mizu-resize-grip-120.bmp"
++NORMAL_RESIZEGRIP144_BMP BITMAP "mizu-resize-grip-144.bmp"
++NORMAL_RESIZEGRIP192_BMP BITMAP "mizu-resize-grip-192.bmp"
+ NORMAL_RESTOREBUTTON_BMP BITMAP "bitmaps/NORMAL_RESTOREBUTTON.bmp"
+ NORMAL_SCROLLARROWGLYPHSSMALL_BMP BITMAP "bitmaps/NORMAL_SCROLLARROWGLYPHSSMALL.bmp"
+ NORMAL_SCROLLARROWGLYPHS_BMP BITMAP "bitmaps/NORMAL_SCROLLARROWGLYPHS.bmp"
+ NORMAL_SCROLLARROWS_BMP BITMAP "bitmaps/NORMAL_SCROLLARROWS.bmp"
++NORMAL_SCROLLARROWS120_BMP BITMAP "mizu-scroll-arrows-120.bmp"
++NORMAL_SCROLLARROWS144_BMP BITMAP "mizu-scroll-arrows-144.bmp"
++NORMAL_SCROLLARROWS192_BMP BITMAP "mizu-scroll-arrows-192.bmp"
+ NORMAL_SCROLLSHAFTHORIZONTAL_BMP BITMAP "bitmaps/NORMAL_SCROLLSHAFTHORIZONTAL.bmp"
+ NORMAL_SCROLLSHAFTVERTICAL_BMP BITMAP "bitmaps/NORMAL_SCROLLSHAFTVERTICAL.bmp"
+ NORMAL_SCROLLTHUMBGRIPPERHORIZONTAL_BMP BITMAP "bitmaps/NORMAL_SCROLLTHUMBGRIPPERHORIZONTAL.bmp"
+@@ -89,10 +105,25 @@
+ NORMAL_SPINBUTTONBACKGROUNDRIGHT_BMP BITMAP "bitmaps/NORMAL_SPINBUTTONBACKGROUNDRIGHT.bmp"
+ NORMAL_SPINBUTTONBACKGROUNDUP_BMP BITMAP "bitmaps/NORMAL_SPINBUTTONBACKGROUNDUP.bmp"
+ NORMAL_SPINDOWNGLYPH_BMP BITMAP "bitmaps/NORMAL_SPINDOWNGLYPH.bmp"
++NORMAL_SPINDOWNGLYPH120_BMP BITMAP "mizu-spin-down-glyph-120.bmp"
++NORMAL_SPINDOWNGLYPH144_BMP BITMAP "mizu-spin-down-glyph-144.bmp"
++NORMAL_SPINDOWNGLYPH192_BMP BITMAP "mizu-spin-down-glyph-192.bmp"
+ NORMAL_SPINLEFTGLYPH_BMP BITMAP "bitmaps/NORMAL_SPINLEFTGLYPH.bmp"
++NORMAL_SPINLEFTGLYPH120_BMP BITMAP "mizu-spin-left-glyph-120.bmp"
++NORMAL_SPINLEFTGLYPH144_BMP BITMAP "mizu-spin-left-glyph-144.bmp"
++NORMAL_SPINLEFTGLYPH192_BMP BITMAP "mizu-spin-left-glyph-192.bmp"
+ NORMAL_SPINRIGHTGLYPH_BMP BITMAP "bitmaps/NORMAL_SPINRIGHTGLYPH.bmp"
++NORMAL_SPINRIGHTGLYPH120_BMP BITMAP "mizu-spin-right-glyph-120.bmp"
++NORMAL_SPINRIGHTGLYPH144_BMP BITMAP "mizu-spin-right-glyph-144.bmp"
++NORMAL_SPINRIGHTGLYPH192_BMP BITMAP "mizu-spin-right-glyph-192.bmp"
+ NORMAL_SPINUPGLYPH_BMP BITMAP "bitmaps/NORMAL_SPINUPGLYPH.bmp"
++NORMAL_SPINUPGLYPH120_BMP BITMAP "mizu-spin-up-glyph-120.bmp"
++NORMAL_SPINUPGLYPH144_BMP BITMAP "mizu-spin-up-glyph-144.bmp"
++NORMAL_SPINUPGLYPH192_BMP BITMAP "mizu-spin-up-glyph-192.bmp"
+ NORMAL_STARTBUTTON_BMP BITMAP "bitmaps/NORMAL_STARTBUTTON.bmp"
++NORMAL_STARTBUTTON120_BMP BITMAP "start-button-120.bmp"
++NORMAL_STARTBUTTON144_BMP BITMAP "start-button-144.bmp"
++NORMAL_STARTBUTTON192_BMP BITMAP "start-button-192.bmp"
+ NORMAL_STARTGROUPBACKGROUND_BMP BITMAP "bitmaps/NORMAL_STARTGROUPBACKGROUND.bmp"
+ NORMAL_STARTGROUPNEWAPPBUTTON_BMP BITMAP "bitmaps/NORMAL_STARTGROUPNEWAPPBUTTON.bmp"
+ NORMAL_STARTGROUPSEPERATOR_BMP BITMAP "bitmaps/NORMAL_STARTGROUPSEPERATOR.bmp"
+@@ -152,6 +183,9 @@
+ NORMAL_TASKBARTRAY_BMP BITMAP "bitmaps/NORMAL_TASKBARTRAY.bmp"
+ NORMAL_TOOLBARBACKGROUND_BMP BITMAP "bitmaps/NORMAL_TOOLBARBACKGROUND.bmp"
+ NORMAL_TOOLBARBUTTONSSPLITDROPDOWNGLYPH_BMP BITMAP "bitmaps/NORMAL_TOOLBARBUTTONSSPLITDROPDOWNGLYPH.bmp"
++NORMAL_TOOLBARBUTTONSSPLITDROPDOWNGLYPH120_BMP BITMAP "mizu-split-dropdown-glyph-120.bmp"
++NORMAL_TOOLBARBUTTONSSPLITDROPDOWNGLYPH144_BMP BITMAP "mizu-split-dropdown-glyph-144.bmp"
++NORMAL_TOOLBARBUTTONSSPLITDROPDOWNGLYPH192_BMP BITMAP "mizu-split-dropdown-glyph-192.bmp"
+ NORMAL_TOOLBARBUTTONSSPLITDROPDOWN_BMP BITMAP "bitmaps/NORMAL_TOOLBARBUTTONSSPLITDROPDOWN.bmp"
+ NORMAL_TOOLBARBUTTONSSPLIT_BMP BITMAP "bitmaps/NORMAL_TOOLBARBUTTONSSPLIT.bmp"
+ NORMAL_TOOLBARBUTTONS_BMP BITMAP "bitmaps/NORMAL_TOOLBARBUTTONS.bmp"
+@@ -174,6 +208,9 @@
+ NORMAL_TRAYCHEVRONHORIZONTALOPEN_BMP BITMAP "bitmaps/NORMAL_TRAYCHEVRONHORIZONTALOPEN.bmp"
+ NORMAL_TRAYCHEVRONHORIZONTAL_BMP BITMAP "bitmaps/NORMAL_TRAYCHEVRONHORIZONTAL.bmp"
+ NORMAL_TREEEXPANDCOLLAPSE_BMP BITMAP "bitmaps/NORMAL_TREEEXPANDCOLLAPSE.bmp"
++NORMAL_TREEEXPANDCOLLAPSE120_BMP BITMAP "mizu-tree-glyph-120.bmp"
++NORMAL_TREEEXPANDCOLLAPSE144_BMP BITMAP "mizu-tree-glyph-144.bmp"
++NORMAL_TREEEXPANDCOLLAPSE192_BMP BITMAP "mizu-tree-glyph-192.bmp"
+ NORMAL_USERTILEBACKGROUND_BMP BITMAP "bitmaps/NORMAL_USERTILEBACKGROUND.bmp"
+ 
+ /* These three are needed before Windows will accept the theme */
+--- a/src/media/themes/Mizu/mizu.msstyles/textfiles/NormalNormal.INI
++++ b/src/media/themes/Mizu/mizu.msstyles/textfiles/NormalNormal.INI
+@@ -55,12 +55,14 @@
+ ImageCount = 12
+ ImageFile1 = Normal\CheckBox13.bmp
+ ImageFile2 = Normal\CheckBox16.bmp
+-ImageFile3 = Normal\CheckBox25.bmp
++ImageFile3 = Normal\CheckBox144.bmp
++ImageFile4 = Normal\CheckBox25.bmp
+ Imagelayout = vertical
+ ImageSelectType = Dpi
+ MinDpi1 = 96
+ MinDpi2 = 118
+-MinDpi3 = 185
++MinDpi3 = 144
++MinDpi4 = 185
+ MirrorImage = false
+ ContentMargins = 0, 0, 0, 0
+ SizingMargins = 0, 0, 0, 0
+@@ -129,13 +131,15 @@
+ FillColorHint = 33 161 33
+ ImageCount = 8
+ ImageFile1 = Normal\RadioButton13.bmp
+-ImageFile2 = Normal\RadioButton13.bmp
+-ImageFile3 = Normal\RadioButton13.bmp
++ImageFile2 = Normal\RadioButton120.bmp
++ImageFile3 = Normal\RadioButton144.bmp
++ImageFile4 = Normal\RadioButton192.bmp
+ Imagelayout = vertical
+ ImageSelectType = Dpi
+ MinDpi1 = 96
+-MinDpi2 = 118
+-MinDpi3 = 185
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ SizingMargins = 0, 0, 0, 0
+ SizingType = TrueSize
+ Transparent = true
+@@ -172,9 +176,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 4
+ ImageFile = Normal\ComboButton.bmp
++ImageFile1 = Normal\ComboButtonGlyph.bmp
++ImageFile2 = Normal\ComboButtonGlyph120.bmp
++ImageFile3 = Normal\ComboButtonGlyph144.bmp
++ImageFile4 = Normal\ComboButtonGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 2, 2, 3, 3
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -222,6 +236,7 @@
+ Offset = 4, 4
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.HeaderPin]
+@@ -233,6 +248,7 @@
+ Offset = 6, 4
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.IEBarMenu]
+@@ -245,6 +261,7 @@
+ Offset = 3, 1
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.NormalGroupBackground]
+@@ -268,6 +285,7 @@
+ Offset = 3, 1
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.NormalGroupExpand]
+@@ -280,6 +298,7 @@
+ Offset = 3, 1
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.NormalGroupHead]
+@@ -313,6 +332,7 @@
+ Offset = 3, 1
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.SpecialGroupExpand]
+@@ -325,6 +345,7 @@
+ Offset = 3, 1
+ OffsetType = TopRight
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = true
+ 
+ [ExplorerBar.SpecialGroupHead]
+@@ -440,9 +461,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ToolbarButtons.bmp
++ImageFile1 = Normal\Chevron.bmp
++ImageFile2 = Normal\Chevron120.bmp
++ImageFile3 = Normal\Chevron144.bmp
++ImageFile4 = Normal\Chevron192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ VAlign = Top
+ 
+@@ -455,9 +486,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ToolbarButtons.bmp
++ImageFile1 = Normal\Chevron.bmp
++ImageFile2 = Normal\Chevron120.bmp
++ImageFile3 = Normal\Chevron144.bmp
++ImageFile4 = Normal\Chevron192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ VAlign = Top
+ 
+@@ -485,16 +526,18 @@
+ BorderColorHint = 255 255 255
+ ContentMargins = 0, 0, 3, 3
+ FillColorHint = 200 214 251
+-GlyphTransparent = True
+-GlyphType = ImageGlyph
+ ImageCount = 16
+ ImageFile = Normal\ScrollArrows.bmp
+-ImageFile1 = Normal\ScrollArrowGlyphsSmall.bmp
+-ImageFile2 = Normal\ScrollArrowGlyphs.bmp
++ImageFile1 = Normal\ScrollArrows.bmp
++ImageFile2 = Normal\ScrollArrows120.bmp
++ImageFile3 = Normal\ScrollArrows144.bmp
++ImageFile4 = Normal\ScrollArrows192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = Vertical
+-ImageSelectType = size
+-MinSize1 = 7, 7
+-MinSize2 = 9, 9
+ NormalSize = 7, 10
+ SizingMargins = 5, 5, 5, 5
+ SizingType = Stretch
+@@ -509,6 +552,7 @@
+ ImageFile = Normal\ScrollThumbGripperHorizontal.BMP
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [ScrollBar.GripperVert]
+@@ -517,6 +561,7 @@
+ ImageFile = Normal\ScrollThumbGripperVertical.BMP
+ ImageLayout = Vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [ScrollBar.LowerTrackHorz]
+@@ -540,7 +585,17 @@
+ FillColorHint = 150 150 150
+ ImageCount = 2
+ ImageFile = Normal\ResizeGrip2.bmp
++ImageFile1 = Normal\ResizeGrip2.bmp
++ImageFile2 = Normal\ResizeGrip120.bmp
++ImageFile3 = Normal\ResizeGrip144.bmp
++ImageFile4 = Normal\ResizeGrip192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ SizingType = trueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ TransparentColor = 255 0 0
+ VAlign = Bottom
+@@ -598,9 +653,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 4
+ ImageFile = Normal\SpinButtonBackgroundDown.bmp
++ImageFile1 = Normal\SpinDownGlyph.bmp
++ImageFile2 = Normal\SpinDownGlyph120.bmp
++ImageFile3 = Normal\SpinDownGlyph144.bmp
++ImageFile4 = Normal\SpinDownGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = Vertical
+ SizingMargins = 4, 4, 3, 4
+ SizingType = tile
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -614,9 +679,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 4
+ ImageFile = Normal\SpinButtonBackgroundLeft.bmp
++ImageFile1 = Normal\SpinLeftGlyph.bmp
++ImageFile2 = Normal\SpinLeftGlyph120.bmp
++ImageFile3 = Normal\SpinLeftGlyph144.bmp
++ImageFile4 = Normal\SpinLeftGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = Vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -630,9 +705,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 4
+ ImageFile = Normal\SpinButtonBackgroundUp.bmp
++ImageFile1 = Normal\SpinUpGlyph.bmp
++ImageFile2 = Normal\SpinUpGlyph120.bmp
++ImageFile3 = Normal\SpinUpGlyph144.bmp
++ImageFile4 = Normal\SpinUpGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = Vertical
+ SizingMargins = 4, 4, 4, 3
+ SizingType = stretch
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -646,9 +731,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 4
+ ImageFile = Normal\SpinButtonBackgroundRight.bmp
++ImageFile1 = Normal\SpinRightGlyph.bmp
++ImageFile2 = Normal\SpinRightGlyph120.bmp
++ImageFile3 = Normal\SpinRightGlyph144.bmp
++ImageFile4 = Normal\SpinRightGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = Vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = stretch
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -673,6 +768,7 @@
+ ImageCount = 1
+ ImageFile = Normal\StartPanelLogoffButtons.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -681,6 +777,7 @@
+ ImageCount = 1
+ ImageFile = Normal\StartPanelLogoffButtonsHot.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -703,6 +800,7 @@
+ ImageCount = 1
+ ImageFile = Normal\StartPanelMoreProgArrow.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [StartPanel.MoreProgramsArrow(Hot)]
+ BgType = ImageFile
+@@ -710,6 +808,7 @@
+ ImageCount = 1
+ ImageFile = Normal\StartPanelMoreProgArrowHot.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [StartPanel.PlacesList]
+ BgType = imageFile
+@@ -727,6 +826,7 @@
+ BgType = ImageFile
+ ImageFile = Normal\StartPlacesSeparator.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -747,6 +847,7 @@
+ BgType = ImageFile
+ ImageFile = Normal\StartProgramsSeparator.bmp
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+ 
+@@ -796,7 +897,17 @@
+ FillColorHint = 184 180 163
+ ImageCount = 2
+ ImageFile = Normal\ResizeGrip2.bmp
++ImageFile1 = Normal\ResizeGrip2.bmp
++ImageFile2 = Normal\ResizeGrip120.bmp
++ImageFile3 = Normal\ResizeGrip144.bmp
++ImageFile4 = Normal\ResizeGrip192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ SizingType = trueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ TransparentColor = 255 0 0
+ VAlign = Bottom
+@@ -1161,9 +1272,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ToolbarButtonsSplitDropdown.bmp
++ImageFile1 = Normal\ToolbarButtonsSplitDropdownGlyph.bmp
++ImageFile2 = Normal\ToolbarButtonsSplitDropdownGlyph120.bmp
++ImageFile3 = Normal\ToolbarButtonsSplitDropdownGlyph144.bmp
++ImageFile4 = Normal\ToolbarButtonsSplitDropdownGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 2, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ TransparentColor = 255 0 255
+ 
+@@ -1173,6 +1294,7 @@
+ ImageFile = Normal\BalloonClose.bmp
+ Imagelayout = vertical
+ Sizingtype = truesize
++TrueSizeScalingType = Dpi
+ 
+ [TrackBar]
+ BgType = borderFill
+@@ -1323,8 +1445,18 @@
+ Bgtype = imagefile
+ Imagecount = 2
+ ImageFile = Normal\treeExpandCollapse.bmp
++ImageFile1 = Normal\treeExpandCollapse.bmp
++ImageFile2 = Normal\treeExpandCollapse120.bmp
++ImageFile3 = Normal\treeExpandCollapse144.bmp
++ImageFile4 = Normal\treeExpandCollapse192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ ImageLayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [Window]
+ BgType = ImageFile
+@@ -1390,6 +1522,7 @@
+ OffsetType = TopRight
+ SizingMargins = 2, 2, 2, 2
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ UniformSizing = true
+ TRANSPARENT = true
+ TRANSPARENTCOLOR = 255 0 255
+@@ -1451,6 +1584,7 @@
+ OffsetType = TopRight
+ SizingMargins = 5, 5, 5, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ UniformSizing = true
+ 
+ [Window.MaxButton]
+@@ -1476,6 +1610,7 @@
+ OffsetType = TopRight
+ SizingMargins = 5, 5, 5, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ UniformSizing = true
+ 
+ [Window.MaxCaption]
+@@ -1505,6 +1640,7 @@
+ OffsetType = TopRight
+ SizingMargins = 4, 4, 4, 4
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [Window.MDIMinButton]
+ BgType = ImageFile
+@@ -1521,6 +1657,7 @@
+ OffsetType = TopRight
+ SizingMargins = 4, 4, 4, 4
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [Window.MDIRestoreButton]
+ BgType = ImageFile
+@@ -1537,6 +1674,7 @@
+ OffsetType = TopRight
+ SizingMargins = 4, 4, 4, 4
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [Window.MinButton]
+ BgType = ImageFile
+@@ -1561,6 +1699,7 @@
+ OffsetType = TopRight
+ SizingMargins = 5, 5, 5, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ UniformSizing = true
+ 
+ [Window.MinCaption]
+@@ -1596,6 +1735,7 @@
+ OffsetType = TopRight
+ SizingMargins = 5, 5, 5, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ UniformSizing = true
+ 
+ [Window.SmallCaption]
+@@ -1633,6 +1773,7 @@
+ OffsetType = TopRight
+ SizingMargins = 5, 5, 5, 5
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ 
+ [Window.SmallFrameBottom]
+ Borderonly = False
+@@ -1687,9 +1828,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ExplorerBarToolbarButtons.bmp
++ImageFile1 = Normal\Chevron.bmp
++ImageFile2 = Normal\Chevron120.bmp
++ImageFile3 = Normal\Chevron144.bmp
++ImageFile4 = Normal\Chevron192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ VAlign = Top
+ 
+@@ -1702,9 +1853,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ExplorerBarToolbarButtons.bmp
++ImageFile1 = Normal\Chevron.bmp
++ImageFile2 = Normal\Chevron120.bmp
++ImageFile3 = Normal\Chevron144.bmp
++ImageFile4 = Normal\Chevron192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 4, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ VAlign = Top
+ 
+@@ -1794,9 +1955,19 @@
+ GlyphType = ImageGlyph
+ ImageCount = 6
+ ImageFile = Normal\ExplorerBarToolbarButtonsSplitDropdown.bmp
++ImageFile1 = Normal\ToolbarButtonsSplitDropdownGlyph.bmp
++ImageFile2 = Normal\ToolbarButtonsSplitDropdownGlyph120.bmp
++ImageFile3 = Normal\ToolbarButtonsSplitDropdownGlyph144.bmp
++ImageFile4 = Normal\ToolbarButtonsSplitDropdownGlyph192.bmp
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ Imagelayout = vertical
+ SizingMargins = 2, 4, 4, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = true
+ TransparentColor = 255 0 255
+ 
+@@ -1833,9 +2004,19 @@
+ Font = Arial, 1
+ ImageCount = 3
+ ImageFile = Normal\StartButton.bmp
++ImageFile1 = Normal\StartButton.bmp
++ImageFile2 = Normal\StartButton120.bmp
++ImageFile3 = Normal\StartButton144.bmp
++ImageFile4 = Normal\StartButton192.bmp
+ ImageLayout = Vertical
++ImageSelectType = Dpi
++MinDpi1 = 96
++MinDpi2 = 120
++MinDpi3 = 144
++MinDpi4 = 192
+ SizingMargins = 1, 1, 1, 1
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ TextColor = 255 255 255
+ Textshadowcolor = 69 76 16
+ TEXTSHADOWOFFSET = 2, 2
+@@ -1908,6 +2089,7 @@
+ ImageLayout = Vertical
+ SizingMargins = 4, 4, 6, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ 
+ [TaskBand::ScrollBar.GripperHorz]
+ BgType = ImageFile
+@@ -1916,6 +2098,7 @@
+ ImageFile = Normal\TaskBandScrollThumbGripperHorizontal.BMP
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [TaskBand::ScrollBar.GripperVert]
+@@ -1925,6 +2108,7 @@
+ ImageFile = Normal\TaskBandScrollThumbGripperVertical.BMP
+ ImageLayout = Vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [TaskBand::ScrollBar.LowerTrackHorz]
+@@ -2107,6 +2291,7 @@
+ ImageLayout = vertical
+ SizingMargins = 8, 3, 21, 5
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = True
+ VAlign = Top
+ 
+@@ -2122,6 +2307,7 @@
+ ImageLayout = vertical
+ SizingMargins = 15, 5, 6, 4
+ SizingType = Stretch
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [TaskBar::Rebar.Gripper]
+@@ -2226,6 +2412,7 @@
+ ImageFile = Normal\TrayChevronHorizontal.bmp
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = false
+ TransparentColor = 255 0 255
+ 
+@@ -2247,6 +2434,7 @@
+ ImageFile = Normal\TrayChevronHorizontalOpen.bmp
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = false
+ TransparentColor = 255 0 255
+ 
+@@ -2257,6 +2445,7 @@
+ ImageFile = Normal\TrayChevronHorizontal.bmp
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [TrayNotifyVert::TrayNotify.Background]
+@@ -2277,6 +2466,7 @@
+ ImageFile = Normal\TrayChevronHorizontalOpen.bmp
+ Imagelayout = vertical
+ SizingType = TrueSize
++TrueSizeScalingType = Dpi
+ Transparent = True
+ 
+ [ShowDesktop::Button]

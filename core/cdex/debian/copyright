@@ -21,6 +21,17 @@ License: GPL-2.0+
  assets that ship under a different licence than the surrounding
  ReactOS tree.
 
+Files: artwork/*
+Copyright: 1996-2026 the ReactOS Project and contributors
+           2026 the CusDeb OS Project
+License: GPL-2.0+
+ High-DPI bitmaps rendered by tools/render_artwork.py,
+ tools/render_theme_glyphs.py and tools/render_paint_icons.py. They are
+ derived from ReactOS artwork: the start button and Start menu banner
+ from src/media/graphics/start_menu_banner.svg, the theme glyphs from the
+ Mizu theme bitmaps, and the Paint tool icons are redrawn after
+ src/base/applications/mspaint/img/iconbar.bmp. No other artwork is used.
+
 Files: fonts/ubuntu-font-family-0.83/*
 Copyright: 2010-2011 Canonical Ltd
 License: Ubuntu-Font-Licence-1.0

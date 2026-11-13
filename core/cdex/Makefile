@@ -150,7 +150,7 @@ CDEX_ARTIFACTS := \
 	mizu.msstyles
 
 .PHONY: all build clean image shell unpatch ensure-image
-.PHONY: build-in-container install-in-container cdex-build
+.PHONY: build-in-container install-in-container cdex-build regen-artwork
 
 # Public developer interface
 all: build
@@ -205,6 +205,7 @@ cdex-build:
 		-DENABLE_ROSTESTS=0 \
 		-DCMAKE_TOOLCHAIN_FILE:FILEPATH="$(UPSTREAM_SRC_DIR)/toolchain-gcc.cmake" \
 		-DARCH:STRING=i386 \
+		-DCDEX_ARTWORK_DIR:PATH="$(REPO_DIR)/artwork" \
 		-DCDEX_DPI_STEPS:STRING="96 $(DPI_STEPS)" \
 		-DCMAKE_CXX_STANDARD_LIBRARIES:STRING="-lgcc -lgcc_eh"
 	@echo "=== Building CDEX components ==="
@@ -235,6 +236,13 @@ $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp: wallpapers/cusdeb-race.png
 	mkdir -p "$(WALLPAPER_BUILD_DIR)"
 	convert wallpapers/cusdeb-race.png -alpha off -type TrueColor "BMP3:$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp"
 	@touch "$@"
+
+# Rewrite the tracked bitmaps in artwork/. Needs librsvg2-bin,
+# fonts-urw-base35 and python3-pil, which the build image does not have.
+regen-artwork:
+	python3 tools/render_artwork.py $(DPI_STEPS)
+	python3 tools/render_theme_glyphs.py $(DPI_STEPS)
+	python3 tools/render_paint_icons.py $(DPI_STEPS)
 
 # Internal container install interface. Called by debian/rules after the build phase.
 install-in-container:

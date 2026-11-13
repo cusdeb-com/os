@@ -1,0 +1,142 @@
+Author: CusDeb OS Team
+Description: explorer: Use high-DPI Start menu banners and fit the start button to its image.
+ The Start menu banner bitmap only exists for 96 DPI. Add banners for
+ higher DPIs, rendered from media/graphics/start_menu_banner.svg by
+ tools/render_artwork.py into CDEX_ARTWORK_DIR, which the CDEX Makefile
+ sets. Their resource identifiers are IDB_STARTMENU_DPI(dpi); the banner
+ of the highest DPI up to the screen DPI is loaded and scaled to the
+ screen DPI if it differs, by pixel replication for a whole factor and
+ with filtering otherwise. The Start menu takes its banner width from the
+ bitmap, so the menu layout follows.
+ .
+ The start button is kept at least as wide as its theme image, which
+ grows with the DPI, or the image is squeezed into it.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/base/shell/explorer/CMakeLists.txt
++++ b/src/base/shell/explorer/CMakeLists.txt
+@@ -29,7 +29,9 @@
+     util.cpp
+     precomp.h)
+ 
+-file(GLOB explorer_rc_deps res/*.*)
++# The high-DPI Start menu banners come from CDEX_ARTWORK_DIR.
++include_directories(${CDEX_ARTWORK_DIR})
++file(GLOB explorer_rc_deps res/*.* ${CDEX_ARTWORK_DIR}/startmenu-banner-*.bmp)
+ add_rc_deps(explorer.rc ${explorer_rc_deps})
+ add_executable(explorer ${SOURCE} explorer.rc)
+ target_link_libraries(explorer uuid wine cpprt atl_classes)
+--- a/src/base/shell/explorer/explorer.rc
++++ b/src/base/shell/explorer/explorer.rc
+@@ -52,6 +52,9 @@
+ IDB_SYSTRAYPROP_SHOW_SECONDS_NODESK BITMAP "res/bmp/154.bmp"
+ IDB_SYSTRAYPROP_HIDE_SECONDS_NODESK BITMAP "res/bmp/155.bmp"
+ IDB_STARTMENU                       BITMAP "res/bmp/158.bmp"
++IDB_STARTMENU_DPI(120)              BITMAP "startmenu-banner-120.bmp"
++IDB_STARTMENU_DPI(144)              BITMAP "startmenu-banner-144.bmp"
++IDB_STARTMENU_DPI(192)              BITMAP "startmenu-banner-192.bmp"
+ IDB_STARTPREVIEW                    BITMAP "res/bmp/170.bmp"
+ IDB_STARTPREVIEW_CLASSIC            BITMAP "res/bmp/171.bmp"
+ IDB_SYSTRAYPROP_HIDE_CLOCK_NODESK   BITMAP "res/bmp/180.bmp"
+--- a/src/base/shell/explorer/precomp.h
++++ b/src/base/shell/explorer/precomp.h
+@@ -48,6 +48,7 @@
+ #include <ui/rosctrls.h>
+ #include <ui/rosdlgs.h>
+ #include <shellutils.h>
++#include <dpiscale.h>
+ 
+ #include "tmschema.h"
+ #include "resource.h"
+--- a/src/base/shell/explorer/resource.h
++++ b/src/base/shell/explorer/resource.h
+@@ -42,6 +42,8 @@
+ #define IDB_SYSTRAYPROP_SHOW_SECONDS_NODESK 154
+ #define IDB_SYSTRAYPROP_HIDE_SECONDS_NODESK 155
+ #define IDB_STARTMENU                       158
++/* Start menu banners drawn for a higher DPI */
++#define IDB_STARTMENU_DPI(dpi)              (1000 + (dpi))
+ #define IDB_STARTPREVIEW                    170
+ #define IDB_STARTPREVIEW_CLASSIC            171
+ #define IDB_SYSTRAYPROP_HIDE_CLOCK_NODESK   180
+--- a/src/base/shell/explorer/traywnd.cpp
++++ b/src/base/shell/explorer/traywnd.cpp
+@@ -49,6 +49,46 @@
+     CloseHandle(hFile);
+ }
+ 
++/* Load the Start menu banner for the screen DPI. A DPI without its own
++ * artwork scales that of the nearest smaller one, by pixel replication when
++ * the factor is a whole number and with filtering otherwise. */
++static HBITMAP LoadStartMenuBanner(VOID)
++{
++    HDC hdcScreen = GetDC(NULL);
++    int dpi = GetScreenDpi(), base = FindDpiBitmap(hExplorerInstance, IDB_STARTMENU_DPI(0));
++    HBITMAP hbm;
++    BITMAP bm;
++
++    hbm = LoadBitmapW(hExplorerInstance, MAKEINTRESOURCEW(base > USER_DEFAULT_SCREEN_DPI
++                                                          ? IDB_STARTMENU_DPI(base) : IDB_STARTMENU));
++    if (hbm && dpi != base && GetObjectW(hbm, sizeof(bm), &bm))
++    {
++        int cx = MulDiv(bm.bmWidth, dpi, base);
++        int cy = MulDiv(bm.bmHeight, dpi, base);
++        HBITMAP hbmScaled = CreateCompatibleBitmap(hdcScreen, cx, cy);
++        HDC hdcSrc = CreateCompatibleDC(hdcScreen);
++        HDC hdcDst = CreateCompatibleDC(hdcScreen);
++
++        if (hbmScaled)
++        {
++            HGDIOBJ hbmOldSrc = SelectObject(hdcSrc, hbm);
++            HGDIOBJ hbmOldDst = SelectObject(hdcDst, hbmScaled);
++
++            SetStretchBltMode(hdcDst, dpi % base ? HALFTONE : COLORONCOLOR);
++            SetBrushOrgEx(hdcDst, 0, 0, NULL);
++            StretchBlt(hdcDst, 0, 0, cx, cy, hdcSrc, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++            SelectObject(hdcSrc, hbmOldSrc);
++            SelectObject(hdcDst, hbmOldDst);
++            DeleteObject(hbm);
++            hbm = hbmScaled;
++        }
++        DeleteDC(hdcSrc);
++        DeleteDC(hdcDst);
++    }
++    ReleaseDC(NULL, hdcScreen);
++    return hbm;
++}
++
+ #define AUTOHIDE_SPEED_SHOW 10
+ #define AUTOHIDE_SPEED_HIDE 1
+ 
+@@ -246,6 +286,13 @@
+         /* CusDeb: widen the icon-only start button to make it easier to hit. */
+         Size.cx *= 2;
+ 
++        /* The themed start image scales with the DPI; keep the button at least
++         * as wide, or the image is squeezed into it. */
++        SIZE partSize;
++        HTHEME hTheme = GetWindowTheme(m_hWnd);
++        if (hTheme && SUCCEEDED(GetThemePartSize(hTheme, NULL, BP_PUSHBUTTON, PBS_NORMAL, NULL, TS_DRAW, &partSize)))
++            Size.cx = max(Size.cx, partSize.cx);
++
+         Size.cy = max(Size.cy, GetSystemMetrics(SM_CYCAPTION));
+ 
+         /* Save the size of the start button */
+@@ -2351,7 +2398,7 @@
+         RegLoadSettings();
+ 
+         /* Create and initialize the start menu */
+-        HBITMAP hbmBanner = LoadBitmapW(hExplorerInstance, MAKEINTRESOURCEW(IDB_STARTMENU));
++        HBITMAP hbmBanner = LoadStartMenuBanner();
+         m_StartMenuPopup = CreateStartMenu(this, &m_StartMenuBand, hbmBanner,
+                                            g_TaskbarSettings.sr.SmSmallIcons);
+ 
+@@ -2482,7 +2529,7 @@
+         {
+             HideStartMenu();
+ 
+-            HBITMAP hbmBanner = LoadBitmapW(hExplorerInstance, MAKEINTRESOURCEW(IDB_STARTMENU));
++            HBITMAP hbmBanner = LoadStartMenuBanner();
+ #if 1 // FIXME: Please re-use the start menu
+             /* Re-create the start menu */
+             m_StartMenuBand.Release();
