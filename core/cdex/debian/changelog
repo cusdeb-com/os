@@ -4,6 +4,10 @@ cdex (0.0.17-1cd) trixie; urgency=medium
     artwork in one file. The Makefile installs it for the session and
     passes the steps to the CDEX build (CDEX_DPI_STEPS) and to the
     generators.
+  * tools/render_openbox_theme.py, Makefile: render Openbox theme
+    variants Win10-<dpi> for the DPI steps at build time, with title bar
+    buttons, border and menu metrics drawn for each DPI, and install
+    them.
   * tools/render_artwork.py, tools/render_theme_glyphs.py,
     tools/render_paint_icons.py, artwork/: add the generators of the
     high-DPI start button, Start menu banner, Mizu glyph and Paint tool

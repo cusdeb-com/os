@@ -10,6 +10,7 @@ BUILD_DIR := $(BUILD_CACHE_DIR)/cdex
 OUT_DIR := $(BUILD_DIR)
 FONT_BUILD_DIR := $(BUILD_CACHE_DIR)/fonts
 WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
+OPENBOX_THEME_BUILD_DIR := $(BUILD_CACHE_DIR)/themes
 
 # Generated build inputs
 CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
@@ -195,7 +196,8 @@ unpatch: ensure-image
 		sh -c 'quilt --quiltrc .quiltrc pop -a || [ $$? -eq 2 ]'
 
 # Internal container build interface.
-build-in-container: cdex-build $(CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+build-in-container: cdex-build $(CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp \
+		$(OPENBOX_THEME_BUILD_DIR)/.themes-stamp
 
 cdex-build:
 	@echo "=== Configuring the CDEX build ==="
@@ -235,6 +237,13 @@ $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp: wallpapers/cusdeb-race.png
 	@echo "=== Converting the CusDeb wallpaper to BMP ==="
 	mkdir -p "$(WALLPAPER_BUILD_DIR)"
 	convert wallpapers/cusdeb-race.png -alpha off -type TrueColor "BMP3:$(WALLPAPER_BUILD_DIR)/cusdeb-race.bmp"
+	@touch "$@"
+
+$(OPENBOX_THEME_BUILD_DIR)/.themes-stamp: tools/render_openbox_theme.py dpi-steps \
+		$(wildcard runtime/themes/Win10/openbox-3/*)
+	@echo "=== Rendering the high-DPI Openbox themes ==="
+	rm -rf "$(OPENBOX_THEME_BUILD_DIR)"
+	python3 tools/render_openbox_theme.py "$(OPENBOX_THEME_BUILD_DIR)" $(DPI_STEPS)
 	@touch "$@"
 
 # Rewrite the tracked bitmaps in artwork/. Needs librsvg2-bin,
@@ -311,10 +320,10 @@ install-in-container:
 	install -D -m 644 runtime/config/openbox/rc.xml "$(DESTDIR)/etc/xdg/cusdeb/openbox/rc.xml"
 	install -D -m 644 runtime/config/gtk/gtkrc-2.0 "$(DESTDIR)/etc/xdg/cusdeb/gtk-2.0/gtkrc"
 	install -D -m 644 runtime/config/gtk/gtk-3.0/settings.ini "$(DESTDIR)/etc/xdg/cusdeb/gtk-3.0/settings.ini"
-	@echo "=== Installing Openbox Win10 theme ==="
+	@echo "=== Installing Openbox Win10 themes ==="
 	install -d "$(DESTDIR)/usr/share/themes"
-	cp -a runtime/themes/Win10 "$(DESTDIR)/usr/share/themes/"
-	chmod -R a+rX "$(DESTDIR)/usr/share/themes/Win10"
+	cp -a runtime/themes/Win10 "$(OPENBOX_THEME_BUILD_DIR)"/Win10-* "$(DESTDIR)/usr/share/themes/"
+	chmod -R a+rX "$(DESTDIR)/usr/share/themes"
 
 	@echo "=== Installing GASP-patched Ubuntu fonts ==="
 	install -d "$(FONT_DIR)"
