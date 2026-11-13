@@ -75,6 +75,12 @@ cdex (0.0.17-1cd) trixie; urgency=medium
   * debian/patches/0032-shell32-about-banner-dpi.patch: enlarge the
     About dialog banner by a whole factor and continue it to the
     dialog's right edge.
+  * debian/patches/0033-mspaint-dpi.patch: scale the Paint tool box,
+    palette, tool settings and status bar to the DPI and use the tool
+    icons drawn for the DPI.
+  * debian/patches/0034-games-dpi.patch: enlarge the WineMine and Spider
+    graphics by a whole factor and, above 96 DPI, keep the WineMine
+    window as wide as its menu bar.
   * debian/control: depend on wine (>= 11.19.0-2cd), which has the DPI
     support the session and the patches use.
   * debian/cdex-base.install: install dpi-steps.

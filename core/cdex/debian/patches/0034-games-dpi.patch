@@ -1,0 +1,276 @@
+Author: CusDeb OS Team
+Description: Enlarge the WineMine and Spider graphics on high-DPI screens.
+ Both games draw fixed-size bitmaps. Enlarge them by the whole factor
+ nearest to DPI / 96 with pixel replication: WineMine scales its
+ bitmaps, cell sizes and margins, cardlib scales the card bitmaps and
+ Spider its gaps. Above 96 DPI WineMine also keeps its window at least
+ as wide as the menu bar, which wraps onto a second line and covers the
+ board when the menu font is larger than the board is wide.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/base/applications/games/spider/spider.cpp
++++ b/src/base/applications/games/spider/spider.cpp
+@@ -11,6 +11,7 @@
+ #include <commctrl.h>
+ #include <shellapi.h>
+ #include <tchar.h>
++#include <dpiscale.h>
+ 
+ TCHAR szHelpPath[MAX_PATH];
+ 
+@@ -194,11 +195,14 @@
+ 
+             Rectangle(hdc, rc.left+1, rc.top+1, rc.right, rc.bottom);
+ 
++            /* The control is sized in dialog units, which follow the DPI */
++            if (GetScreenDpi() > USER_DEFAULT_SCREEN_DPI)
++                SetStretchBltMode(hdc, COLORONCOLOR);
+             StretchBlt(hdc,
+                        2,
+                        2,
+-                       CARDBACK_OPTIONS_WIDTH,
+-                       CARDBACK_OPTIONS_HEIGHT,
++                       ScaleToDpi(CARDBACK_OPTIONS_WIDTH),
++                       ScaleToDpi(CARDBACK_OPTIONS_HEIGHT),
+                        __hdcCardBitmaps,
+                        pCardBack->hdcNum * __cardwidth,
+                        0,
+--- a/src/base/applications/games/spider/spider.h
++++ b/src/base/applications/games/spider/spider.h
+@@ -15,8 +15,8 @@
+ #define CARDBACK_OPTIONS_WIDTH   72
+ #define CARDBACK_OPTIONS_HEIGHT  112
+ 
+-#define X_BORDER                  5
+-#define Y_BORDER                  5
++#define X_BORDER                  (5 * __cardscale)
++#define Y_BORDER                  (5 * __cardscale)
+ 
+ #define NUM_STACKS         10
+ 
+--- a/src/base/applications/games/spider/spigame.cpp
++++ b/src/base/applications/games/spider/spigame.cpp
+@@ -283,7 +283,7 @@
+     /* Compute the value for yRowStackCardOffset based on the height of the card, so the card number and suite isn't hidden on larger cards except Ace */
+     yRowStackCardOffset = (int)(__cardheight / 6.4);
+ 
+-    pDeck = SpiderWnd.CreateRegion(0, true, 0, 0, -15, 0);
++    pDeck = SpiderWnd.CreateRegion(0, true, 0, 0, -15 * __cardscale, 0);
+     pDeck->SetFaceDirection(CS_FACE_DOWN, 0);
+     pDeck->SetEmptyImage(CS_EI_CIRC);
+     pDeck->SetPlacement(CS_XJUST_RIGHT, CS_YJUST_BOTTOM, - X_BORDER, - Y_BORDER);
+--- a/src/base/applications/games/winmine/main.c
++++ b/src/base/applications/games/winmine/main.c
+@@ -28,6 +28,7 @@
+ #include <shellapi.h>
+ #ifdef __REACTOS__
+ #include <mmsystem.h>
++#include <dpiscale.h>
+ #endif
+ 
+ #include <wine/debug.h>
+@@ -35,6 +36,9 @@
+ WINE_DEFAULT_DEBUG_CHANNEL(winemine);
+ 
+ static const DWORD wnd_style = WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX;
++
++int board_scale = 1;
++
+ static const WCHAR registry_key[] = {'S','o','f','t','w','a','r','e','\\',
+                                      'M','i','c','r','o','s','o','f','t','\\',
+                                      'W','i','n','M','i','n','e',0};
+@@ -141,9 +145,11 @@
+ {
+     HMENU hMenu;
+ 
+-    p_board->hMinesBMP = LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_MINES));
+-    p_board->hFacesBMP = LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_FACES));
+-    p_board->hLedsBMP = LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_LEDS));
++    board_scale = GetDpiImageFactor();
++
++    p_board->hMinesBMP = EnlargeBitmap( LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_MINES)), board_scale );
++    p_board->hFacesBMP = EnlargeBitmap( LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_FACES)), board_scale );
++    p_board->hLedsBMP = EnlargeBitmap( LoadBitmapW( p_board->hInst, MAKEINTRESOURCEW(IDI_LEDS)), board_scale );
+ 
+     LoadBoard( p_board );
+ 
+@@ -273,6 +279,20 @@
+     ShiftBetween(&rect->top, &rect->bottom, mi.rcWork.top, mi.rcWork.bottom);
+ }
+ 
++/* Width of the menu bar with all its items on one line. */
++static int MenuBarWidth( HWND hWnd )
++{
++    HMENU hMenu = GetMenu( hWnd );
++    int width = 0;
++    RECT rect;
++    int i;
++
++    for( i = 0; i < GetMenuItemCount( hMenu ); i++ )
++        if( GetMenuItemRect( hWnd, hMenu, i, &rect ) )
++            width += rect.right - rect.left;
++    return width;
++}
++
+ static void CreateBoard( BOARD *p_board )
+ {
+     int left, top, bottom, right;
+@@ -296,12 +316,16 @@
+       }
+ 
+     p_board->width = p_board->cols * MINE_WIDTH + BOARD_WMARGIN * 2;
++    /* Above 96 DPI the menu bar can be wider than the board. It must fit on
++       one line; a wider window centers the board. */
++    if( GetScreenDpi() > USER_DEFAULT_SCREEN_DPI )
++        p_board->width = max( p_board->width, MenuBarWidth( p_board->hWnd ) );
+ 
+     p_board->height = p_board->rows * MINE_HEIGHT + LED_HEIGHT
+         + BOARD_HMARGIN * 3;
+ 
+     /* setting the mines rectangle boundary */
+-    left = BOARD_WMARGIN;
++    left = (p_board->width - p_board->cols * MINE_WIDTH) / 2;
+     top = BOARD_HMARGIN * 2 + LED_HEIGHT;
+     right = left + p_board->cols * MINE_WIDTH;
+     bottom = top + p_board->rows * MINE_HEIGHT;
+@@ -315,16 +339,16 @@
+     SetRect( &p_board->face_rect, left, top, right, bottom );
+ 
+     /* setting the timer rectangle boundary */
+-    left = BOARD_WMARGIN;
++    left = p_board->mines_rect.left;
+     top = BOARD_HMARGIN;
+     right = left + LED_WIDTH * 3;
+     bottom = top + LED_HEIGHT;
+     SetRect( &p_board->timer_rect, left, top, right, bottom );
+ 
+     /* setting the counter rectangle boundary */
+-    left =  p_board->width - BOARD_WMARGIN - LED_WIDTH * 3;
++    left = p_board->mines_rect.right - LED_WIDTH * 3;
+     top = BOARD_HMARGIN;
+-    right = p_board->width - BOARD_WMARGIN;
++    right = p_board->mines_rect.right;
+     bottom = top + LED_HEIGHT;
+     SetRect( &p_board->counter_rect, left, top, right, bottom );
+ 
+--- a/src/base/applications/games/winmine/main.h
++++ b/src/base/applications/games/winmine/main.h
+@@ -42,17 +42,20 @@
+ #define MAX_COLS        30
+ #define MAX_ROWS        24
+ 
++/* The graphics are enlarged by this whole factor on high-DPI screens. */
++extern int board_scale;
++
+ #define BOTTOM_MARGIN 20
+-#define BOARD_WMARGIN 5
+-#define BOARD_HMARGIN 5
++#define BOARD_WMARGIN (5 * board_scale)
++#define BOARD_HMARGIN (5 * board_scale)
+ 
+ /* mine defines */
+-#define MINE_WIDTH       16
+-#define MINE_HEIGHT      16
+-#define LED_WIDTH        12
+-#define LED_HEIGHT       23
+-#define FACE_WIDTH       24
+-#define FACE_HEIGHT      24
++#define MINE_WIDTH       (16 * board_scale)
++#define MINE_HEIGHT      (16 * board_scale)
++#define LED_WIDTH        (12 * board_scale)
++#define LED_HEIGHT       (23 * board_scale)
++#define FACE_WIDTH       (24 * board_scale)
++#define FACE_HEIGHT      (24 * board_scale)
+ 
+ #define MAX_PLAYER_NAME_SIZE 31
+ 
+--- a/src/sdk/lib/3rdparty/cardlib/cardbitmaps.cpp
++++ b/src/sdk/lib/3rdparty/cardlib/cardbitmaps.cpp
+@@ -6,6 +6,7 @@
+ //
+ 
+ #include "cardlib.h"
++#include <dpiscale.h>
+ 
+ #ifndef __REACTOS__
+ #pragma comment( lib, "..\\CardLib\\cards16.lib" )
+@@ -22,11 +23,13 @@
+ {
+     HBITMAP   hBitmap;
+     HDC          hdcCard = NULL;
+-    HANDLE      hOld;
++    HANDLE      hOld, hbmDefault = NULL;
+     int        i, xpos;
+     int        width, height;
+     BITMAP bmp;
+ 
++    __cardscale = GetDpiImageFactor();
++
+     for(i = 0; i < NUMCARDBITMAPS; i++)
+     {
+         //convert into the range used by the cdt_xxx functions
+@@ -46,7 +49,7 @@
+             HDC hdc = GetDC(0);
+             __hdcCardBitmaps = CreateCompatibleDC(hdc);
+             __hbmCardBitmaps = CreateCompatibleBitmap(hdc, width * NUMCARDBITMAPS, height);
+-            SelectObject(__hdcCardBitmaps, __hbmCardBitmaps);
++            hbmDefault = SelectObject(__hdcCardBitmaps, __hbmCardBitmaps);
+ 
+             hdcCard = CreateCompatibleDC(0);
+ 
+@@ -69,11 +72,35 @@
+         LineTo(__hdcCardBitmaps, xpos+0, 2);
+         LineTo(__hdcCardBitmaps, xpos+2, 0);
+ 
++        //The drawing code leaves out three device pixels in each corner. On an
++        //enlarged card the rest of these three pixels shows, so make them
++        //part of the border.
++        for(int corner = 0; __cardscale > 1 && corner < 4; corner++)
++        {
++            int cx = (corner & 1) ? xpos + width - 1 : xpos, dx = (corner & 1) ? -1 : 1;
++            int cy = (corner & 2) ? height - 1 : 0,          dy = (corner & 2) ? -1 : 1;
++
++            SetPixel(__hdcCardBitmaps, cx,      cy,      RGB(0, 0, 0));
++            SetPixel(__hdcCardBitmaps, cx + dx, cy,      RGB(0, 0, 0));
++            SetPixel(__hdcCardBitmaps, cx,      cy + dy, RGB(0, 0, 0));
++        }
++
+         DeleteObject(hBitmap);
+     }
+ 
+     DeleteDC(hdcCard);
+ 
++    //On high-DPI screens the cards are enlarged by a whole factor.
++    if(__cardscale > 1)
++    {
++        SelectObject(__hdcCardBitmaps, hbmDefault);
++        __hbmCardBitmaps = EnlargeBitmap(__hbmCardBitmaps, __cardscale);
++        SelectObject(__hdcCardBitmaps, __hbmCardBitmaps);
++        GetObject(__hbmCardBitmaps, sizeof(bmp), &bmp);
++        width  = bmp.bmWidth / NUMCARDBITMAPS;
++        height = bmp.bmHeight;
++    }
++
+     *pwidth = width;
+     *pheight = height;
+ 
+--- a/src/sdk/lib/3rdparty/cardlib/cardlib.cpp
++++ b/src/sdk/lib/3rdparty/cardlib/cardlib.cpp
+@@ -24,6 +24,7 @@
+ 
+ int        __cardwidth;
+ int        __cardheight;
++int        __cardscale = 1;    //whole factor the card bitmaps are enlarged by
+ 
+ HPALETTE __hPalette;
+ 
+--- a/src/sdk/lib/3rdparty/cardlib/globals.h
++++ b/src/sdk/lib/3rdparty/cardlib/globals.h
+@@ -3,6 +3,7 @@
+ 
+ extern int __cardwidth;
+ extern int __cardheight;
++extern int __cardscale;
+ 
+ extern HDC     __hdcCardBitmaps;
+ extern HBITMAP __hbmCardBitmaps;

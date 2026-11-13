@@ -1,0 +1,284 @@
+Author: CusDeb OS Team
+Description: mspaint: Scale the tool box, palette and status bar to the DPI.
+ The tool buttons, colour boxes, tool settings box, status bar parts,
+ minimum window size and resize handles had fixed pixel sizes. Scale
+ them to the screen DPI. The tool box gets icons drawn for higher DPIs
+ as vector shapes by tools/render_paint_icons.py into CDEX_ARTWORK_DIR;
+ their resource identifiers are IDB_TOOLBARICONS_DPI(dpi) and the strip
+ of the highest DPI up to the screen DPI is used. The 16 pixel font
+ toolbar icons are enlarged by a whole factor with pixel replication.
+Last-Modified: Thu, 12 Nov 2026 19:29:05 +0300
+
+--- a/src/base/applications/mspaint/CMakeLists.txt
++++ b/src/base/applications/mspaint/CMakeLists.txt
+@@ -27,7 +27,9 @@
+     toolsmodel.cpp
+     precomp.h)
+ 
+-file(GLOB mspaint_rc_deps img/*.*)
++# The high-DPI tool icons come from CDEX_ARTWORK_DIR.
++include_directories(${CDEX_ARTWORK_DIR})
++file(GLOB mspaint_rc_deps img/*.* ${CDEX_ARTWORK_DIR}/mspaint-*.bmp)
+ add_rc_deps(rsrc.rc ${mspaint_rc_deps})
+ add_executable(mspaint ${SOURCE} rsrc.rc)
+ set_module_type(mspaint win32gui UNICODE)
+--- a/src/base/applications/mspaint/dialogs.cpp
++++ b/src/base/applications/mspaint/dialogs.cpp
+@@ -372,18 +372,21 @@
+ void CFontsDialog::InitToolbar()
+ {
+     HWND hwndToolbar = GetDlgItem(IDD_FONTSTOOLBAR);
++    INT cxyIcon = 16 * GetDpiImageFactor();
+     ::SendMessageW(hwndToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+-    ::SendMessageW(hwndToolbar, TB_SETBITMAPSIZE, 0, MAKELPARAM(16, 16));
+-    ::SendMessageW(hwndToolbar, TB_SETBUTTONWIDTH, 0, MAKELPARAM(20, 20));
++    ::SendMessageW(hwndToolbar, TB_SETBITMAPSIZE, 0, MAKELPARAM(cxyIcon, cxyIcon));
++    ::SendMessageW(hwndToolbar, TB_SETBUTTONWIDTH, 0, MAKELPARAM(cxyIcon + 4, cxyIcon + 4));
+     
+     TBADDBITMAP AddBitmap;
+     AddBitmap.hInst = g_hinstExe;
+     AddBitmap.nID = IDB_FONTSTOOLBAR;
+     ::SendMessageW(hwndToolbar, TB_ADDBITMAP, 4, (LPARAM)&AddBitmap);
+ 
+-    HIMAGELIST himl = ImageList_LoadImage(g_hinstExe, MAKEINTRESOURCEW(IDB_FONTSTOOLBAR),
+-                                          16, 8, RGB(255, 0, 255), IMAGE_BITMAP,
+-                                          LR_CREATEDIBSECTION);
++    HIMAGELIST himl = cxyIcon == 16
++        ? ImageList_LoadImage(g_hinstExe, MAKEINTRESOURCEW(IDB_FONTSTOOLBAR),
++                              16, 8, RGB(255, 0, 255), IMAGE_BITMAP,
++                              LR_CREATEDIBSECTION)
++        : LoadToolbarIcons(IDB_FONTSTOOLBAR, 4);
+     ::SendMessageW(hwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)himl);
+ 
+     TBBUTTON buttons[] =
+--- a/src/base/applications/mspaint/main.cpp
++++ b/src/base/applications/mspaint/main.cpp
+@@ -31,6 +31,19 @@
+ 
+ /* FUNCTIONS ********************************************************/
+ 
++// Load a strip of 16 pixel toolbar icons with magenta as the transparent
++// color. Above 96 DPI the icons are enlarged by a whole factor.
++HIMAGELIST LoadToolbarIcons(UINT nID, INT cIcons)
++{
++    INT factor = GetDpiImageFactor();
++    HIMAGELIST hImageList = ImageList_Create(16 * factor, 16 * factor, ILC_COLOR24 | ILC_MASK, cIcons, 0);
++    HBITMAP hbmIcons = EnlargeBitmap(::LoadBitmapW(g_hinstExe, MAKEINTRESOURCEW(nID)), factor);
++
++    ImageList_AddMasked(hImageList, hbmIcons, RGB(255, 0, 255));
++    ::DeleteObject(hbmIcons);
++    return hImageList;
++}
++
+ void ShowOutOfMemory(void)
+ {
+     WCHAR szText[256];
+@@ -551,7 +564,7 @@
+     DWORD style = SBARS_SIZEGRIP | WS_CHILD | (registrySettings.ShowStatusBar ? WS_VISIBLE : 0);
+     g_hStatusBar = ::CreateWindowExW(0, STATUSCLASSNAME, NULL, style, 0, 0, 0, 0, m_hWnd,
+                                      NULL, g_hinstExe, NULL);
+-    ::SendMessageW(g_hStatusBar, SB_SETMINHEIGHT, 21, 0);
++    ::SendMessageW(g_hStatusBar, SB_SETMINHEIGHT, ScaleToDpi(21), 0);
+ 
+     // Create the tool box
+     toolBoxContainer.DoCreate(m_hWnd);
+@@ -766,7 +779,8 @@
+ 
+ LRESULT CMainWindow::OnSize(UINT nMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+ {
+-    int test[] = { LOWORD(lParam) - 260, LOWORD(lParam) - 140, LOWORD(lParam) - 20 };
++    int test[] = { LOWORD(lParam) - ScaleToDpi(260), LOWORD(lParam) - ScaleToDpi(140),
++                   LOWORD(lParam) - ScaleToDpi(20) };
+     if (::IsWindow(g_hStatusBar))
+     {
+         ::SendMessageW(g_hStatusBar, WM_SIZE, 0, 0);
+@@ -779,7 +793,7 @@
+ LRESULT CMainWindow::OnGetMinMaxInfo(UINT nMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+ {
+     MINMAXINFO *mm = (MINMAXINFO*)lParam;
+-    mm->ptMinTrackSize = { 330, 360 };
++    mm->ptMinTrackSize = { ScaleToDpi(330), ScaleToDpi(360) };
+     return 0;
+ }
+ 
+--- a/src/base/applications/mspaint/palette.cpp
++++ b/src/base/applications/mspaint/palette.cpp
+@@ -9,8 +9,8 @@
+ #include "precomp.h"
+ 
+ /* The private metrics */
+-#define CXY_SELECTEDBOX     15 /* width / height of a selected color box */
+-#define X_MARGIN 4 /* horizontal margin */
++#define CXY_SELECTEDBOX     ScaleToDpi(15) /* width / height of a selected color box */
++#define X_MARGIN ScaleToDpi(4) /* horizontal margin */
+ #define Y_MARGIN ((rcClient.bottom / 2) - CXY_COLORBOX) /* center position minus one color box */
+ #define X_COLORBOX_OFFSET   (X_MARGIN + CXY_BIGBOX + X_MARGIN)
+ #define COLOR_COUNT         28
+--- a/src/base/applications/mspaint/palette.h
++++ b/src/base/applications/mspaint/palette.h
+@@ -7,9 +7,9 @@
+ 
+ #pragma once
+ 
+-#define CXY_COLORBOX   16 /* width / height of a normal color box */
++#define CXY_COLORBOX   ScaleToDpi(16) /* width / height of a normal color box */
+ #define CXY_BIGBOX     (CXY_COLORBOX * 2) /* width / height of the big box */
+-#define CY_PALETTE     (8 + CXY_BIGBOX + 8)
++#define CY_PALETTE     (CXY_BIGBOX + ScaleToDpi(16))
+ 
+ class CPaletteWindow : public CWindowImpl<CPaletteWindow>
+ {
+--- a/src/base/applications/mspaint/precomp.h
++++ b/src/base/applications/mspaint/precomp.h
+@@ -32,6 +32,7 @@
+ #define _USE_MATH_DEFINES /* for M_PI */
+ #include <math.h>
+ #include <shellapi.h>
++#include <dpiscale.h>
+ #include <htmlhelp.h>
+ #include <strsafe.h>
+ #include <ui/CWaitCursor.h>
+@@ -40,7 +41,7 @@
+ 
+ /* CONSTANTS *******************************************************/
+ 
+-#define GRIP_SIZE   3
++#define GRIP_SIZE   ScaleToDpi(3)
+ #define MIN_ZOOM    125
+ #define MAX_ZOOM    8000
+ 
+@@ -69,6 +70,7 @@
+ /* COMMON FUNCTIONS *************************************************/
+ 
+ void ShowOutOfMemory(void);
++HIMAGELIST LoadToolbarIcons(UINT nID, INT cIcons);
+ BOOL nearlyEqualPoints(INT x0, INT y0, INT x1, INT y1);
+ BOOL OpenMailer(HWND hWnd, LPCWSTR pszPathName);
+ void getBoundaryOfPtStack(RECT& rcBoundary, INT cPoints, const POINT *pPoints);
+--- a/src/base/applications/mspaint/resource.h
++++ b/src/base/applications/mspaint/resource.h
+@@ -13,6 +13,8 @@
+ 
+ #define IDB_TOOLBARICONS 510
+ #define IDB_FONTSTOOLBAR 511
++/* Tool icons drawn for a higher DPI */
++#define IDB_TOOLBARICONS_DPI(dpi) (1000 + (dpi))
+ 
+ #define IDI_TRANSPARENT    526
+ #define IDI_NONTRANSPARENT 527
+--- a/src/base/applications/mspaint/rsrc.rc
++++ b/src/base/applications/mspaint/rsrc.rc
+@@ -22,6 +22,9 @@
+ IDI_APPICON ICON "img/paint.ico"
+ 
+ IDB_TOOLBARICONS BITMAP "img/iconbar.bmp"
++IDB_TOOLBARICONS_DPI(120) BITMAP "mspaint-tools-120.bmp"
++IDB_TOOLBARICONS_DPI(144) BITMAP "mspaint-tools-144.bmp"
++IDB_TOOLBARICONS_DPI(192) BITMAP "mspaint-tools-192.bmp"
+ 
+ IDI_TRANSPARENT ICON "img/transparent.ico"
+ IDI_NONTRANSPARENT ICON "img/nontransparent.ico"
+--- a/src/base/applications/mspaint/textedit.cpp
++++ b/src/base/applications/mspaint/textedit.cpp
+@@ -7,7 +7,7 @@
+ 
+ #include "precomp.h"
+ 
+-#define CXY_GRIP 3
++#define CXY_GRIP ScaleToDpi(3)
+ 
+ CTextEditWindow textEditWindow;
+ 
+--- a/src/base/applications/mspaint/textedit.h
++++ b/src/base/applications/mspaint/textedit.h
+@@ -7,8 +7,8 @@
+ 
+ #pragma once
+ 
+-#define CX_MINTEXTEDIT 100
+-#define CY_MINTEXTEDIT 24
++#define CX_MINTEXTEDIT ScaleToDpi(100)
++#define CY_MINTEXTEDIT ScaleToDpi(24)
+ 
+ class CTextEditWindow : public CWindowImpl<CTextEditWindow>
+ {
+--- a/src/base/applications/mspaint/toolbox.cpp
++++ b/src/base/applications/mspaint/toolbox.cpp
+@@ -31,6 +31,28 @@
+     return ::CallWindowProc(oldWndProc, hwnd, uMsg, wParam, lParam);
+ }
+ 
++// The tool icons drawn for a higher DPI are 32-bit strips with an alpha
++// channel. A screen DPI below the lowest of them uses the 16 pixel strip.
++static HIMAGELIST LoadToolIcons()
++{
++    INT dpi = FindDpiBitmap(g_hinstExe, IDB_TOOLBARICONS_DPI(0));
++    HBITMAP hbmIcons = NULL;
++    BITMAP bm;
++
++    if (dpi > USER_DEFAULT_SCREEN_DPI)
++    {
++        hbmIcons = (HBITMAP)::LoadImageW(g_hinstExe, MAKEINTRESOURCEW(IDB_TOOLBARICONS_DPI(dpi)),
++                                         IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
++    }
++    if (!hbmIcons || !::GetObjectW(hbmIcons, sizeof(bm), &bm))
++        return LoadToolbarIcons(IDB_TOOLBARICONS, NUM_TOOLS);
++
++    HIMAGELIST hImageList = ImageList_Create(bm.bmHeight, bm.bmHeight, ILC_COLOR32, NUM_TOOLS, 0);
++    ImageList_Add(hImageList, hbmIcons, NULL);
++    ::DeleteObject(hbmIcons);
++    return hImageList;
++}
++
+ BOOL CPaintToolBar::DoCreate(HWND hwndParent)
+ {
+     // NOTE: The horizontal line above the toolbar is hidden by CCS_NODIVIDER style.
+@@ -45,13 +67,7 @@
+     if (!CWindow::Create(TOOLBARCLASSNAMEW, hwndParent, toolbarPos, NULL, style))
+         return FALSE;
+ 
+-    HIMAGELIST hImageList = ImageList_Create(16, 16, ILC_COLOR24 | ILC_MASK, 16, 0);
+-    SendMessage(TB_SETIMAGELIST, 0, (LPARAM)hImageList);
+-
+-    HBITMAP hbmIcons = (HBITMAP)::LoadImageW(g_hinstExe, MAKEINTRESOURCEW(IDB_TOOLBARICONS),
+-                                             IMAGE_BITMAP, 256, 16, 0);
+-    ImageList_AddMasked(hImageList, hbmIcons, RGB(255, 0, 255));
+-    ::DeleteObject(hbmIcons);
++    SendMessage(TB_SETIMAGELIST, 0, (LPARAM)LoadToolIcons());
+ 
+     SendMessage(TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+ 
+--- a/src/base/applications/mspaint/toolbox.h
++++ b/src/base/applications/mspaint/toolbox.h
+@@ -10,7 +10,7 @@
+ 
+ #define TOOLBAR_ROWS        8
+ #define TOOLBAR_COLUMNS     2
+-#define CXY_TB_BUTTON       25
++#define CXY_TB_BUTTON       ScaleToDpi(25)
+ #define CX_TOOLBAR          (TOOLBAR_COLUMNS * CXY_TB_BUTTON)
+ #define CY_TOOLBAR          (TOOLBAR_ROWS * CXY_TB_BUTTON)
+ 
+--- a/src/base/applications/mspaint/toolsettings.cpp
++++ b/src/base/applications/mspaint/toolsettings.cpp
+@@ -10,14 +10,14 @@
+ #include "precomp.h"
+ 
+ #define X_TOOLSETTINGS  0
+-#define Y_TOOLSETTINGS  (CY_TOOLBAR + 3)
++#define Y_TOOLSETTINGS  (CY_TOOLBAR + ScaleToDpi(3))
+ #define CX_TOOLSETTINGS CX_TOOLBAR
+-#define CY_TOOLSETTINGS 140
++#define CY_TOOLSETTINGS ScaleToDpi(140)
+ 
+-#define CX_TRANS_ICON 40
+-#define CY_TRANS_ICON 30
+-#define MARGIN1 3
+-#define MARGIN2 2
++#define CX_TRANS_ICON ScaleToDpi(40)
++#define CY_TRANS_ICON ScaleToDpi(30)
++#define MARGIN1 ScaleToDpi(3)
++#define MARGIN2 ScaleToDpi(2)
+ 
+ #define MAX_ZOOM_TRACK 6
+ #define MIN_ZOOM_TRACK 0
