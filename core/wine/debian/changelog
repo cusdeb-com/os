@@ -40,6 +40,8 @@ wine (11.19.0-2cd) trixie; urgency=medium
     the window manager draws in the title bar.
   * debian/patches/0025-winex11-cursor-dpi.patch: enlarge application
     cursors by a whole factor, to match the Xcursor theme cursors.
+  * debian/patches/0026-taskmgr-dpi.patch: scale the Task Manager pages,
+    status bar, columns and graphs to the DPI.
 
  -- Nsenixx <sluppystr@gmail.com>  Fri, 13 Nov 2026 14:44:46 +0300
 

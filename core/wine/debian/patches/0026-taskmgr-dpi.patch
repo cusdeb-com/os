@@ -1,0 +1,403 @@
+Author: CusDeb OS Team
+Description: taskmgr: Scale tab pages, status bar parts, columns and graphs to the DPI.
+ The tab page position, the status bar part widths, the list column
+ widths, and the CPU and memory meters and history graphs were laid out
+ in fixed pixels, so at a higher DPI the pages were small inside the
+ window and the texts were cut. Scale these sizes with one helper,
+ scale_dpi(); 96 DPI is unchanged.
+Last-Modified: Fri, 13 Nov 2026 14:50:00 +0300
+
+--- a/src/programs/taskmgr/applpage.c
++++ b/src/programs/taskmgr/applpage.c
+@@ -826,7 +826,7 @@
+         nApplicationPageHeight = rc.bottom;
+ 
+         /* Update window position */
+-        SetWindowPos(hDlg, NULL, 15, 30, 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
++        SetWindowPos(hDlg, NULL, scale_dpi(15), scale_dpi(30), 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
+ 
+         /* Get handles to the controls */
+         hApplicationPageListCtrl = GetDlgItem(hDlg, IDC_APPLIST);
+@@ -837,19 +837,21 @@
+         /* Initialize the application page's controls */
+         column.mask = LVCF_TEXT|LVCF_WIDTH;
+         column.pszText = wszTask;
+-        column.cx = 250;
++        column.cx = scale_dpi(250);
+         /* Add the "Task" column */
+         SendMessageW(hApplicationPageListCtrl, LVM_INSERTCOLUMNW, 0, (LPARAM) &column);
+         column.mask = LVCF_TEXT|LVCF_WIDTH;
+         column.pszText = wszStatus;
+-        column.cx = 95;
++        column.cx = scale_dpi(95);
+         /* Add the "Status" column */
+         SendMessageW(hApplicationPageListCtrl, LVM_INSERTCOLUMNW, 1, (LPARAM) &column);
+ 
+         SendMessageW(hApplicationPageListCtrl, LVM_SETIMAGELIST, LVSIL_SMALL,
+-                    (LPARAM) ImageList_Create(16, 16, ILC_COLOR8|ILC_MASK, 0, 1));
++                    (LPARAM) ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
++                                              ILC_COLOR8|ILC_MASK, 0, 1));
+         SendMessageW(hApplicationPageListCtrl, LVM_SETIMAGELIST, LVSIL_NORMAL,
+-                    (LPARAM) ImageList_Create(32, 32, ILC_COLOR8|ILC_MASK, 0, 1));
++                    (LPARAM) ImageList_Create(GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
++                                              ILC_COLOR8|ILC_MASK, 0, 1));
+ 
+         UpdateApplicationListControlViewSetting();
+ 
+--- a/src/programs/taskmgr/dbgchnl.c
++++ b/src/programs/taskmgr/dbgchnl.c
+@@ -185,31 +185,31 @@
+     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+     lvc.fmt = LVCFMT_LEFT;
+     lvc.pszText = debug_channelW;
+-    lvc.cx = 100;
++    lvc.cx = scale_dpi(100);
+     SendMessageW(hLV, LVM_INSERTCOLUMNW, 0, (LPARAM) &lvc);
+ 
+     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+     lvc.fmt = LVCFMT_CENTER;
+     lvc.pszText = (WCHAR *)L"Fixme";
+-    lvc.cx = 55;
++    lvc.cx = scale_dpi(55);
+     SendMessageW(hLV, LVM_INSERTCOLUMNW, 1, (LPARAM) &lvc);
+ 
+     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+     lvc.fmt = LVCFMT_CENTER;
+     lvc.pszText = (WCHAR *)L"Err";
+-    lvc.cx = 55;
++    lvc.cx = scale_dpi(55);
+     SendMessageW(hLV, LVM_INSERTCOLUMNW, 2, (LPARAM) &lvc);
+ 
+     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+     lvc.fmt = LVCFMT_CENTER;
+     lvc.pszText = (WCHAR *)L"Warn";
+-    lvc.cx = 55;
++    lvc.cx = scale_dpi(55);
+     SendMessageW(hLV, LVM_INSERTCOLUMNW, 3, (LPARAM) &lvc);
+ 
+     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+     lvc.fmt = LVCFMT_CENTER;
+     lvc.pszText = (WCHAR *)L"Trace";
+-    lvc.cx = 55;
++    lvc.cx = scale_dpi(55);
+     SendMessageW(hLV, LVM_INSERTCOLUMNW, 4, (LPARAM) &lvc);
+ 
+     DebugChannels_FillList(hLV);
+--- a/src/programs/taskmgr/graph.c
++++ b/src/programs/taskmgr/graph.c
+@@ -80,7 +80,7 @@
+      * The bottom 20 pixels are reserved for the text
+      */
+     CopyRect(&rcText, &rcClient);
+-    rcText.top = rcText.bottom - 19;
++    rcText.top = rcText.bottom - scale_dpi(19);
+ 
+     SetTextColor(hDC, BRIGHT_GREEN);
+     DrawTextW(hDC, Text, -1, &rcText, DT_CENTER);
+@@ -89,7 +89,7 @@
+      * Now we have to draw the graph
+      * So first find out how many bars we can fit
+      */
+-    nBars = ((rcClient.bottom - rcClient.top) - 25) / 3;
++    nBars = ((rcClient.bottom - rcClient.top) - scale_dpi(25)) / scale_dpi(3);
+     nBarsUsed = (nBars * CpuUsage) / 100;
+     if ((CpuUsage) && (nBarsUsed == 0))
+     {
+@@ -109,12 +109,12 @@
+     /*
+      * Now draw the bar graph
+      */
+-    rcBarLeft.left =  ((rcClient.right - rcClient.left) - 33) / 2;
+-    rcBarLeft.right =  rcBarLeft.left + 16;
+-    rcBarRight.left = rcBarLeft.left + 17;
+-    rcBarRight.right = rcBarLeft.right + 17;
+-    rcBarLeft.top = rcBarRight.top = 5;
+-    rcBarLeft.bottom = rcBarRight.bottom = 7;
++    rcBarLeft.left =  ((rcClient.right - rcClient.left) - scale_dpi(33)) / 2;
++    rcBarLeft.right =  rcBarLeft.left + scale_dpi(16);
++    rcBarRight.left = rcBarLeft.left + scale_dpi(17);
++    rcBarRight.right = rcBarLeft.right + scale_dpi(17);
++    rcBarLeft.top = rcBarRight.top = scale_dpi(5);
++    rcBarLeft.bottom = rcBarRight.bottom = scale_dpi(7);
+ 
+     if (nBarsUsed < 0)     nBarsUsed = 0;
+     if (nBarsUsed > nBars) nBarsUsed = nBars;
+@@ -133,11 +133,11 @@
+         FillSolidRect(hDC, &rcBarLeft, DARK_GREEN);
+         FillSolidRect(hDC, &rcBarRight, DARK_GREEN);
+         
+-        rcBarLeft.top += 3;
+-        rcBarLeft.bottom += 3;
++        rcBarLeft.top += scale_dpi(3);
++        rcBarLeft.bottom += scale_dpi(3);
+         
+-        rcBarRight.top += 3;
+-        rcBarRight.bottom += 3;
++        rcBarRight.top += scale_dpi(3);
++        rcBarRight.bottom += scale_dpi(3);
+     }
+     
+     /*
+@@ -150,34 +150,34 @@
+         FillSolidRect(hDC, &rcBarLeft, BRIGHT_GREEN);
+         FillSolidRect(hDC, &rcBarRight, BRIGHT_GREEN);
+         
+-        rcBarLeft.top += 3;
+-        rcBarLeft.bottom += 3;
++        rcBarLeft.top += scale_dpi(3);
++        rcBarLeft.bottom += scale_dpi(3);
+         
+-        rcBarRight.top += 3;
+-        rcBarRight.bottom += 3;
++        rcBarRight.top += scale_dpi(3);
++        rcBarRight.bottom += scale_dpi(3);
+     }
+     
+     /*
+      * Draw the "used" kernel bars
+      */
+-    rcBarLeft.bottom--;
+-    rcBarRight.bottom--;
++    rcBarLeft.bottom -= scale_dpi(1);
++    rcBarRight.bottom -= scale_dpi(1);
+     if (nBarsUsedKernel && nBarsUsedKernel % 2)
+     {
+-        rcBarLeft.top -= 2;
+-        rcBarLeft.bottom -= 2;
++        rcBarLeft.top -= scale_dpi(2);
++        rcBarLeft.bottom -= scale_dpi(2);
+         
+-        rcBarRight.top -= 2;
+-        rcBarRight.bottom -= 2;
++        rcBarRight.top -= scale_dpi(2);
++        rcBarRight.bottom -= scale_dpi(2);
+ 
+         FillSolidRect(hDC, &rcBarLeft, RED);
+         FillSolidRect(hDC, &rcBarRight, RED);
+         
+-        rcBarLeft.top += 2;
+-        rcBarLeft.bottom += 2;
++        rcBarLeft.top += scale_dpi(2);
++        rcBarLeft.bottom += scale_dpi(2);
+         
+-        rcBarRight.top += 2;
+-        rcBarRight.bottom += 2;
++        rcBarRight.top += scale_dpi(2);
++        rcBarRight.bottom += scale_dpi(2);
+ 
+         nBarsUsedKernel--;
+     }
+@@ -188,19 +188,19 @@
+         FillSolidRect(hDC, &rcBarLeft, RED);
+         FillSolidRect(hDC, &rcBarRight, RED);
+         
+-        rcBarLeft.top++;
+-        rcBarLeft.bottom++;
++        rcBarLeft.top += scale_dpi(1);
++        rcBarLeft.bottom += scale_dpi(1);
+         
+-        rcBarRight.top++;
+-        rcBarRight.bottom++;
++        rcBarRight.top += scale_dpi(1);
++        rcBarRight.bottom += scale_dpi(1);
+ 
+         if (i % 2)
+         {
+-            rcBarLeft.top++;
+-            rcBarLeft.bottom++;
++            rcBarLeft.top += scale_dpi(3) - 2 * scale_dpi(1);
++            rcBarLeft.bottom += scale_dpi(3) - 2 * scale_dpi(1);
+             
+-            rcBarRight.top++;
+-            rcBarRight.bottom++;
++            rcBarRight.top += scale_dpi(3) - 2 * scale_dpi(1);
++            rcBarRight.bottom += scale_dpi(3) - 2 * scale_dpi(1);
+         }
+     }
+ }
+@@ -247,7 +247,7 @@
+      * The bottom 20 pixels are reserved for the text
+      */
+     CopyRect(&rcText, &rcClient);
+-    rcText.top = rcText.bottom - 19;
++    rcText.top = rcText.bottom - scale_dpi(19);
+ 
+     SetTextColor(hDC, BRIGHT_GREEN);
+     DrawTextW(hDC, Text, -1, &rcText, DT_CENTER);
+@@ -256,7 +256,7 @@
+      * Now we have to draw the graph
+      * So first find out how many bars we can fit
+      */
+-    nBars = ((rcClient.bottom - rcClient.top) - 25) / 3;
++    nBars = ((rcClient.bottom - rcClient.top) - scale_dpi(25)) / scale_dpi(3);
+     if (CommitChargeLimit)
+         nBarsUsed = (nBars * (int)((CommitChargeTotal * 100) / CommitChargeLimit)) / 100;
+     nBarsFree = nBars - nBarsUsed;
+@@ -270,12 +270,12 @@
+     /*
+      * Now draw the bar graph
+      */
+-    rcBarLeft.left =  ((rcClient.right - rcClient.left) - 33) / 2;
+-    rcBarLeft.right =  rcBarLeft.left + 16;
+-    rcBarRight.left = rcBarLeft.left + 17;
+-    rcBarRight.right = rcBarLeft.right + 17;
+-    rcBarLeft.top = rcBarRight.top = 5;
+-    rcBarLeft.bottom = rcBarRight.bottom = 7;
++    rcBarLeft.left =  ((rcClient.right - rcClient.left) - scale_dpi(33)) / 2;
++    rcBarLeft.right =  rcBarLeft.left + scale_dpi(16);
++    rcBarRight.left = rcBarLeft.left + scale_dpi(17);
++    rcBarRight.right = rcBarLeft.right + scale_dpi(17);
++    rcBarLeft.top = rcBarRight.top = scale_dpi(5);
++    rcBarLeft.bottom = rcBarRight.bottom = scale_dpi(7);
+     
+     /*
+      * Draw the "free" bars
+@@ -285,11 +285,11 @@
+         FillSolidRect(hDC, &rcBarLeft, DARK_GREEN);
+         FillSolidRect(hDC, &rcBarRight, DARK_GREEN);
+         
+-        rcBarLeft.top += 3;
+-        rcBarLeft.bottom += 3;
++        rcBarLeft.top += scale_dpi(3);
++        rcBarLeft.bottom += scale_dpi(3);
+         
+-        rcBarRight.top += 3;
+-        rcBarRight.bottom += 3;
++        rcBarRight.top += scale_dpi(3);
++        rcBarRight.bottom += scale_dpi(3);
+     }
+     
+     /*
+@@ -300,11 +300,11 @@
+         FillSolidRect(hDC, &rcBarLeft, BRIGHT_GREEN);
+         FillSolidRect(hDC, &rcBarRight, BRIGHT_GREEN);
+         
+-        rcBarLeft.top += 3;
+-        rcBarLeft.bottom += 3;
++        rcBarLeft.top += scale_dpi(3);
++        rcBarLeft.bottom += scale_dpi(3);
+         
+-        rcBarRight.top += 3;
+-        rcBarRight.bottom += 3;
++        rcBarRight.top += scale_dpi(3);
++        rcBarRight.bottom += scale_dpi(3);
+     }
+ }
+ 
+--- a/src/programs/taskmgr/graphctl.c
++++ b/src/programs/taskmgr/graphctl.c
+@@ -163,6 +163,7 @@
+     /*  to a bitmap.  The result is then BitBlt'd to the control whenever needed. */
+     int i, j;
+     int nCharacters;
++    int step = scale_dpi(10);
+ 
+     HPEN oldPen;
+     HPEN solidPen = CreatePen(PS_SOLID, 0, this->m_crGridColor);
+@@ -218,13 +219,13 @@
+ 
+     for (i=this->m_rectPlot.left; i<this->m_rectPlot.right; i+=2) 
+     {
+-        for (j=this->m_rectPlot.bottom; j>=this->m_rectPlot.top; j-=10)
++        for (j=this->m_rectPlot.bottom; j>=this->m_rectPlot.top; j-=step)
+         {
+             SetPixel(this->m_dcGrid, i, j, this->m_crGridColor);
+         }
+     }
+ 
+-    for (i=this->m_rectPlot.left; i<this->m_rectPlot.right; i+=10)
++    for (i=this->m_rectPlot.left; i<this->m_rectPlot.right; i+=step)
+     {
+         for (j=this->m_rectPlot.top; j<this->m_rectPlot.bottom; j+=2)
+         {
+--- a/src/programs/taskmgr/perfpage.c
++++ b/src/programs/taskmgr/perfpage.c
+@@ -278,7 +278,7 @@
+ 		nPerformancePageHeight = rc.bottom;
+ 
+ 		/*  Update window position */
+-		SetWindowPos(hDlg, NULL, 15, 30, 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
++		SetWindowPos(hDlg, NULL, scale_dpi(15), scale_dpi(30), 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
+ 
+ 		/* 
+ 		 *  Get handles to all the controls
+--- a/src/programs/taskmgr/procpage.c
++++ b/src/programs/taskmgr/procpage.c
+@@ -433,7 +433,7 @@
+         nProcessPageHeight = rc.bottom;
+ 
+         /* Update window position */
+-        SetWindowPos(hDlg, NULL, 15, 30, 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
++        SetWindowPos(hDlg, NULL, scale_dpi(15), scale_dpi(30), 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
+ 
+         /*
+          * Get handles to the controls
+--- a/src/programs/taskmgr/taskmgr.c
++++ b/src/programs/taskmgr/taskmgr.c
+@@ -53,6 +53,12 @@
+ TASKMANAGER_SETTINGS TaskManagerSettings;
+ 
+ 
++/* Scale a length in 96 DPI pixels to the system DPI. */
++int scale_dpi(int value)
++{
++    return MulDiv(value, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI);
++}
++
+ void FillSolidRect(HDC hDC, LPCRECT lpRect, COLORREF clr)
+ {
+     SetBkColor(hDC, clr);
+@@ -117,9 +123,9 @@
+         return FALSE;
+ 
+     /* Create the status bar panes */
+-    nParts[0] = 100;
+-    nParts[1] = 210;
+-    nParts[2] = 400;
++    nParts[0] = scale_dpi(100);
++    nParts[1] = scale_dpi(210);
++    nParts[2] = scale_dpi(400);
+     SendMessageW(hStatusWnd, SB_SETPARTS, 3, (LPARAM)nParts);
+ 
+     /* Create tab pages */
+@@ -295,8 +301,8 @@
+     SendMessageW(hStatusWnd, WM_SIZE, nType, MAKELPARAM(cx, cy + (rc.bottom - rc.top)));
+ 
+     /* Update the status bar pane sizes */
+-    nParts[0] = bInMenuLoop ? -1 : 100;
+-    nParts[1] = 210;
++    nParts[0] = bInMenuLoop ? -1 : scale_dpi(100);
++    nParts[1] = scale_dpi(210);
+     nParts[2] = cx;
+     SendMessageW(hStatusWnd, SB_SETPARTS, bInMenuLoop ? 1 : 3, (LPARAM)nParts);
+ 
+@@ -410,6 +416,8 @@
+     TaskManagerSettings.ColumnSizeArray[22] = 70;
+     TaskManagerSettings.ColumnSizeArray[23] = 70;
+     TaskManagerSettings.ColumnSizeArray[24] = 70;
++    for (i = 0; i < ARRAY_SIZE(TaskManagerSettings.ColumnSizeArray); i++)
++        TaskManagerSettings.ColumnSizeArray[i] = scale_dpi(TaskManagerSettings.ColumnSizeArray[i]);
+ 
+     TaskManagerSettings.SortColumn = 1;
+     TaskManagerSettings.SortAscending = TRUE;
+@@ -483,8 +491,8 @@
+     bInMenuLoop = FALSE;
+     /* Update the status bar pane sizes */
+     GetClientRect(hWnd, &rc);
+-    nParts[0] = 100;
+-    nParts[1] = 210;
++    nParts[0] = scale_dpi(100);
++    nParts[1] = scale_dpi(210);
+     nParts[2] = rc.right;
+     SendMessageW(hStatusWnd, SB_SETPARTS, 3, (LPARAM)nParts);
+     SendMessageW(hStatusWnd, SB_SETTEXTW, 0, 0);
+--- a/src/programs/taskmgr/taskmgr.h
++++ b/src/programs/taskmgr/taskmgr.h
+@@ -141,6 +141,7 @@
+ 
+ 
+ /* Forward declarations of functions included in this code module: */
++int scale_dpi(int value);
+ void FillSolidRect(HDC hDC, LPCRECT lpRect, COLORREF clr);
+ void Font_DrawText(HDC hDC, LPWSTR lpwszText, int x, int y);
+ 
