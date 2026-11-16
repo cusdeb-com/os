@@ -1,0 +1,19 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Avoid overlapping buffers when resolving "Open With" paths.
+ Use separate input and output buffers to find the selected application,
+ then copy the resolved path only when the search succeeds and it fits.
+Last-Modified: Thu, 12 Nov 2026 20:40:24 +0300
+
+--- a/src/dll/win32/shell32/COpenWithMenu.cpp
++++ b/src/dll/win32/shell32/COpenWithMenu.cpp
+@@ -520,8 +520,8 @@
+     ExpandEnvironmentStrings(wszBuf, pwszAppPath, MAX_PATH);
+     if (!PathFileExists(pwszAppPath))
+     {
+-        UINT cch = SearchPathW(NULL, pwszAppPath, NULL, MAX_PATH, pwszAppPath, NULL);
+-        if (!cch || cch >= MAX_PATH)
++        UINT cch = SearchPathW(NULL, pwszAppPath, NULL, _countof(wszBuf), wszBuf, NULL);
++        if (!cch || cch >= _countof(wszBuf) || FAILED(StringCchCopyW(pwszAppPath, MAX_PATH, wszBuf)))
+             return FALSE;
+     }
+     return TRUE;
