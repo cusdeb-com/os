@@ -18,3 +18,4 @@
 0019-search-folder-contextmenu-pidl.patch
 0020-appwiz-cpl-split.patch
 0021-appwiz-uninstaller-64bit.patch
+0022-shell32-cpl-actctx-cleanup.patch
