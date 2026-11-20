@@ -29,3 +29,4 @@
 0030-private-shell-cpl-path.patch
 0031-shlwapi-clsid-registry-validation.patch
 0032-shlwapi-sxs-aware-pin-dll-of-clsid.patch
+0033-tray-icon-cross-process.patch
