@@ -2,7 +2,7 @@ Source: cdex
 Section: cdex
 Priority: optional
 Maintainer: Artem Lavrukhin <lavryha4590@gmail.com>
-Build-Depends: binutils-mingw-w64-i686,
+Build-Depends: binutils-mingw-w64-x86-64,
                bison,
                build-essential,
                cmake (>= 3.19),
@@ -10,9 +10,10 @@ Build-Depends: binutils-mingw-w64-i686,
                dpkg-dev,
                fakeroot,
                flex,
-               g++-mingw-w64-i686,
-               gcc-mingw-w64-i686,
+               g++-mingw-w64-x86-64,
+               gcc-mingw-w64-x86-64,
                imagemagick,
+               libgmp-dev,
                libwin-hivex-perl,
                ninja-build,
                patch,
