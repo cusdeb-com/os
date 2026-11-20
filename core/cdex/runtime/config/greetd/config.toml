@@ -1,0 +1,6 @@
+[terminal]
+vt = 7
+
+[default_session]
+command = "/usr/bin/cage -d -s -- /usr/bin/gtkgreet -c /usr/bin/cdex-wayland-session"
+user = "_greetd"
