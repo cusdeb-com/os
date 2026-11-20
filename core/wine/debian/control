@@ -112,6 +112,7 @@ Recommends: libasound2-plugins,
 Provides: fonts-wine (= ${binary:Version}),
           libwine (= ${binary:Version}),
           wine-binfmt (= ${binary:Version}),
+          wine-cdex-sxs-com-server,
           wine32 (= ${binary:Version}),
           wine64 (= ${binary:Version})
 Conflicts: fonts-wine,

@@ -1,0 +1,245 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Expose the SxS path of a native COM server.
+ CDEX needs to keep the DLL implementing a COM class loaded after activation.
+ Looking up the class in the global registry can select a different Wine DLL
+ when the active SxS assembly supplies its own implementation.
+ .
+ Export a Wine function that resolves the class to its SxS DLL path, allowing
+ CDEX to keep the same implementation loaded without reading Wine internals.
+Last-Modified: Wed, 18 Nov 2026 13:35:06 +0300
+
+--- a/src/dlls/ntdll/actctx.c
++++ b/src/dlls/ntdll/actctx.c
+@@ -5967,6 +5967,84 @@
+ 
+ 
+ /***********************************************************************
++ *		wine_get_sxs_com_server_path (NTDLL.@)
++ *
++ * Resolve a native COM server in the active SxS context and return its absolute
++ * DLL path. The caller frees the process-heap path with HeapFree.
++ * ERROR_SXS_KEY_NOT_FOUND means the class was not declared in SxS and the
++ * caller may consult the registry. Other errors must not trigger that fallback.
++ */
++DWORD WINAPI wine_get_sxs_com_server_path( const GUID *clsid, WCHAR **path )
++{
++    ACTCTX_SECTION_KEYED_DATA com_data = { sizeof(com_data) }, dll_data = { sizeof(dll_data) };
++    ACTIVATION_CONTEXT *actctx;
++    const struct comclassredirect_data *comclass;
++    const WCHAR *module;
++    UNICODE_STRING name;
++    NTSTATUS status = STATUS_SXS_KEY_NOT_FOUND;
++    DWORD error;
++
++    if (!path) return ERROR_INVALID_PARAMETER;
++    *path = NULL;
++    if (!clsid) return ERROR_INVALID_PARAMETER;
++
++    /* Prefer the thread's active context, then check the process default. */
++    actctx = check_actctx( get_current_actctx_no_addref() );
++    if (actctx)
++        status = find_guid( actctx, ACTIVATION_CONTEXT_SECTION_COM_SERVER_REDIRECTION, clsid,
++                            FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, &com_data );
++    if (status == STATUS_SXS_KEY_NOT_FOUND && actctx != process_actctx)
++        status = find_guid( process_actctx, ACTIVATION_CONTEXT_SECTION_COM_SERVER_REDIRECTION, clsid,
++                            FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, &com_data );
++    if (status != STATUS_SUCCESS) return RtlNtStatusToDosError( status );
++
++    comclass = com_data.lpData;
++    /* This resolver does not support managed COM servers. */
++    if (comclass->clrdata_len)
++    {
++        error = ERROR_NOT_SUPPORTED;
++        goto done;
++    }
++    module = (const WCHAR *)((const BYTE *)com_data.lpSectionBase + comclass->name_offset);
++    RtlInitUnicodeString( &name, module );
++
++    /* Only use the DLL redirection owned by the assembly declaring the class. */
++    status = find_dll_redirection( com_data.hActCtx, &name, &dll_data );
++    if (status == STATUS_SUCCESS)
++    {
++        if (dll_data.ulAssemblyRosterIndex != com_data.ulAssemblyRosterIndex)
++            status = STATUS_SXS_INVALID_ACTCTXDATA_FORMAT;
++        else
++        {
++            dll_data.hActCtx = com_data.hActCtx;
++            status = build_actctx_dll_path( module, &dll_data, path );
++        }
++    }
++    if (status == STATUS_SUCCESS)
++    {
++        switch (RtlDetermineDosPathNameType_U( *path ))
++        {
++        case RtlPathTypeDriveAbsolute:
++        case RtlPathTypeUncAbsolute:
++        case RtlPathTypeLocalDevice:
++            break;
++        default:
++            RtlFreeHeap( GetProcessHeap(), 0, *path );
++            *path = NULL;
++            status = STATUS_OBJECT_PATH_SYNTAX_BAD;
++            break;
++        }
++    }
++    /* A missing DLL must not trigger registry fallback for a class found in SxS. */
++    error = status == STATUS_SXS_KEY_NOT_FOUND ? ERROR_MOD_NOT_FOUND : RtlNtStatusToDosError( status );
++
++done:
++    RtlReleaseActivationContext( com_data.hActCtx );
++    return error;
++}
++
++
++/***********************************************************************
+  *		RtlQueryActivationContextApplicationSettings (NTDLL.@)
+  */
+ NTSTATUS WINAPI RtlQueryActivationContextApplicationSettings( DWORD flags, ACTIVATION_CONTEXT *actctx, const WCHAR *ns,
+--- a/src/dlls/ntdll/loader.c
++++ b/src/dlls/ntdll/loader.c
+@@ -2934,9 +2934,9 @@
+ /***********************************************************************
+  *	build_dlldata_path
+  *
+- * Helper for find_actctx_dll.
++ * Helper for build_actctx_dll_path.
+  */
+-static NTSTATUS build_dlldata_path( LPCWSTR libname, ACTCTX_SECTION_KEYED_DATA *data, LPWSTR *fullname )
++static NTSTATUS build_dlldata_path( LPCWSTR libname, const ACTCTX_SECTION_KEYED_DATA *data, LPWSTR *fullname )
+ {
+     ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION *dlldata = data->lpData;
+     ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_SEGMENT *path;
+@@ -2960,7 +2960,14 @@
+     {
+         RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), NULL, 0, &total );
+         if ((*fullname = RtlAllocateHeap( GetProcessHeap(), 0, total * sizeof(WCHAR) )))
+-            RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), *fullname, total, NULL );
++        {
++            status = RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), *fullname, total, NULL );
++            if (status != STATUS_SUCCESS)
++            {
++                RtlFreeHeap( GetProcessHeap(), 0, *fullname );
++                *fullname = NULL;
++            }
++        }
+         else
+             status = STATUS_NO_MEMORY;
+ 
+@@ -2973,40 +2980,25 @@
+ 
+ 
+ /***********************************************************************
+- *	find_actctx_dll
++ *	build_actctx_dll_path
+  *
+- * Find the full path (if any) of the dll from the activation context.
++ * Build the full DLL path from a selected redirection record.
+  */
+-static NTSTATUS find_actctx_dll( LPCWSTR libname, LPWSTR *fullname )
++NTSTATUS build_actctx_dll_path( const WCHAR *libname, const ACTCTX_SECTION_KEYED_DATA *data, WCHAR **fullname )
+ {
+     static const WCHAR winsxsW[] = {'\\','w','i','n','s','x','s','\\'};
+ 
+     ACTIVATION_CONTEXT_ASSEMBLY_DETAILED_INFORMATION *info = NULL;
+-    ACTCTX_SECTION_KEYED_DATA data;
+     ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION *dlldata;
+-    UNICODE_STRING nameW;
++    ULONG roster_index = data->ulAssemblyRosterIndex;
+     NTSTATUS status;
+-    SIZE_T needed, size = 1024;
++    SIZE_T needed, size = 1024, name_len = wcslen( libname ) * sizeof(WCHAR);
+     WCHAR *p;
+ 
+-    RtlInitUnicodeString( &nameW, libname );
+-    data.cbSize = sizeof(data);
+-    status = RtlFindActivationContextSectionString( FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, NULL,
+-                                                    ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION,
+-                                                    &nameW, &data );
+-    if (status != STATUS_SUCCESS) return status;
+-
+-    if (data.ulLength < sizeof(*dlldata))
+-    {
+-        status = STATUS_SXS_KEY_NOT_FOUND;
+-        goto done;
+-    }
+-    dlldata = data.lpData;
++    if (data->ulLength < sizeof(*dlldata)) return STATUS_SXS_KEY_NOT_FOUND;
++    dlldata = data->lpData;
+     if (!(dlldata->Flags & ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_OMITS_ASSEMBLY_ROOT))
+-    {
+-        status = build_dlldata_path( libname, &data, fullname );
+-        goto done;
+-    }
++        return build_dlldata_path( libname, data, fullname );
+ 
+     for (;;)
+     {
+@@ -3015,7 +3007,7 @@
+             status = STATUS_NO_MEMORY;
+             goto done;
+         }
+-        status = RtlQueryInformationActivationContext( 0, data.hActCtx, &data.ulAssemblyRosterIndex,
++        status = RtlQueryInformationActivationContext( 0, data->hActCtx, &roster_index,
+                                                        AssemblyDetailedInformationInActivationContext,
+                                                        info, size, &needed );
+         if (status == STATUS_SUCCESS) break;
+@@ -3043,7 +3035,7 @@
+             /* manifest name does not match directory name, so it's not a global
+              * windows/winsxs manifest; use the manifest directory name instead */
+             dirlen = p - info->lpAssemblyManifestPath;
+-            needed = (dirlen + 1) * sizeof(WCHAR) + nameW.Length;
++            needed = (dirlen + 1) * sizeof(WCHAR) + name_len;
+             if (!(*fullname = p = RtlAllocateHeap( GetProcessHeap(), 0, needed )))
+             {
+                 status = STATUS_NO_MEMORY;
+@@ -3063,7 +3055,7 @@
+     }
+ 
+     needed = (wcslen(windows_dir) * sizeof(WCHAR) +
+-              sizeof(winsxsW) + info->ulAssemblyDirectoryNameLength + nameW.Length + 2*sizeof(WCHAR));
++              sizeof(winsxsW) + info->ulAssemblyDirectoryNameLength + name_len + 2*sizeof(WCHAR));
+ 
+     if (!(*fullname = p = RtlAllocateHeap( GetProcessHeap(), 0, needed )))
+     {
+@@ -3080,6 +3072,21 @@
+     wcscpy( p, libname );
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, info );
++    return status;
++}
++
++static NTSTATUS find_actctx_dll( const WCHAR *libname, WCHAR **fullname )
++{
++    ACTCTX_SECTION_KEYED_DATA data = { sizeof(data) };
++    UNICODE_STRING name;
++    NTSTATUS status;
++
++    RtlInitUnicodeString( &name, libname );
++    status = RtlFindActivationContextSectionString( FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX, NULL,
++                                                    ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION, &name, &data );
++    if (status != STATUS_SUCCESS) return status;
++
++    status = build_actctx_dll_path( libname, &data, fullname );
+     RtlReleaseActivationContext( data.hActCtx );
+     return status;
+ }
+--- a/src/dlls/ntdll/ntdll.spec
++++ b/src/dlls/ntdll/ntdll.spec
+@@ -1785,3 +1785,6 @@
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+ @ cdecl wine_get_host_version(ptr ptr)
++
++# Activation context
++@ stdcall wine_get_sxs_com_server_path(ptr ptr)
+--- a/src/dlls/ntdll/ntdll_misc.h
++++ b/src/dlls/ntdll/ntdll_misc.h
+@@ -95,6 +95,8 @@
+ extern void RELAY_SetupDLL( HMODULE hmod );
+ extern void SNOOP_SetupDLL( HMODULE hmod );
+ extern const WCHAR windows_dir[];
++extern NTSTATUS build_actctx_dll_path( const WCHAR *libname, const ACTCTX_SECTION_KEYED_DATA *data,
++                                       WCHAR **fullname );
+ 
+ extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *);
+ 

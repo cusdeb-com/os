@@ -1,0 +1,27 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Exclude shell32 COM registrations for classes it does not provide.
+ FolderShortcut is absent from the ReactOS shell32 class map; RebarBandSite
+ is implemented by browseui.dll. Exclude these registrations from shell32
+ so the private manifest does not identify shell32 as their provider.
+Last-Modified: Thu, 12 Nov 2026 12:28:35 +0300
+
+--- a/src/dll/win32/shell32/rgs_res.rc
++++ b/src/dll/win32/shell32/rgs_res.rc
+@@ -4,7 +4,7 @@
+ IDR_CONTROLPANEL REGISTRY "res/rgs/controlpanel.rgs"
+ IDR_DRAGDROPHELPER REGISTRY "res/rgs/dragdrophelper.rgs"
+ IDR_FOLDEROPTIONS REGISTRY "res/rgs/folderoptions.rgs"
+-IDR_FOLDERSHORTCUT REGISTRY "res/rgs/foldershortcut.rgs"
++/* FolderShortcut is not provided by ReactOS shell32. */
+ IDR_FONTSFOLDERSHORTCUT REGISTRY "res/rgs/fontsfoldershortcut.rgs"
+ IDR_MENUBAND REGISTRY "res/rgs/menuband.rgs"
+ IDR_MENUBANDSITE REGISTRY "res/rgs/menubandsite.rgs"
+@@ -25,7 +25,7 @@
+ IDR_DRVDEFEXT REGISTRY "res/rgs/shelldrvdefext.rgs"
+ IDR_EXEDROPHANDLER REGISTRY "res/rgs/exedrophandler.rgs"
+ IDR_MERGEDFOLDER REGISTRY "res/rgs/mergedfolder.rgs"
+-IDR_REBARBANDSITE REGISTRY "res/rgs/rebarbandsite.rgs"
++/* RebarBandSite is provided by browseui.dll. */
+ IDR_USERNOTIFICATION REGISTRY "res/rgs/usernotification.rgs"
+ IDR_SHELL REGISTRY "res/rgs/shell.rgs"
+ IDR_ACTIVEDESKTOP REGISTRY "res/rgs/activedesktop.rgs"

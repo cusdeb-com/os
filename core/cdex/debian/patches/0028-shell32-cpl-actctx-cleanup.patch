@@ -1,0 +1,30 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Clean up the CPL activation context when loading fails.
+ Deactivate the context if it was activated and release it if it was created.
+ Initialize the activation flag for error paths before context creation.
+Last-Modified: Thu, 12 Nov 2026 12:28:35 +0300
+
+--- a/src/dll/win32/shell32/wine/control.c
++++ b/src/dll/win32/shell32/wine/control.c
+@@ -63,7 +63,7 @@
+ #ifdef __REACTOS__
+     ACTCTXW ActCtx = {sizeof(ACTCTX), ACTCTX_FLAG_RESOURCE_NAME_VALID};
+     ULONG_PTR cookie;
+-    BOOL bActivated;
++    BOOL bActivated = FALSE;
+     WCHAR fileBuffer[MAX_PATH];
+ #endif
+     CPlApplet*	applet;
+@@ -210,6 +210,12 @@
+ 
+  theError:
+     FreeLibrary(applet->hModule);
++#ifdef __REACTOS__
++    if (bActivated)
++        DeactivateActCtx(0, cookie);
++    if (applet->hActCtx && applet->hActCtx != INVALID_HANDLE_VALUE)
++        ReleaseActCtx(applet->hActCtx);
++#endif
+     HeapFree(GetProcessHeap(), 0, applet->cmd);
+     HeapFree(GetProcessHeap(), 0, applet);
+     return NULL;

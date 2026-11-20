@@ -1,0 +1,65 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Use Wine's SxS COM server path to pin shell DLLs.
+ Resolve the CLSID through the Wine SxS interface and verify the loaded
+ module path. Use the registry only when SxS has no entry for the class.
+Last-Modified: Wed, 18 Nov 2026 13:35:06 +0300
+--- a/src/dll/win32/shlwapi/ordinal.c
++++ b/src/dll/win32/shlwapi/ordinal.c
+@@ -2655,10 +2655,57 @@
+  */
+ HMODULE WINAPI SHPinDllOfCLSID(REFIID refiid)
+ {
++    typedef DWORD (WINAPI *get_sxs_com_server_path_fn)(REFCLSID clsid, WCHAR **path);
++    get_sxs_com_server_path_fn get_sxs_com_server_path;
+     HKEY key;
+     DWORD type, count, error;
+     CHAR value[MAX_PATH], string[MAX_PATH];
+     HMODULE module;
++    WCHAR *path;
++
++    get_sxs_com_server_path = (get_sxs_com_server_path_fn)
++        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_sxs_com_server_path");
++    if (!get_sxs_com_server_path)
++    {
++        SetLastError(ERROR_PROC_NOT_FOUND);
++        return NULL;
++    }
++
++    error = get_sxs_com_server_path(refiid, &path);
++    if (error == ERROR_SUCCESS)
++    {
++        SIZE_T path_chars = wcslen(path) + 1;
++        WCHAR *loaded_path = HeapAlloc(GetProcessHeap(), 0, path_chars * sizeof(WCHAR));
++
++        module = NULL;
++        if (loaded_path)
++        {
++            module = LoadLibraryExW(path, NULL, 0);
++            error = module ? ERROR_SUCCESS : GetLastError();
++            if (module)
++            {
++                DWORD len = GetModuleFileNameW(module, loaded_path, (DWORD)path_chars);
++                if (!len || len >= path_chars || lstrcmpiW(path, loaded_path))
++                {
++                    FreeLibrary(module);
++                    module = NULL;
++                    error = ERROR_MOD_NOT_FOUND;
++                }
++            }
++            HeapFree(GetProcessHeap(), 0, loaded_path);
++        }
++        else
++            error = ERROR_NOT_ENOUGH_MEMORY;
++
++        HeapFree(GetProcessHeap(), 0, path);
++        SetLastError(error);
++        return module;
++    }
++    if (error != ERROR_SXS_KEY_NOT_FOUND)
++    {
++        SetLastError(error);
++        return NULL;
++    }
+ 
+     strcpy(string, "CLSID\\");
+     SHStringFromGUIDA(refiid, string + 6, sizeof(string)/sizeof(char) - 6);
