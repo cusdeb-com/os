@@ -5,8 +5,8 @@
 reg_add() {
   WINEDEBUG=-all wine reg add "$@" >/dev/null
 
-  # Write to the default registry view. For selected keys, also write
-  # to the 32-bit view used by the x86 ReactOS shell.
+  # The AMD64 ReactOS shell reads the default registry view. Mirror selected
+  # keys into the 32-bit view for 32-bit Wine applications.
   case "$1" in
     HKLM\\Software\\Classes\\*|\
     "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Control Panel\\Cpls"|\
@@ -194,8 +194,8 @@ ensure_reactos_ui_settings() {
   # caption/message/status -17, menu/icon/smcaption -14.
   local logfont_tail="0000000000000000000000009001000000000000000001005500620075006E007400750020006400650072006900760061007400690076006500200043007500730044006500620000000000000000000000000000000000"
 
-  # reg_add sets Shell in the default registry view and in the 32-bit view
-  # used by the x86 ReactOS shell.
+  # reg_add sets Shell in the default view used by the AMD64 ReactOS shell
+  # and in the 32-bit view used by 32-bit Wine applications.
   reg_add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" /v Shell /t REG_SZ /d "reactos-explorer.exe" /f
 
   reg_add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes" /v "MS Sans Serif" /t REG_SZ /d "$ui_font" /f
