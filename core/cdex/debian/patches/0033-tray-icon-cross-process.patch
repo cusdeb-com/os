@@ -11,7 +11,15 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
 
 --- a/src/base/shell/explorer/syspager.cpp
 +++ b/src/base/shell/explorer/syspager.cpp
-@@ -27,6 +27,7 @@
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include "precomp.h"
++#include <limits.h>
+ 
+ #define BALLOON_MAXWIDTH 340
+ 
+@@ -27,6 +28,7 @@
  {
      // Must keep a separate copy since the original is unioned with uTimeout.
      UINT uVersionCopy;
@@ -19,7 +27,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  };
  
  struct IconWatcherData
-@@ -151,6 +152,7 @@
+@@ -151,6 +153,7 @@
      int m_VisibleButtonCount;
  
      CBalloonQueue * m_BalloonQueue;
@@ -27,7 +35,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
  public:
      CNotifyToolbar();
-@@ -159,17 +161,22 @@
+@@ -159,17 +162,22 @@
      int GetVisibleButtonCount();
      int FindItem(IN HWND hWnd, IN UINT uID, InternalIconData ** pdata);
      int FindExistingSharedIcon(HICON handle);
@@ -53,7 +61,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      VOID SendMouseEvent(IN WORD wIndex, IN UINT uMsg, IN WPARAM wParam);
      LRESULT OnMouseEvent(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled);
      LRESULT OnTooltipShow(INT uCode, LPNMHDR hdr, BOOL& bHandled);
-@@ -178,6 +185,9 @@
+@@ -178,6 +186,9 @@
      BEGIN_MSG_MAP(CNotifyToolbar)
          MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
          MESSAGE_HANDLER(WM_CONTEXTMENU, OnCtxMenu)
@@ -63,7 +71,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          MESSAGE_RANGE_HANDLER(WM_MOUSEFIRST, WM_MOUSELAST, OnMouseEvent)
          NOTIFY_CODE_HANDLER(TTN_SHOW, OnTooltipShow)
      END_MSG_MAP()
-@@ -243,7 +253,7 @@
+@@ -243,7 +254,7 @@
          COM_INTERFACE_ENTRY_IID(IID_IOleWindow, IOleWindow)
      END_COM_MAP()
  
@@ -72,7 +80,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      void GetSize(IN BOOL IsHorizontal, IN PSIZE size);
  
      DECLARE_WND_CLASS_EX(szSysPagerWndClass, CS_DBLCLKS, COLOR_3DFACE)
-@@ -669,7 +679,8 @@
+@@ -669,7 +680,8 @@
  CNotifyToolbar::CNotifyToolbar() :
      m_ImageList(NULL),
      m_VisibleButtonCount(0),
@@ -82,7 +90,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  {
  }
  
-@@ -719,7 +730,7 @@
+@@ -719,7 +731,7 @@
      return -1;
  }
  
@@ -91,7 +99,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  {
      TBBUTTON tbBtn = { 0 };
      InternalIconData * notifyItem;
-@@ -744,6 +755,7 @@
+@@ -744,12 +756,25 @@
  
      notifyItem->hWnd = iconData->hWnd;
      notifyItem->uID = iconData->uID;
@@ -99,7 +107,26 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
      tbBtn.fsState = TBSTATE_ENABLED;
      tbBtn.fsStyle = BTNS_NOPREFIX;
-@@ -761,11 +773,10 @@
+     tbBtn.dwData = (DWORD_PTR)notifyItem;
+     tbBtn.iString = (INT_PTR) text;
+-    tbBtn.idCommand = GetButtonCount();
++    for (int command = 0; command <= USHRT_MAX; ++command)
++    {
++        if (SendMessage(TB_COMMANDTOINDEX, command, 0) == -1)
++        {
++            tbBtn.idCommand = command;
++            break;
++        }
++        if (command == USHRT_MAX)
++        {
++            delete notifyItem;
++            return FALSE;
++        }
++    }
+     tbBtn.iBitmap = -1;
+ 
+     if (iconData->uFlags & NIF_STATE)
+@@ -761,11 +786,10 @@
      {
          notifyItem->uCallbackMessage = iconData->uCallbackMessage;
      }
@@ -112,7 +139,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          if (hasSharedIcon)
          {
              INT iIcon = FindExistingSharedIcon(notifyItem->hIcon);
-@@ -779,6 +790,12 @@
+@@ -779,6 +803,12 @@
          else
          {
              tbBtn.iBitmap = ImageList_AddIcon(m_ImageList, notifyItem->hIcon);
@@ -125,7 +152,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          }
      }
  
-@@ -805,7 +822,7 @@
+@@ -805,7 +835,7 @@
          m_VisibleButtonCount++;
      }
  
@@ -134,7 +161,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
      CToolbar::AddButton(&tbBtn);
      SetButtonSize(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
-@@ -828,12 +845,19 @@
+@@ -828,12 +858,19 @@
          return FALSE;
      }
  
@@ -155,7 +182,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      // We can not store the version in the uVersion field, because it's union'd with uTimeout,
      // which we also need to keep track of.
      notifyItem->uVersionCopy = iconData->uVersion;
-@@ -841,7 +865,7 @@
+@@ -841,7 +878,7 @@
      return TRUE;
  }
  
@@ -164,7 +191,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  {
      InternalIconData * notifyItem;
      TBBUTTONINFO tbbi = { 0 };
-@@ -857,7 +881,7 @@
+@@ -857,7 +894,7 @@
      if (index < 0)
      {
          WARN("Icon %d from hWnd %08x DOES NOT EXIST!\n", iconData->uID, iconData->hWnd);
@@ -173,10 +200,13 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      }
  
      TBBUTTON btn;
-@@ -867,6 +891,16 @@
+@@ -865,8 +902,17 @@
+     int oldIconIndex = btn.iBitmap;
+ 
      tbbi.cbSize = sizeof(tbbi);
-     tbbi.dwMask = TBIF_BYINDEX | TBIF_COMMAND;
-     tbbi.idCommand = index;
+-    tbbi.dwMask = TBIF_BYINDEX | TBIF_COMMAND;
+-    tbbi.idCommand = index;
++    tbbi.dwMask = TBIF_BYINDEX;
 +    // Toggling NIS_HIDDEN must preserve TBSTATE_ENABLED and other state bits.
 +    tbbi.fsState = btn.fsState;
 +
@@ -190,7 +220,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
      if (iconData->uFlags & NIF_STATE)
      {
-@@ -897,15 +931,19 @@
+@@ -897,15 +943,19 @@
  
      if (iconData->uFlags & NIF_ICON)
      {
@@ -211,7 +241,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
              }
              else
              {
-@@ -914,9 +952,17 @@
+@@ -914,9 +964,17 @@
          }
          else
          {
@@ -230,7 +260,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          }
      }
  
-@@ -934,7 +980,7 @@
+@@ -934,7 +992,7 @@
          notifyItem->uTimeout = iconData->uTimeout;
      }
  
@@ -239,7 +269,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
      SetButtonInfo(index, &tbbi);
  
-@@ -990,8 +1036,12 @@
+@@ -990,8 +1048,12 @@
          }
      }
  
@@ -252,7 +282,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      DeleteButton(index);
  
      delete notifyItem;
-@@ -1035,6 +1085,18 @@
+@@ -1035,6 +1097,18 @@
  
  LRESULT CNotifyToolbar::OnDestroy(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
  {
@@ -271,7 +301,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      if (m_ImageList)
      {
          ImageList_Destroy(m_ImageList);
-@@ -1066,10 +1128,10 @@
+@@ -1066,10 +1140,10 @@
      if (notifyItem->uVersionCopy >= NOTIFYICON_VERSION)
      {
          /* Transmit the WM_CONTEXTMENU message if the notification icon supports it */
@@ -286,7 +316,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      }
      else if (lParam == -1)
      {
-@@ -1079,20 +1141,14 @@
+@@ -1079,20 +1153,14 @@
           * not needed if the message came from the mouse because in this
           * case the right-click mouse messages were already sent together.
           */
@@ -310,7 +340,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  {
      if (!::IsWindow(notifyItem->hWnd))
      {
-@@ -1109,25 +1165,84 @@
+@@ -1109,25 +1177,84 @@
          return true;
      }
  
@@ -409,7 +439,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  }
  
  VOID CNotifyToolbar::SendMouseEvent(IN WORD wIndex, IN UINT uMsg, IN WPARAM wParam)
-@@ -1166,6 +1281,13 @@
+@@ -1166,6 +1293,13 @@
      POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
      INT iBtn = HitTest(&pt);
  
@@ -423,7 +453,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      if (iBtn >= 0)
      {
          SendMouseEvent(iBtn, uMsg, wParam);
-@@ -1178,7 +1300,8 @@
+@@ -1178,7 +1312,8 @@
  static VOID GetTooltipText(LPARAM data, LPTSTR szTip, DWORD cchTip)
  {
      InternalIconData * notifyItem = reinterpret_cast<InternalIconData *>(data);
@@ -433,7 +463,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
      {
          StringCchCopy(szTip, cchTip, notifyItem->szTip);
      }
-@@ -1360,7 +1483,7 @@
+@@ -1360,7 +1495,7 @@
      return TRUE;
  }
  
@@ -442,7 +472,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  {
      BOOL ret = FALSE;
  
-@@ -1370,7 +1493,7 @@
+@@ -1370,7 +1505,7 @@
      switch (dwMessage)
      {
      case NIM_ADD:
@@ -451,7 +481,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          if (ret == TRUE)
          {
              (void)AddIconToWatcher(iconData);
-@@ -1378,7 +1501,7 @@
+@@ -1378,7 +1513,7 @@
          break;
  
      case NIM_MODIFY:
@@ -460,7 +490,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
          break;
  
      case NIM_DELETE:
-@@ -1429,18 +1552,26 @@
+@@ -1429,18 +1564,26 @@
  #else
      INT rows = 0;
      INT columns = 0;
@@ -493,7 +523,12 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
              rows = max(size->cy / MulDiv(cyButton, 3, 2), 1);
          else
              rows = max(size->cy / cyButton, 1);
-@@ -1489,39 +1620,7 @@
+@@ -1485,43 +1628,11 @@
+     if (HIWORD(wParam) != BN_CLICKED)
+         return 0;
+ 
+-    INT iBtn = LOWORD(wParam);
++    INT iBtn = (INT)Toolbar.SendMessage(TB_COMMANDTOINDEX, LOWORD(wParam), 0);
      if (iBtn < 0)
          return 0;
  
@@ -534,7 +569,7 @@ Last-Modified: Fri, 13 Nov 2026 21:12:25 +0300
  
      return 0;
  }
-@@ -1577,15 +1676,184 @@
+@@ -1577,15 +1688,184 @@
      return 0;
  }
  

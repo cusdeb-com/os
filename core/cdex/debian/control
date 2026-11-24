@@ -27,6 +27,8 @@ Architecture: amd64
 Depends: binfmt-support,
          dbus-x11,
          fontconfig,
+         gir1.2-dbusmenu-gtk3-0.4,
+         gir1.2-gtk-3.0,
          gtk2-engines-pixbuf,
          libnss-myhostname,
          libnss-resolve,
@@ -35,6 +37,8 @@ Depends: binfmt-support,
          openbox,
          polkitd,
          python3,
+         python3-dbus,
+         python3-gi,
          spice-vdagent,
          systemd-resolved,
          wine (>= 11.15.0-1cd),
@@ -47,6 +51,7 @@ Depends: binfmt-support,
          xterm,
          yad,
          ${misc:Depends}
+Suggests: plasma-workspace
 Description: CDEX, a Windows-like desktop environment (base)
  CDEX (CusDeb Desktop Environment X) aims to give users a classic Windows
  experience. It is built on Win32 and uses the PE binary format, but is

@@ -1,0 +1,502 @@
+#!/usr/bin/python3
+"""Display Linux StatusNotifierItem icons in the CDEX notification area."""
+import os
+import shutil
+import signal
+import struct
+import subprocess
+import tempfile
+from pathlib import Path
+
+import dbus
+import dbus.service
+import gi
+from dbus.mainloop.glib import DBusGMainLoop
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("DbusmenuGtk3", "0.4")
+from gi.repository import DbusmenuGtk3, GdkPixbuf, GLib, Gtk
+
+
+PREFIX = Path(os.environ.get("WINEPREFIX", str(Path.home() / ".wine"))).expanduser()
+HOST_EXE = Path("/usr/lib/cdex/cdex-sni-host.exe")
+WORK_DIR = None
+
+WATCHER_FDO = "org.freedesktop.StatusNotifierWatcher"
+WATCHER_KDE = "org.kde.StatusNotifierWatcher"
+WATCHER_PATH = "/StatusNotifierWatcher"
+ITEM_INTERFACES = ("org.freedesktop.StatusNotifierItem", "org.kde.StatusNotifierItem")
+ITEM_PATH = "/StatusNotifierItem"
+
+
+def make_ico(pixmaps):
+    choices = sorted(
+        ((int(width), int(height), bytes(pixels)) for width, height, pixels in pixmaps),
+        key=lambda item: item[0] * item[1],
+        reverse=True,
+    )
+    for width, height, argb in choices:
+        if not (1 <= width <= 256 and 1 <= height <= 256) or len(argb) != width * height * 4:
+            continue
+
+        xor = bytearray()
+        mask_stride = ((width + 31) // 32) * 4
+        mask = bytearray(mask_stride * height)
+        for y in range(height - 1, -1, -1):
+            for x in range(width):
+                offset = (y * width + x) * 4
+                alpha, red, green, blue = argb[offset:offset + 4]
+                xor.extend((blue, green, red, alpha))
+                if alpha < 128:
+                    mask[(height - 1 - y) * mask_stride + x // 8] |= 0x80 >> (x % 8)
+
+        bitmap = struct.pack(
+            "<IiiHHIIiiII", 40, width, height * 2, 1, 32, 0,
+            len(xor) + len(mask), 0, 0, 0, 0,
+        ) + xor + mask
+        entry = struct.pack(
+            "<BBBBHHII", width & 0xff, height & 0xff, 0, 0, 1, 32,
+            len(bitmap), 22,
+        )
+        return struct.pack("<HHH", 0, 1, 1) + entry + bitmap
+    raise ValueError("SNI item did not provide a valid ARGB32 IconPixmap")
+
+
+def write_log(message):
+    print(message, flush=True)
+
+
+class KDEStatusNotifierAPI(dbus.service.Object):
+    @dbus.service.method(WATCHER_KDE, in_signature="s", out_signature="", sender_keyword="sender")
+    def RegisterStatusNotifierItem(self, service, sender=None):
+        self._register_item(str(service), sender)
+
+    @dbus.service.method(WATCHER_KDE, in_signature="s", out_signature="")
+    def RegisterStatusNotifierHost(self, service):
+        write_log(f"Registered StatusNotifierHost: {service}")
+        self.host_registered = True
+        KDEStatusNotifierAPI.StatusNotifierHostRegistered(self)
+
+    @dbus.service.signal(WATCHER_KDE, signature="s")
+    def StatusNotifierItemRegistered(self, service):
+        pass
+
+    @dbus.service.signal(WATCHER_KDE, signature="s")
+    def StatusNotifierItemUnregistered(self, service):
+        pass
+
+    @dbus.service.signal(WATCHER_KDE)
+    def StatusNotifierHostRegistered(self):
+        pass
+
+
+class StatusNotifierHost(KDEStatusNotifierAPI):
+    def __init__(self, bus):
+        super().__init__(bus, WATCHER_PATH)
+        self.bus = bus
+        self.items = {}
+        self.stopping_helpers = []
+        self.next_slot = 1
+        self.host_registered = True
+        self.host_name = f"org.freedesktop.StatusNotifierHost-{os.getpid()}"
+        self.names = [
+            dbus.service.BusName(WATCHER_FDO, bus=bus, do_not_queue=True),
+            dbus.service.BusName(WATCHER_KDE, bus=bus, do_not_queue=True),
+            dbus.service.BusName(self.host_name, bus=bus, do_not_queue=True),
+        ]
+        bus.add_signal_receiver(
+            self._name_owner_changed,
+            signal_name="NameOwnerChanged",
+            dbus_interface="org.freedesktop.DBus",
+        )
+        for item_interface in ITEM_INTERFACES:
+            bus.add_signal_receiver(
+                self._item_new_icon,
+                signal_name="NewIcon",
+                dbus_interface=item_interface,
+                sender_keyword="sender",
+                path_keyword="path",
+            )
+        GLib.timeout_add(200, self._poll_helper_log)
+        GLib.timeout_add(1000, self._remove_disconnected_items)
+        GLib.idle_add(self._recover_existing_items)
+
+    def _recover_existing_items(self):
+        daemon = dbus.Interface(
+            self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"),
+            "org.freedesktop.DBus",
+        )
+        names = [str(name) for name in daemon.ListNames()]
+        preferred = [name for name in names if name.startswith((
+            "org.kde.StatusNotifierItem-", "org.freedesktop.StatusNotifierItem-"))]
+        names = preferred + [name for name in names if name.startswith(":")]
+        seen = set()
+        for name in names:
+            try:
+                owner = str(daemon.GetNameOwner(name))
+                if owner in seen:
+                    continue
+                seen.add(owner)
+                obj = self.bus.get_object(name, ITEM_PATH, introspect=False)
+                props = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
+                for interface in ITEM_INTERFACES:
+                    props.GetAll(interface,
+                        reply_handler=lambda values, name=name: self._recover_item(name, values),
+                        error_handler=lambda error: None,
+                        timeout=2)
+            except dbus.DBusException as error:
+                write_log(f"SNI discovery failed for {name}: {error}")
+        return GLib.SOURCE_REMOVE
+
+    def _recover_item(self, service, properties):
+        if properties.get("Id"):
+            self._register_item(service, service)
+
+    def _register_item(self, service, sender):
+        if service.startswith("/"):
+            path = service
+            service = sender
+        else:
+            path = ITEM_PATH
+        key = service + path
+        if key in self.items:
+            return
+        try:
+            owner = service if service.startswith(":") else str(self.bus.get_name_owner(service))
+            if any(item["path"] == path and self._owner(existing) == owner
+                   for existing, item in self.items.items()):
+                return
+        except dbus.DBusException:
+            return
+        self.items[key] = {
+            "service": service,
+            "path": path,
+            "ready": False,
+            "slot": self.next_slot,
+            "helper": None,
+            "log_offset": 0,
+        }
+        self.next_slot += 1
+        GLib.idle_add(self._load_item, key)
+
+    def _load_item(self, service):
+        if service not in self.items:
+            return GLib.SOURCE_REMOVE
+        try:
+            entry = self.items[service]
+            obj = self.bus.get_object(entry["service"], entry["path"])
+            props = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
+            item_interface = None
+            pixmaps = None
+            for interface in ITEM_INTERFACES:
+                try:
+                    properties = props.GetAll(interface)
+                except dbus.DBusException:
+                    continue
+                item_interface = interface
+                break
+            if item_interface is None:
+                raise ValueError("SNI item has no supported IconPixmap")
+            pixmaps = properties.get("IconPixmap", [])
+            name = str(properties.get("IconName", ""))
+            if name:
+                theme = Gtk.IconTheme.get_default()
+                theme_path = str(properties.get("IconThemePath", ""))
+                if theme_path and theme_path not in theme.get_search_path():
+                    theme.append_search_path(theme_path)
+                try:
+                    if os.path.isabs(name):
+                        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(name, 32, 32, True)
+                    else:
+                        pixbuf = theme.load_icon(name, 32, 0)
+                    pixels = pixbuf.add_alpha(False, 0, 0, 0)
+                    rgba = pixels.get_pixels()
+                    rowstride = pixels.get_rowstride()
+                    width, height = pixels.get_width(), pixels.get_height()
+                    argb = bytearray()
+                    for y in range(height):
+                        for x in range(width):
+                            i = y * rowstride + x * 4
+                            red, green, blue, alpha = rgba[i:i + 4]
+                            argb.extend((alpha, red, green, blue))
+                    pixmaps = [(width, height, argb)]
+                except GLib.Error:
+                    pass
+            icon = make_ico(pixmaps)
+            slot = self.items[service]["slot"]
+            icon_path = WORK_DIR / f"icon-{slot}.ico"
+            control_path = WORK_DIR / f"control-{slot}.txt"
+            host_log = WORK_DIR / f"host-{slot}.log"
+            temp_path = icon_path.with_suffix(".ico.new")
+            temp_path.write_bytes(icon)
+            os.replace(temp_path, icon_path)
+            tooltip = properties.get("ToolTip", ("", [], "", ""))
+            title = str(tooltip[2]) or str(properties.get("Title", ""))
+            item = self.items[service]
+            item.update({
+                "ready": True,
+                "props": props,
+                "item": dbus.Interface(obj, item_interface),
+                "interface": item_interface,
+                "title": title,
+                "control_path": control_path,
+                "host_log": host_log,
+                "menu_path": str(properties.get("Menu", "")),
+            })
+            if item["menu_path"] and item["menu_path"] != "/NO_DBUSMENU" and not item.get("menu"):
+                item["menu"] = DbusmenuGtk3.Menu.new(item["service"], item["menu_path"])
+            helper = item["helper"]
+            if helper is None or helper.poll() is not None:
+                control_path.unlink(missing_ok=True)
+                host_log.unlink(missing_ok=True)
+                item["log_offset"] = 0
+                item["helper"] = subprocess.Popen(
+                    ["wine", str(HOST_EXE), str(slot)],
+                    env={**os.environ, "WINEPREFIX": str(PREFIX),
+                         "CDEX_SNI_DIR": "C:\\cusdeb\\sni-bridge\\" + WORK_DIR.name,
+                         "CDEX_SNI_TOOLTIP": title},
+                )
+                write_log(f"Started Wine tray helper for {service}: pid={item['helper'].pid}, slot={slot}")
+            else:
+                control_path.write_text("UPDATE", encoding="ascii")
+            self._emit_items_changed(service, registered=True)
+        except Exception as error:
+            write_log(f"Failed to load {service}: {error}")
+        return GLib.SOURCE_REMOVE
+
+    def _item_new_icon(self, sender=None, path=None):
+        for service, item in list(self.items.items()):
+            if path == item["path"] and sender == self._owner(service):
+                GLib.idle_add(self._load_item, service)
+
+    def _owner(self, service):
+        service = self.items.get(service, {}).get("service", service)
+        if service.startswith(":"):
+            return service
+        try:
+            return self.bus.get_name_owner(service)
+        except (dbus.DBusException, ValueError):
+            return ""
+
+    def _name_owner_changed(self, name, old_owner, new_owner):
+        if old_owner and old_owner != new_owner:
+            for key, item in list(self.items.items()):
+                if item["service"] == name:
+                    self._remove_item(key)
+
+    def _remove_disconnected_items(self):
+        self.stopping_helpers = [helper for helper in self.stopping_helpers if helper.poll() is None]
+        dbus_daemon = dbus.Interface(
+            self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"),
+            "org.freedesktop.DBus",
+        )
+        for service, item in list(self.items.items()):
+            try:
+                if not dbus_daemon.NameHasOwner(item["service"]):
+                    self._remove_item(service)
+            except dbus.DBusException as error:
+                write_log(f"Could not check SNI owner {service}: {error}")
+        return GLib.SOURCE_CONTINUE
+
+    def _remove_item(self, service):
+        item = self.items.pop(service, None)
+        if item is None:
+            return
+        control_path = item.get("control_path")
+        if control_path:
+            control_path.write_text("DELETE", encoding="ascii")
+        if item.get("helper") is not None:
+            self.stopping_helpers.append(item["helper"])
+        write_log(f"Removed SNI item {service}")
+        self._emit_items_changed(service, registered=False)
+
+    def _emit_items_changed(self, service, registered):
+        full_name = service
+        if registered:
+            self.StatusNotifierItemRegistered(full_name)
+            KDEStatusNotifierAPI.StatusNotifierItemRegistered(self, full_name)
+        else:
+            self.StatusNotifierItemUnregistered(full_name)
+            KDEStatusNotifierAPI.StatusNotifierItemUnregistered(self, full_name)
+        self.PropertiesChanged(
+            WATCHER_FDO,
+            {"RegisteredStatusNotifierItems": self._items()},
+            [],
+        )
+        self.PropertiesChanged(
+            WATCHER_KDE,
+            {"RegisteredStatusNotifierItems": self._items()},
+            [],
+        )
+
+    def _items(self):
+        return dbus.Array(
+            [dbus.String(service) for service, item in self.items.items() if item["ready"]],
+            signature="s",
+        )
+
+    def _show_menu(self, item, x, y):
+        menu = item.get("menu")
+        if menu is None:
+            menu = DbusmenuGtk3.Menu.new(item["service"], item["menu_path"])
+            item["menu"] = menu
+
+        def position(*args):
+            screen = menu.get_screen()
+            monitor = screen.get_monitor_at_point(x, y)
+            bounds = screen.get_monitor_workarea(monitor)
+            _, natural = menu.get_preferred_size()
+            menu_x = max(bounds.x, min(x, bounds.x + bounds.width - natural.width))
+            menu_y = max(bounds.y, min(y - natural.height, bounds.y + bounds.height - natural.height))
+            return menu_x, menu_y, False
+
+        if not item.get("menu_size_handler"):
+            def size_changed(widget, allocation):
+                size = (allocation.width, allocation.height)
+                if item.get("menu_size") != size:
+                    item["menu_size"] = size
+
+                    def reposition():
+                        if widget.get_visible():
+                            widget.reposition()
+                        return GLib.SOURCE_REMOVE
+
+                    GLib.idle_add(reposition)
+
+            item["menu_size_handler"] = menu.connect("size-allocate", size_changed)
+
+        menu.show()
+        menu.popup(None, None, position, None, 3, Gtk.get_current_event_time())
+
+    def _poll_helper_log(self):
+        for service, item in list(self.items.items()):
+            if not item["ready"]:
+                continue
+            try:
+                with item["host_log"].open("rb") as log:
+                    log.seek(item["log_offset"])
+                    data = log.read()
+                last_newline = data.rfind(b"\n\x00")
+                if last_newline < 0:
+                    continue
+                complete = last_newline + 2
+                lines = data[:complete].decode("utf-16-le").splitlines()
+                item["log_offset"] += complete
+            except (OSError, UnicodeDecodeError):
+                continue
+            for line in lines:
+                if line.startswith("Tray activation event: "):
+                    try:
+                        event, x, y = (int(value) for value in line.split(": ", 1)[1].split(","))
+                        item["item"].Activate(dbus.Int32(x), dbus.Int32(y))
+                        write_log(f"Forwarded activation to {service} at {x},{y} (event {event})")
+                    except (dbus.DBusException, ValueError) as error:
+                        if isinstance(error, dbus.DBusException) and error.get_dbus_name() == "org.freedesktop.DBus.Error.UnknownMethod" and item["menu_path"]:
+                            self._show_menu(item, x, y)
+                        else:
+                            write_log(f"Activation failed for {service}: {error}")
+                elif line.startswith("Tray context event: "):
+                    try:
+                        x, y = (int(value) for value in line.split(": ", 1)[1].split(","))
+                        if item["menu_path"] and item["menu_path"] != "/NO_DBUSMENU":
+                            self._show_menu(item, x, y)
+                        else:
+                            item["item"].ContextMenu(dbus.Int32(x), dbus.Int32(y))
+                        write_log(f"Forwarded context menu to {service} at {x},{y}")
+                    except (dbus.DBusException, ValueError) as error:
+                        write_log(f"Context menu failed for {service}: {error}")
+        return GLib.SOURCE_CONTINUE
+
+    @dbus.service.method(WATCHER_FDO, in_signature="s", out_signature="", sender_keyword="sender")
+    def RegisterStatusNotifierItem(self, service, sender=None):
+        self._register_item(str(service), sender)
+
+    @dbus.service.method(WATCHER_FDO, in_signature="s", out_signature="")
+    def RegisterStatusNotifierHost(self, service):
+        write_log(f"Registered StatusNotifierHost: {service}")
+        self.host_registered = True
+        self.StatusNotifierHostRegistered()
+
+    @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="ss", out_signature="v")
+    def Get(self, interface, name):
+        if interface not in (WATCHER_FDO, WATCHER_KDE):
+            raise dbus.exceptions.DBusException("Unknown interface")
+        values = {
+            "RegisteredStatusNotifierItems": dbus.Array(
+                [dbus.String(service) for service, item in self.items.items() if item["ready"]],
+                signature="s",
+                variant_level=1,
+            ),
+            "IsStatusNotifierHostRegistered": dbus.Boolean(self.host_registered, variant_level=1),
+            "ProtocolVersion": dbus.Int32(0, variant_level=1),
+        }
+        if name not in values:
+            raise dbus.exceptions.DBusException(f"Unknown property {name}")
+        return values[name]
+
+    @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        return dbus.Dictionary(
+            {
+                "RegisteredStatusNotifierItems": dbus.Array(
+                    [dbus.String(service) for service, item in self.items.items() if item["ready"]],
+                    signature="s",
+                    variant_level=1,
+                ),
+                "IsStatusNotifierHostRegistered": dbus.Boolean(self.host_registered, variant_level=1),
+                "ProtocolVersion": dbus.Int32(0, variant_level=1),
+            },
+            signature="sv",
+        )
+
+    @dbus.service.signal(WATCHER_FDO, signature="s")
+    def StatusNotifierItemRegistered(self, service):
+        pass
+
+    @dbus.service.signal(WATCHER_FDO, signature="s")
+    def StatusNotifierItemUnregistered(self, service):
+        pass
+
+    @dbus.service.signal(WATCHER_FDO)
+    def StatusNotifierHostRegistered(self):
+        pass
+
+    @dbus.service.signal("org.freedesktop.DBus.Properties", signature="sa{sv}as")
+    def PropertiesChanged(self, interface, changed, invalidated):
+        pass
+
+
+def main():
+    global WORK_DIR
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    base_dir = PREFIX / "drive_c/cusdeb/sni-bridge"
+    base_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="session-", dir=base_dir) as work_dir:
+        WORK_DIR = Path(work_dir)
+        write_log("SNI host starting on the CDEX session bus")
+        host = StatusNotifierHost(bus)
+        proxy_path = shutil.which("xembedsniproxy")
+        proxy = subprocess.Popen([proxy_path]) if proxy_path else None
+        loop = GLib.MainLoop()
+
+        def shutdown():
+            if proxy and proxy.poll() is None:
+                proxy.terminate()
+            for service in list(host.items):
+                host._remove_item(service)
+            for item in list(host.stopping_helpers):
+                try:
+                    item.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    item.terminate()
+            loop.quit()
+            return GLib.SOURCE_REMOVE
+
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, shutdown)
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, shutdown)
+        loop.run()
+
+
+if __name__ == "__main__":
+    main()
