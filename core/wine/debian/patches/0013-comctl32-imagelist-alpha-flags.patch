@@ -1,0 +1,166 @@
+Author: Artem Lavrukhin <lavryha4590@gmail.com>
+Description: Keep image-list alpha flags aligned with their images.
+ When ImageList_Remove deletes an image, shift and clear its flags.
+ Set the alpha flag from each added or replaced image so a reused slot
+ cannot inherit alpha blending from an older icon.
+Last-Modified: Mon, 23 Nov 2026 13:30:00 +0300
+
+--- a/src/dlls/comctl32/imagelist.c
++++ b/src/dlls/comctl32/imagelist.c
+@@ -220,10 +220,10 @@
+             for (j = n * width; j < (n + 1) * width; j++)
+                 if ((has_alpha = ((bits[i * stride + j] & 0xff000000) != 0))) break;
+ 
++        himl->item_flags[pos + n] = has_alpha ? ILIF_ALPHA : 0;
++
+         if (has_alpha)
+         {
+-            himl->item_flags[pos + n] = ILIF_ALPHA;
+-
+             if (mask_info && himl->hbmMask)  /* generate the mask from the alpha channel */
+             {
+                 for (i = 0; i < height; i++)
+@@ -2394,6 +2394,9 @@
+             himl->hbmMask = hbmNewMask;
+         }
+ 
++        memmove( himl->item_flags + i, himl->item_flags + i + 1,
++                 (himl->cCurImage - i - 1) * sizeof(*himl->item_flags) );
++        himl->item_flags[himl->cCurImage - 1] = 0;
+         himl->cCurImage--;
+     }
+ 
+@@ -2448,6 +2451,7 @@
+     if (add_with_alpha( himl, hdcImage, i, 1, bmp.bmWidth, bmp.bmHeight, hbmImage, hbmMask ))
+         goto done;
+ 
++    himl->item_flags[i] = 0;
+     imagelist_point_from_index(himl, i, &pt);
+     StretchBlt (himl->hdcImage, pt.x, pt.y, himl->cx, himl->cy,
+                   hdcImage, 0, 0, bmp.bmWidth, bmp.bmHeight, SRCCOPY);
+@@ -2561,6 +2565,7 @@
+         if (ret) goto done;
+     }
+ 
++    himl->item_flags[nIndex] = 0;
+     imagelist_point_from_index(himl, nIndex, &pt);
+ 
+     if (himl->hbmMask)
+--- a/src/dlls/comctl32/tests/imagelist.c
++++ b/src/dlls/comctl32/tests/imagelist.c
+@@ -3007,6 +3007,107 @@
+     FreeLibrary(comctl32_v5);
+ }
+ 
++static void check_item_alpha(IImageList *imgl, int index, BOOL expected)
++{
++    DWORD flags = 0;
++    HRESULT hr = IImageList_GetItemFlags(imgl, index, &flags);
++
++    ok(hr == S_OK, "GetItemFlags(%d) failed, hr %#lx.\n", index, hr);
++    if (SUCCEEDED(hr))
++        ok(!!(flags & ILIF_ALPHA) == expected, "GetItemFlags(%d) returned %#lx.\n", index, flags);
++}
++
++static void test_ImageList_AlphaFlags(void)
++{
++    const UINT32 opaque_bits[] = { 0x00abcdef, 0x00abcdef };
++    const UINT32 opaque_24_bits[] = { 0x00abcdef, 0x00abcdef };
++    const UINT32 alpha_bits[] = { 0x89abcdef, 0x89abcdef };
++    UINT32 mask_bits = 0;
++    UINT32 mono_mask_bits = 0;
++    HIMAGELIST himl = NULL;
++    IImageList *imgl = NULL;
++    HDC hdc = NULL;
++    HBITMAP hbm_opaque = NULL, hbm_opaque_24 = NULL, hbm_alpha = NULL, hbm_mask = NULL, hbm_mono_mask = NULL;
++    HICON icon_opaque = NULL, icon_alpha = NULL;
++    ICONINFO icon_info = {0};
++
++    hdc = CreateCompatibleDC(0);
++    ok(!!hdc, "CreateCompatibleDC failed.\n");
++    if (!hdc) goto done;
++
++    hbm_opaque = create_test_bitmap(hdc, 2, 1, 32, opaque_bits);
++    hbm_opaque_24 = create_test_bitmap(hdc, 2, 1, 24, opaque_24_bits);
++    hbm_alpha = create_test_bitmap(hdc, 2, 1, 32, alpha_bits);
++    hbm_mask = CreateBitmap(2, 1, 1, 1, &mask_bits);
++    hbm_mono_mask = CreateBitmap(2, 2, 1, 1, &mono_mask_bits);
++    ok(!!hbm_mask, "CreateBitmap failed.\n");
++    ok(!!hbm_mono_mask, "CreateBitmap failed.\n");
++    if (!hbm_opaque || !hbm_opaque_24 || !hbm_alpha || !hbm_mask || !hbm_mono_mask) goto done;
++
++    himl = pImageList_Create(2, 1, ILC_COLOR32 | ILC_MASK, 0, 1);
++    ok(!!himl, "ImageList_Create failed.\n");
++    if (!himl) goto done;
++
++    if (FAILED(pHIMAGELIST_QueryInterface(himl, &IID_IImageList, (void **)&imgl)))
++    {
++        ok(FALSE, "HIMAGELIST_QueryInterface failed.\n");
++        goto done;
++    }
++
++    ok(pImageList_Add(himl, hbm_opaque, hbm_mask) == 0, "Failed to add image 0.\n");
++    ok(pImageList_Add(himl, hbm_alpha, hbm_mask) == 1, "Failed to add image 1.\n");
++    ok(pImageList_Add(himl, hbm_opaque, hbm_mask) == 2, "Failed to add image 2.\n");
++    ok(pImageList_Add(himl, hbm_alpha, hbm_mask) == 3, "Failed to add image 3.\n");
++
++    ok(pImageList_Remove(himl, 1), "Failed to remove middle image.\n");
++    check_item_alpha(imgl, 1, FALSE);
++    check_item_alpha(imgl, 2, TRUE);
++    ok(pImageList_Remove(himl, 0), "Failed to remove first image.\n");
++    check_item_alpha(imgl, 0, FALSE);
++    check_item_alpha(imgl, 1, TRUE);
++    ok(pImageList_Remove(himl, 1), "Failed to remove last image.\n");
++
++    ok(pImageList_Add(himl, hbm_alpha, hbm_mask) == 1, "Failed to reuse removed slot.\n");
++    check_item_alpha(imgl, 1, TRUE);
++    ok(pImageList_Replace(himl, 1, hbm_opaque, hbm_mask), "Failed to replace with opaque bitmap.\n");
++    check_item_alpha(imgl, 1, FALSE);
++    ok(pImageList_Replace(himl, 1, hbm_alpha, hbm_mask), "Failed to replace with alpha bitmap.\n");
++    check_item_alpha(imgl, 1, TRUE);
++    ok(pImageList_Replace(himl, 1, hbm_opaque_24, hbm_mask), "Failed to replace with 24-bit bitmap.\n");
++    check_item_alpha(imgl, 1, FALSE);
++
++    icon_info.fIcon = TRUE;
++    icon_info.hbmMask = hbm_mono_mask;
++    icon_info.hbmColor = NULL;
++    icon_opaque = CreateIconIndirect(&icon_info);
++    icon_info.hbmMask = hbm_mask;
++    icon_info.hbmColor = hbm_alpha;
++    icon_alpha = CreateIconIndirect(&icon_info);
++    ok(!!icon_opaque && !!icon_alpha, "CreateIconIndirect failed.\n");
++    if (!icon_opaque || !icon_alpha) goto done;
++
++    ok(pImageList_ReplaceIcon(himl, 1, icon_opaque) == 1, "Failed to replace with opaque icon.\n");
++    check_item_alpha(imgl, 1, FALSE);
++    ok(pImageList_ReplaceIcon(himl, 1, icon_alpha) == 1, "Failed to replace with alpha icon.\n");
++    check_item_alpha(imgl, 1, TRUE);
++
++    ok(pImageList_Remove(himl, -1), "Failed to remove all images.\n");
++    ok(pImageList_Add(himl, hbm_opaque, hbm_mask) == 0, "Failed to add image after clearing list.\n");
++    check_item_alpha(imgl, 0, FALSE);
++
++done:
++    if (imgl) IImageList_Release(imgl);
++    if (himl) pImageList_Destroy(himl);
++    if (icon_opaque) DestroyIcon(icon_opaque);
++    if (icon_alpha) DestroyIcon(icon_alpha);
++    if (hbm_mask) DeleteObject(hbm_mask);
++    if (hbm_mono_mask) DeleteObject(hbm_mono_mask);
++    if (hbm_alpha) DeleteObject(hbm_alpha);
++    if (hbm_opaque_24) DeleteObject(hbm_opaque_24);
++    if (hbm_opaque) DeleteObject(hbm_opaque);
++    if (hdc) DeleteDC(hdc);
++}
++
+ START_TEST(imagelist)
+ {
+     ULONG_PTR ctx_cookie;
+@@ -3054,6 +3155,7 @@
+     test_alpha(TRUE);
+ 
+     test_ImageList_DrawIndirect();
++    test_ImageList_AlphaFlags();
+     test_shell_imagelist();
+     test_iimagelist();
+     test_imagelist_interop();

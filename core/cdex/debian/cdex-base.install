@@ -19,6 +19,7 @@ usr/share/cusdeb/cdex/mizu.msstyles
 usr/share/cusdeb/cdex/Web/Wallpaper
 usr/share/cusdeb/cdex/fonts
 usr/bin
+usr/lib/cdex/cdex-sni-host.exe
 usr/share/xsessions
 usr/share/lightdm
 etc/lightdm

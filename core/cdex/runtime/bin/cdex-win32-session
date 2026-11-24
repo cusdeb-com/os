@@ -44,6 +44,7 @@ BRIDGE_LAUNCH_REQUEST="$REACTOS_LAUNCH_REQUEST"
 BRIDGE_LOG="$HOME/cdex-taskbar-bridge.log"
 SESSION_LOG="$HOME/reactos-session-start.log"
 bridge_pid=""
+sni_bridge_pid=""
 SPLASH_FD=""
 splash_pid=""
 
@@ -145,6 +146,10 @@ restore_saved_resolution() {
 }
 
 cleanup() {
+  if [ -n "$sni_bridge_pid" ]; then
+    kill "$sni_bridge_pid" >/dev/null 2>&1 || true
+    wait "$sni_bridge_pid" >/dev/null 2>&1 || true
+  fi
   if [ -n "$bridge_pid" ]; then
     kill "$bridge_pid" >/dev/null 2>&1 || true
   fi
@@ -350,6 +355,11 @@ log_stage "reactos-explorer-start"
 splash_update 95
 
 wine 'C:\reactos\reactos-explorer.exe' &
+
+if [ -x /usr/bin/cdex-sni-bridge ]; then
+  /usr/bin/cdex-sni-bridge >"$HOME/cdex-sni-bridge.log" 2>&1 &
+  sni_bridge_pid=$!
+fi
 
 stop_splash
 wait "$wm_pid"

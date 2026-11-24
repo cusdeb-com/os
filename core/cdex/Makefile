@@ -16,6 +16,7 @@ WALLPAPER_BUILD_DIR := $(BUILD_CACHE_DIR)/wallpaper
 
 # Generated build inputs
 CLASSES_REG := $(BUILD_CACHE_DIR)/reactos-classes.reg
+SNI_HOST := $(BUILD_CACHE_DIR)/sni/cdex-sni-host.exe
 
 # Build tools and generators
 CLASSES_REG_GENERATOR := $(REPO_DIR)/tools/generate_registry_classes.py
@@ -203,7 +204,11 @@ unpatch: ensure-image
 		sh -c 'quilt --quiltrc .quiltrc pop -a || [ $$? -eq 2 ]'
 
 # Internal container build interface.
-build-in-container: cdex-build $(CLASSES_REG) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+build-in-container: cdex-build $(CLASSES_REG) $(SNI_HOST) $(FONT_BUILD_DIR)/.fonts-stamp $(WALLPAPER_BUILD_DIR)/.wallpaper-stamp
+
+$(SNI_HOST): runtime/tray/cdex-sni-host.c
+	mkdir -p "$(dir $@)"
+	x86_64-w64-mingw32-gcc -Wall -Wextra -municode -mwindows "$<" -o "$@" -lshell32 -luser32
 
 cdex-build:
 	@echo "=== Configuring the CDEX build ==="
@@ -308,6 +313,8 @@ install-in-container:
 		runtime/bin/cdex-display-properties runtime/bin/cdex-calamares-launcher \
 		"$(BIN_DIR)/"
 	install -m 755 runtime/bin/cdex-shortcut-helper "$(CDEX_DIR)/cdex-shortcut-helper"
+	install -m 755 runtime/tray/cdex-sni-bridge "$(BIN_DIR)/cdex-sni-bridge"
+	install -D -m 755 "$(SNI_HOST)" "$(DESTDIR)/usr/lib/cdex/cdex-sni-host.exe"
 	install -m 644 runtime/bin/create-cusdeb-shortcuts.js "$(CDEX_DIR)/create-cusdeb-shortcuts.js"
 	install -m 644 "$(CLASSES_REG)" "$(CDEX_DIR)/reactos-classes.reg"
 	@echo "=== Installing session/config files ==="

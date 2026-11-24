@@ -1,3 +1,10 @@
+wine (11.19.2-0cd) trixie; urgency=medium
+
+  * Add 0013-comctl32-imagelist-alpha-flags.patch to keep alpha flags
+    aligned when images are removed, added, or replaced.
+
+ -- Artem Lavrukhin <lavryha4590@gmail.com>  Mon, 23 Nov 2026 13:31:40 +0300
+
 wine (11.19.1-0cd) trixie; urgency=medium
 
   * Add 0012-ntdll-sxs-com-server-path.patch: return the DLL path for a
